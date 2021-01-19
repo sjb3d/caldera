@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "caldera-macro",
+    "caldera",
+    "apps/compute",
+    "apps/mesh",
+]

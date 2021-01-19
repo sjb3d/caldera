@@ -1,0 +1,16 @@
+[package]
+name = "compute"
+version = "0.1.0"
+authors = ["Simon Brown <si@sjbrown.co.uk>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+caldera-macro = { path = "../../caldera-macro" }
+caldera = { path = "../../caldera" }
+spark = { path = "../../../spark/spark" }
+winit = "0.23"
+imgui = "0.6"
+pmj = { path = "../../../pmj/pmj" }
+rand = { version = "0.7", features = ["small_rng"] }
+rayon = "1.3"

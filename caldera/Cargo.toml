@@ -1,0 +1,18 @@
+[package]
+name = "caldera"
+version = "0.1.0"
+authors = ["Simon Brown <si@sjbrown.co.uk>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+caldera-macro = { path = "../caldera-macro" }
+arrayvec = "0.5"
+spark = { path = "../../spark/spark" }
+spark-imgui = { path = "../../spark/spark-imgui" }
+notify = "4"
+winit = "0.23"
+raw-window-handle = "0.3"
+imgui = "0.6"
+imgui-winit-support = "0.6"
+ultraviolet = { version = "0.6.1", features = ["int"] }
