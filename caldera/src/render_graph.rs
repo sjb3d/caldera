@@ -618,16 +618,22 @@ impl<'a> RenderSchedule<'a> {
                     cmd.notify_image_use(state.color_output, query_pool);
 
                     let mut clear_values = ArrayVec::<[_; RenderCache::MAX_ATTACHMENTS]>::new();
-                    clear_values.push({
-                        let mut clear_value = vk::ClearValue::default();
-                        clear_value.color.float32 = state.color_clear_value;
-                        clear_value
-                    });
+                    let color_clear_value = vk::ClearValue {
+                        color: vk::ClearColorValue {
+                            float32: state.color_clear_value,
+                        },
+                    };
+                    let depth_clear_value = vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
+                    };
 
+                    // color output (always present for now)
+                    clear_values.push(color_clear_value);
                     let color_output_resource = self.render_graph.images.get(state.color_output.0).unwrap();
                     let color_output_desc = color_output_resource.desc();
                     let color_output_image_view = color_output_resource.image_view().unwrap();
 
+                    // color temp (if present)
                     let (samples, color_temp_image_view) = if let Some(color_temp) = state.color_temp {
                         let color_temp_resource = self.render_graph.images.get(color_temp.0).unwrap();
                         let color_temp_desc = color_temp_resource.desc();
@@ -637,17 +643,14 @@ impl<'a> RenderSchedule<'a> {
                         assert_eq!(color_output_desc.height, color_temp_desc.height);
                         assert_eq!(color_output_desc.format, color_temp_desc.format);
 
-                        clear_values.push({
-                            let mut clear_value = vk::ClearValue::default();
-                            clear_value.color.float32 = state.color_clear_value;
-                            clear_value
-                        });
+                        clear_values.push(color_clear_value);
 
                         (color_temp_desc.samples, Some(color_temp_image_view))
                     } else {
                         (vk::SampleCountFlags::N1, None)
                     };
 
+                    // depth temp (if present)
                     let (depth_format, depth_temp_image_view) = if let Some(depth_temp) = state.depth_temp {
                         let depth_temp_resource = self.render_graph.images.get(depth_temp.0).unwrap();
                         let depth_temp_desc = depth_temp_resource.desc();
@@ -657,11 +660,7 @@ impl<'a> RenderSchedule<'a> {
                         assert_eq!(color_output_desc.height, depth_temp_desc.height);
                         assert_eq!(samples, depth_temp_desc.samples);
 
-                        clear_values.push({
-                            let mut clear_value = vk::ClearValue::default();
-                            clear_value.depth_stencil = vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 };
-                            clear_value
-                        });
+                        clear_values.push(depth_clear_value);
 
                         (Some(depth_temp_desc.format), Some(depth_temp_image_view))
                     } else {
