@@ -3,7 +3,7 @@ use caldera_macro::descriptor_set_layout;
 use imgui::im_str;
 use imgui::Key;
 use ply_rs::{parser, ply};
-use spark::vk;
+use spark::{vk, Device};
 use std::ffi::CStr;
 use std::sync::{Arc, Mutex};
 use std::{env, fs, io, mem, slice};
@@ -69,18 +69,171 @@ impl ply::PropertyAccess for PlyFace {
 
 #[derive(Clone, Copy)]
 struct MeshInfo {
+    vertex_buffer: StaticBufferHandle,
+    index_buffer: StaticBufferHandle,
     min: Vec3,
     max: Vec3,
-    index_count: u32,
+    vertex_count: u32,
+    triangle_count: u32,
 }
 
-impl Default for MeshInfo {
-    fn default() -> Self {
+impl MeshInfo {
+    fn new(resource_loader: &mut ResourceLoader) -> Self {
         Self {
+            vertex_buffer: resource_loader.create_buffer(),
+            index_buffer: resource_loader.create_buffer(),
             min: Vec3::broadcast(f32::MAX),
             max: Vec3::broadcast(-f32::MAX),
-            index_count: 0,
+            vertex_count: 0,
+            triangle_count: 0,
         }
+    }
+}
+
+struct AccelInfo {
+    accel_buffer: BufferHandle,
+    accel: vk::AccelerationStructureKHR,
+}
+
+impl AccelInfo {
+    fn new<'a>(
+        device: &'a Device,
+        resource_loader: &'a ResourceLoader,
+        mesh_info: &'a MeshInfo,
+        global_allocator: &'a mut Allocator,
+        schedule: &mut RenderSchedule<'a>,
+    ) -> Self {
+        let vertex_buffer = resource_loader.get_buffer(mesh_info.vertex_buffer).unwrap();
+        let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
+
+        let vertex_buffer_address = {
+            let info = vk::BufferDeviceAddressInfo {
+                buffer: Some(vertex_buffer),
+                ..Default::default()
+            };
+            unsafe { device.get_buffer_device_address(&info) }
+        };
+        let index_buffer_address = {
+            let info = vk::BufferDeviceAddressInfo {
+                buffer: Some(index_buffer),
+                ..Default::default()
+            };
+            unsafe { device.get_buffer_device_address(&info) }
+        };
+
+        let geometry_triangles_data = vk::AccelerationStructureGeometryTrianglesDataKHR {
+            vertex_format: vk::Format::R32G32B32_SFLOAT,
+            vertex_data: vk::DeviceOrHostAddressConstKHR {
+                device_address: vertex_buffer_address,
+            },
+            vertex_stride: 12,
+            max_vertex: mesh_info.vertex_count - 1,
+            index_type: vk::IndexType::UINT32,
+            index_data: vk::DeviceOrHostAddressConstKHR {
+                device_address: index_buffer_address,
+            },
+            ..Default::default()
+        };
+
+        let geometry = vk::AccelerationStructureGeometryKHR {
+            geometry_type: vk::GeometryTypeKHR::TRIANGLES,
+            geometry: vk::AccelerationStructureGeometryDataKHR {
+                triangles: geometry_triangles_data,
+            },
+            ..Default::default()
+        };
+
+        let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+            ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+            flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+            mode: vk::BuildAccelerationStructureModeKHR::BUILD,
+            geometry_count: 1,
+            p_geometries: &geometry,
+            ..Default::default()
+        };
+
+        let sizes = {
+            let max_primitive_count = mesh_info.triangle_count;
+            let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
+            unsafe {
+                device.get_acceleration_structure_build_sizes_khr(
+                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                    &build_info,
+                    Some(slice::from_ref(&max_primitive_count)),
+                    &mut sizes,
+                )
+            };
+            sizes
+        };
+
+        println!("build scratch size: {}", sizes.build_scratch_size);
+        println!("acceleration structure size: {}", sizes.acceleration_structure_size);
+
+        let accel_buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as u32);
+        let accel_buffer = schedule.create_buffer(
+            &accel_buffer_desc,
+            BufferUsage::ACCELERATION_STRUCTURE_BUILD_WRITE,
+            global_allocator,
+        );
+        let accel = {
+            let create_info = vk::AccelerationStructureCreateInfoKHR {
+                buffer: Some(schedule.get_buffer_hack(accel_buffer)),
+                size: accel_buffer_desc.size as vk::DeviceSize,
+                ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                ..Default::default()
+            };
+            unsafe { device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+        };
+
+        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as u32));
+
+        schedule.add_compute(
+            command_name!("build"),
+            |params| {
+                params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
+            },
+            move |params, cmd| {
+                let scratch_buffer = params.get_buffer(scratch_buffer);
+
+                let scratch_buffer_address = {
+                    let info = vk::BufferDeviceAddressInfo {
+                        buffer: Some(scratch_buffer),
+                        ..Default::default()
+                    };
+                    unsafe { device.get_buffer_device_address(&info) }
+                };
+
+                let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+                    ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                    flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                    mode: vk::BuildAccelerationStructureModeKHR::BUILD,
+                    dst_acceleration_structure: Some(accel),
+                    geometry_count: 1,
+                    p_geometries: &geometry,
+                    scratch_data: vk::DeviceOrHostAddressKHR {
+                        device_address: scratch_buffer_address,
+                    },
+                    ..Default::default()
+                };
+
+                let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
+                    primitive_count: mesh_info.triangle_count,
+                    primitive_offset: 0,
+                    first_vertex: 0,
+                    transform_offset: 0,
+                };
+
+                unsafe {
+                    device.cmd_build_acceleration_structures_khr(
+                        cmd,
+                        slice::from_ref(&build_info),
+                        &[&build_range_info],
+                    )
+                };
+            },
+        );
+
+        Self { accel_buffer, accel }
     }
 }
 
@@ -90,9 +243,8 @@ struct App {
     test_descriptor_set_layout: TestDescriptorSetLayout,
     test_pipeline_layout: vk::PipelineLayout,
 
-    vertex_buffer: StaticBufferHandle,
-    index_buffer: StaticBufferHandle,
     mesh_info: Arc<Mutex<MeshInfo>>,
+    accel_info: Option<AccelInfo>,
     use_msaa: bool,
     angle: f32,
 }
@@ -111,9 +263,13 @@ impl App {
         }
         .unwrap();
 
-        let vertex_buffer = resource_loader.create_buffer();
-        let index_buffer = resource_loader.create_buffer();
-        let mesh_info = Arc::new(Mutex::new(MeshInfo::default()));
+        let extra_buffer_usage = if context.device.extensions.khr_acceleration_structure {
+            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
+        } else {
+            BufferUsage::empty()
+        };
+
+        let mesh_info = Arc::new(Mutex::new(MeshInfo::new(resource_loader)));
         resource_loader.async_load({
             let mesh_info = Arc::clone(&mesh_info);
             move |allocator| {
@@ -139,25 +295,36 @@ impl App {
                     }
                 }
 
+                let mut mi = mesh_info.lock().unwrap().clone();
+
                 let vertex_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<PlyVertex>()) as u32);
                 let mut mapping = allocator
-                    .map_buffer::<PlyVertex>(vertex_buffer, &vertex_buffer_desc, BufferUsage::VERTEX_BUFFER)
+                    .map_buffer::<PlyVertex>(
+                        mi.vertex_buffer,
+                        &vertex_buffer_desc,
+                        BufferUsage::VERTEX_BUFFER | extra_buffer_usage,
+                    )
                     .unwrap();
-                let mut mi = MeshInfo::default();
                 for (dst, src) in mapping.get_mut().iter_mut().zip(vertices.iter()) {
                     *dst = *src;
                     let v = Vec3::new(src.x, src.y, src.z);
                     mi.min = mi.min.min_by_component(v);
                     mi.max = mi.max.max_by_component(v);
                 }
-                mi.index_count = (3 * faces.len()) as u32;
-                *mesh_info.lock().unwrap() = mi;
+                mi.vertex_count = vertices.len() as u32;
 
                 let index_buffer_desc = BufferDesc::new((faces.len() * mem::size_of::<PlyFace>()) as u32);
                 let mut mapping = allocator
-                    .map_buffer::<PlyFace>(index_buffer, &index_buffer_desc, BufferUsage::INDEX_BUFFER)
+                    .map_buffer::<PlyFace>(
+                        mi.index_buffer,
+                        &index_buffer_desc,
+                        BufferUsage::INDEX_BUFFER | extra_buffer_usage,
+                    )
                     .unwrap();
                 mapping.get_mut().copy_from_slice(&faces);
+                mi.triangle_count = faces.len() as u32;
+
+                *mesh_info.lock().unwrap() = mi;
             }
         });
 
@@ -165,9 +332,8 @@ impl App {
             context: Arc::clone(&context),
             test_descriptor_set_layout,
             test_pipeline_layout,
-            vertex_buffer,
-            index_buffer,
             mesh_info,
+            accel_info: None,
             use_msaa: false,
             angle: 0.0,
         }
@@ -201,6 +367,7 @@ impl App {
         let descriptor_pool = &base.systems.descriptor_pool;
         let pipeline_cache = &base.systems.pipeline_cache;
         let resource_loader = &base.systems.resource_loader;
+        let global_allocator = &mut base.systems.global_allocator;
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
         let swap_extent = base.display.swapchain.get_extent();
@@ -245,9 +412,24 @@ impl App {
             main_render_state = main_render_state.with_color_temp(msaa_image);
         }
 
-        let vertex_buffer = resource_loader.get_buffer(self.vertex_buffer);
-        let index_buffer = resource_loader.get_buffer(self.index_buffer);
         let mesh_info = self.mesh_info.lock().unwrap().clone();
+        let vertex_buffer = resource_loader.get_buffer(mesh_info.vertex_buffer);
+        let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer);
+
+        if context.device.extensions.khr_acceleration_structure
+            && self.accel_info.is_none()
+            && vertex_buffer.is_some()
+            && index_buffer.is_some()
+        {
+            self.accel_info = Some(AccelInfo::new(
+                &base.context.device,
+                &resource_loader,
+                &mesh_info,
+                global_allocator,
+                &mut schedule,
+            ));
+        }
+
         schedule.add_graphics(
             command_name!("main"),
             main_render_state,
@@ -311,7 +493,9 @@ impl App {
                         context
                             .device
                             .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
-                        context.device.cmd_draw_indexed(cmd, mesh_info.index_count, 1, 0, 0, 0);
+                        context
+                            .device
+                            .cmd_draw_indexed(cmd, mesh_info.triangle_count * 3, 1, 0, 0, 0);
                     }
                 }
 
@@ -352,11 +536,14 @@ impl Drop for App {
 
 fn main() {
     let mut params = ContextParams::default();
+    params.version = vk::Version::from_raw_parts(1, 1, 0); // Vulkan 1.1 needed for ray tracing
+    params.allow_ray_tracing = true;
     params.enable_geometry_shader = true; // for gl_PrimitiveID in fragment shader
     let mut mesh_file_name = None;
     for arg in env::args().skip(1) {
         let arg = arg.as_str();
         match arg {
+            "--no-rays" => params.allow_ray_tracing = false,
             _ => {
                 if !params.parse_arg(arg) {
                     if !mesh_file_name.is_some() {

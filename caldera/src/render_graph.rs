@@ -45,18 +45,63 @@ pub struct BufferHandle(ResourceHandle);
 pub struct ImageHandle(ResourceHandle);
 
 enum BufferResource {
+    Temporary {
+        desc: BufferDesc,
+        all_usage: BufferUsage,
+    },
     Ready {
         desc: BufferDesc,
-        _buffer: UniqueBuffer,
-        _current_usage: BufferUsage,
-        _all_usage_check: BufferUsage,
+        buffer: UniqueBuffer,
+        current_usage: BufferUsage,
+        all_usage_check: BufferUsage,
     },
 }
 
 impl BufferResource {
     fn desc(&self) -> &BufferDesc {
         match self {
+            BufferResource::Temporary { desc, .. } => desc,
             BufferResource::Ready { desc, .. } => desc,
+        }
+    }
+
+    fn buffer(&self) -> Option<UniqueBuffer> {
+        match self {
+            BufferResource::Ready { buffer, .. } => Some(*buffer),
+            _ => None,
+        }
+    }
+
+    fn declare_usage(&mut self, usage: BufferUsage) {
+        match self {
+            BufferResource::Temporary { ref mut all_usage, .. } => {
+                *all_usage |= usage;
+            }
+            BufferResource::Ready { all_usage_check, .. } => {
+                if !all_usage_check.contains(usage) {
+                    panic!("buffer usage {:?} was not declared in {:?}", usage, all_usage_check);
+                }
+            }
+        }
+    }
+
+    fn transition_usage(&mut self, new_usage: BufferUsage, device: &Device, cmd: vk::CommandBuffer) {
+        match self {
+            BufferResource::Ready {
+                buffer,
+                ref mut current_usage,
+                all_usage_check,
+                ..
+            } => {
+                if !all_usage_check.contains(new_usage) {
+                    panic!("cannot set usage that buffer was not allocated with");
+                }
+                if *current_usage != new_usage {
+                    emit_buffer_barrier(*current_usage, new_usage, buffer.0, device, cmd);
+                    *current_usage = new_usage;
+                }
+            }
+            _ => panic!("image not ready"),
         }
     }
 }
@@ -208,9 +253,9 @@ impl RenderGraph {
         self.buffers
             .allocate(BufferResource::Ready {
                 desc: *desc,
-                _buffer: buffer,
-                _current_usage: current_usage,
-                _all_usage_check: all_usage,
+                buffer,
+                current_usage,
+                all_usage_check: all_usage,
             })
             .map(BufferHandle)
             .unwrap()
@@ -232,8 +277,32 @@ impl RenderGraph {
         self.create_ready_buffer(desc, all_usage, buffer, BufferUsage::empty())
     }
 
+    fn allocate_temporary_buffer(&mut self, handle: BufferHandle) {
+        let buffer_resource = self.buffers.get_mut(handle.0).unwrap();
+        *buffer_resource = match buffer_resource {
+            BufferResource::Temporary { desc, all_usage } => {
+                let all_usage_flags = all_usage.as_flags();
+                let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+                let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
+                let alloc = self.temp_allocator.allocate(&info.mem_req, memory_property_flags);
+                let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
+                BufferResource::Ready {
+                    desc: *desc,
+                    buffer,
+                    current_usage: BufferUsage::empty(),
+                    all_usage_check: *all_usage,
+                }
+            }
+            _ => panic!("buffer is not temporary"),
+        };
+    }
+
     pub fn get_buffer_desc(&self, handle: BufferHandle) -> &BufferDesc {
         self.buffers.get(handle.0).unwrap().desc()
+    }
+
+    fn free_buffer(&mut self, handle: BufferHandle) {
+        self.buffers.free(handle.0);
     }
 
     fn create_ready_image(
@@ -305,6 +374,19 @@ impl RenderGraph {
         self.import_set.begin_frame(&mut self.buffers, &mut self.images);
     }
 
+    fn transition_buffer_usage(
+        &mut self,
+        handle: BufferHandle,
+        new_usage: BufferUsage,
+        context: &Context,
+        cmd: vk::CommandBuffer,
+    ) {
+        self.buffers
+            .get_mut(handle.0)
+            .unwrap()
+            .transition_usage(new_usage, &context.device, cmd);
+    }
+
     fn transition_image_usage(
         &mut self,
         handle: ImageHandle,
@@ -374,6 +456,7 @@ impl RenderState {
 
 #[derive(Clone, Copy)]
 enum ParameterDesc {
+    Buffer { handle: BufferHandle, usage: BufferUsage },
     Image { handle: ImageHandle, usage: ImageUsage },
 }
 
@@ -425,6 +508,10 @@ impl RenderParameterDeclaration {
         Self(Vec::new())
     }
 
+    pub fn add_buffer(&mut self, handle: BufferHandle, usage: BufferUsage) {
+        self.0.push(ParameterDesc::Buffer { handle, usage });
+    }
+
     pub fn add_image(&mut self, handle: ImageHandle, usage: ImageUsage) {
         self.0.push(ParameterDesc::Image { handle, usage })
     }
@@ -437,14 +524,23 @@ impl<'a> RenderParameterAccess<'a> {
         Self(render_graph)
     }
 
+    pub fn get_buffer(&self, handle: BufferHandle) -> vk::Buffer {
+        self.0.buffers.get(handle.0).unwrap().buffer().unwrap().0
+    }
+
     pub fn get_image_view(&self, handle: ImageHandle) -> vk::ImageView {
         self.0.images.get(handle.0).unwrap().image_view().unwrap().0
     }
 }
 
+enum TemporaryHandle {
+    Buffer(BufferHandle),
+    Image(ImageHandle),
+}
+
 pub struct RenderSchedule<'a> {
     render_graph: &'a mut RenderGraph,
-    temporary_images: Vec<ImageHandle>,
+    temporaries: Vec<TemporaryHandle>,
     commands: Vec<Command<'a>>,
 }
 
@@ -453,9 +549,36 @@ impl<'a> RenderSchedule<'a> {
         render_graph.temp_allocator.reset();
         RenderSchedule {
             render_graph,
-            temporary_images: Vec::new(),
+            temporaries: Vec::new(),
             commands: Vec::new(),
         }
+    }
+
+    pub fn create_buffer(
+        &mut self,
+        desc: &BufferDesc,
+        all_usage: BufferUsage,
+        allocator: &mut Allocator,
+    ) -> BufferHandle {
+        self.render_graph.create_buffer(desc, all_usage, allocator)
+    }
+
+    pub fn get_buffer_hack(&self, handle: BufferHandle) -> vk::Buffer {
+        self.render_graph.buffers.get(handle.0).unwrap().buffer().unwrap().0
+    }
+
+    pub fn describe_buffer(&mut self, desc: &BufferDesc) -> BufferHandle {
+        let handle = self
+            .render_graph
+            .buffers
+            .allocate(BufferResource::Temporary {
+                desc: *desc,
+                all_usage: BufferUsage::empty(),
+            })
+            .map(BufferHandle)
+            .unwrap();
+        self.temporaries.push(TemporaryHandle::Buffer(handle));
+        handle
     }
 
     pub fn import_image(
@@ -482,7 +605,7 @@ impl<'a> RenderSchedule<'a> {
             })
             .map(ImageHandle)
             .unwrap();
-        self.temporary_images.push(handle);
+        self.temporaries.push(TemporaryHandle::Image(handle));
         handle
     }
 
@@ -553,6 +676,13 @@ impl<'a> RenderSchedule<'a> {
             };
             for parameter_desc in &common.params.0 {
                 match parameter_desc {
+                    ParameterDesc::Buffer { handle, usage } => {
+                        self.render_graph
+                            .buffers
+                            .get_mut(handle.0)
+                            .unwrap()
+                            .declare_usage(*usage);
+                    }
                     ParameterDesc::Image { handle, usage } => {
                         self.render_graph
                             .images
@@ -565,8 +695,11 @@ impl<'a> RenderSchedule<'a> {
         }
 
         // allocate temporaries
-        for handle in &self.temporary_images {
-            self.render_graph.allocate_temporary_image(*handle);
+        for handle in &self.temporaries {
+            match handle {
+                TemporaryHandle::Buffer(handle) => self.render_graph.allocate_temporary_buffer(*handle),
+                TemporaryHandle::Image(handle) => self.render_graph.allocate_temporary_image(*handle),
+            }
         }
 
         // for now we just emit single barriers just in time
@@ -598,6 +731,10 @@ impl<'a> RenderSchedule<'a> {
 
             for parameter_desc in &common.params.0 {
                 match parameter_desc {
+                    ParameterDesc::Buffer { handle, usage } => {
+                        self.render_graph
+                            .transition_buffer_usage(*handle, *usage, context, cmd.current);
+                    }
                     ParameterDesc::Image { handle, usage } => {
                         self.render_graph
                             .transition_image_usage(*handle, *usage, context, &mut cmd, query_pool);
@@ -720,8 +857,11 @@ impl<'a> RenderSchedule<'a> {
         }
 
         // free temporaries
-        for handle in &self.temporary_images {
-            self.render_graph.free_image(*handle);
+        for handle in &self.temporaries {
+            match handle {
+                TemporaryHandle::Buffer(handle) => self.render_graph.free_buffer(*handle),
+                TemporaryHandle::Image(handle) => self.render_graph.free_image(*handle),
+            }
         }
 
         // transition the swap chain image

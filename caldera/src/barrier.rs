@@ -19,7 +19,7 @@ impl Iterator for SetBitIterator {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BufferUsage(u32);
 
 impl BufferUsage {
@@ -27,6 +27,9 @@ impl BufferUsage {
     pub const COMPUTE_STORAGE_READ: BufferUsage = BufferUsage(0x2);
     pub const VERTEX_BUFFER: BufferUsage = BufferUsage(0x4);
     pub const INDEX_BUFFER: BufferUsage = BufferUsage(0x8);
+    pub const ACCELERATION_STRUCTURE_BUILD_INPUT: BufferUsage = BufferUsage(0x10);
+    pub const ACCELERATION_STRUCTURE_BUILD_SCRATCH: BufferUsage = BufferUsage(0x20);
+    pub const ACCELERATION_STRUCTURE_BUILD_WRITE: BufferUsage = BufferUsage(0x40);
 
     pub fn empty() -> Self {
         Self(0)
@@ -58,6 +61,18 @@ impl BufferUsage {
                 Self::COMPUTE_STORAGE_READ => vk::BufferUsageFlags::STORAGE_BUFFER,
                 Self::VERTEX_BUFFER => vk::BufferUsageFlags::VERTEX_BUFFER,
                 Self::INDEX_BUFFER => vk::BufferUsageFlags::INDEX_BUFFER,
+                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => {
+                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
+                        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+                }
+                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
+                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
+                        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+                }
+                Self::ACCELERATION_STRUCTURE_BUILD_WRITE => {
+                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
+                        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+                }
                 _ => unimplemented!(),
             })
             .fold(vk::BufferUsageFlags::empty(), |m, u| m | u)
@@ -70,6 +85,9 @@ impl BufferUsage {
                 Self::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
                 Self::VERTEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
                 Self::INDEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
+                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                Self::ACCELERATION_STRUCTURE_BUILD_WRITE => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
                 _ => unimplemented!(),
             })
             .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
@@ -82,6 +100,11 @@ impl BufferUsage {
                 Self::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
                 Self::VERTEX_BUFFER => vk::AccessFlags::VERTEX_ATTRIBUTE_READ,
                 Self::INDEX_BUFFER => vk::AccessFlags::INDEX_READ,
+                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::AccessFlags::SHADER_READ,
+                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
+                    vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR | vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR
+                }
+                Self::ACCELERATION_STRUCTURE_BUILD_WRITE => vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
                 _ => unimplemented!(),
             })
             .fold(vk::AccessFlags::empty(), |m, u| m | u)

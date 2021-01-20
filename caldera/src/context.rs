@@ -120,6 +120,7 @@ pub struct Context {
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub enable_buffer_device_addresses: bool,
     pub queue_family_index: u32,
     pub queue_family_properties: vk::QueueFamilyProperties,
     pub queue: vk::Queue,
@@ -243,6 +244,7 @@ impl Context {
                 .unwrap()
         };
 
+        let mut enable_ray_tracing = false;
         let device = {
             println!(
                 "loading device version {} ({} supported)",
@@ -260,14 +262,10 @@ impl Context {
                 .queue_family_index(queue_family_index)
                 .p_queue_priorities(&queue_priorities);
 
-            let enabled_features = vk::PhysicalDeviceFeatures {
-                geometry_shader: if params.enable_geometry_shader {
-                    vk::TRUE
-                } else {
-                    vk::FALSE
-                },
-                ..Default::default()
-            };
+            let mut enabled_features = vk::PhysicalDeviceFeatures::default();
+            if params.enable_geometry_shader {
+                enabled_features.geometry_shader = vk::TRUE;
+            }
 
             let available_extensions = {
                 let extension_properties =
@@ -288,14 +286,22 @@ impl Context {
                 extensions.enable_khr_acceleration_structure();
                 extensions.enable_khr_ray_tracing_pipeline();
                 extensions.enable_khr_ray_query();
+                enable_ray_tracing = true;
             }
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
                 println!("loading device extension {:?}", name);
             }
 
+            let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
+                .acceleration_structure(enable_ray_tracing);
+            let buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder()
+                .p_next(&mut acceleration_structure_features as *mut _ as *mut _)
+                .buffer_device_address(enable_ray_tracing);
+
             let extension_name_ptrs: Vec<_> = extension_names.iter().map(|s| s.as_ptr()).collect();
             let device_create_info = vk::DeviceCreateInfo::builder()
+                .p_next(&buffer_device_address_features as *const _ as *const _)
                 .p_queue_create_infos(slice::from_ref(&device_queue_create_info))
                 .pp_enabled_extension_names(&extension_name_ptrs)
                 .p_enabled_features(Some(&enabled_features));
@@ -311,6 +317,7 @@ impl Context {
             physical_device,
             physical_device_properties,
             physical_device_memory_properties,
+            enable_buffer_device_addresses: enable_ray_tracing,
             queue_family_index,
             queue_family_properties,
             queue,
