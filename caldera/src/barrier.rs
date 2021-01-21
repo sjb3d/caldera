@@ -128,11 +128,21 @@ pub fn emit_buffer_barrier(
         size: vk::WHOLE_SIZE,
         ..Default::default()
     };
+    let old_stage_mask = old_usage.as_stage_mask();
+    let new_stage_mask = new_usage.as_stage_mask();
     unsafe {
         device.cmd_pipeline_barrier(
             cmd,
-            old_usage.as_stage_mask(),
-            new_usage.as_stage_mask(),
+            if old_stage_mask.is_empty() {
+                vk::PipelineStageFlags::TOP_OF_PIPE
+            } else {
+                old_stage_mask
+            },
+            if new_stage_mask.is_empty() {
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE
+            } else {
+                new_stage_mask
+            },
             vk::DependencyFlags::empty(),
             &[],
             slice::from_ref(&buffer_memory_barrier),

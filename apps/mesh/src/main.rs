@@ -531,6 +531,9 @@ impl Drop for App {
             device.destroy_pipeline_layout(Some(self.test_pipeline_layout), None);
             device.destroy_descriptor_set_layout(Some(self.test_descriptor_set_layout.0), None);
         }
+        if let Some(accel_info) = self.accel_info.take() {
+            unsafe { device.destroy_acceleration_structure_khr(Some(accel_info.accel), None) };
+        }
     }
 }
 

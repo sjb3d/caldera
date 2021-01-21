@@ -293,7 +293,10 @@ impl Context {
                 println!("loading device extension {:?}", name);
             }
 
+            let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder()
+                .ray_tracing_pipeline(true);
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
+                .p_next(&mut ray_tracing_pipeline_features as *mut _ as *mut _)
                 .acceleration_structure(enable_ray_tracing);
             let buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder()
                 .p_next(&mut acceleration_structure_features as *mut _ as *mut _)
