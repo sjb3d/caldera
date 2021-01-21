@@ -1,4 +1,4 @@
-#version 430 core
+#version 460 core
 
 out gl_PerVertex {
     vec4 gl_Position;

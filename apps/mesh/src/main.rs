@@ -36,6 +36,20 @@ descriptor_set_layout!(TestDescriptorSetLayout {
     test: UniformData<TestData>,
 });
 
+#[repr(C)]
+struct TraceData {
+    ray_origin: [f32; 3],
+    ray_vec_from_coord: [f32; 9],
+    sbt_params: [u32; 2],
+    miss_index: u32,
+}
+
+descriptor_set_layout!(TraceDescriptorSetLayout {
+    trace: UniformData<TraceData>,
+    accel: AccelerationStructure,
+    output: StorageImage,
+});
+
 impl ply::PropertyAccess for PlyVertex {
     fn new() -> Self {
         Self { x: 0.0, y: 0.0, z: 0.0 }
@@ -91,13 +105,15 @@ impl MeshInfo {
 }
 
 struct AccelInfo {
-    accel_buffer: BufferHandle,
     accel: vk::AccelerationStructureKHR,
+    trace_descriptor_set_layout: TraceDescriptorSetLayout,
+    trace_pipeline_layout: vk::PipelineLayout,
 }
 
 impl AccelInfo {
     fn new<'a>(
         device: &'a Device,
+        descriptor_pool: &DescriptorPool,
         resource_loader: &'a ResourceLoader,
         mesh_info: &'a MeshInfo,
         global_allocator: &'a mut Allocator,
@@ -233,7 +249,24 @@ impl AccelInfo {
             },
         );
 
-        Self { accel_buffer, accel }
+        let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(&descriptor_pool);
+        let trace_pipeline_layout =
+            unsafe { device.create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0) }.unwrap();
+
+        Self {
+            accel,
+            trace_descriptor_set_layout,
+            trace_pipeline_layout,
+        }
+    }
+
+    fn dispatch(&self, _device: &Device, pipeline_cache: &PipelineCache) {
+        let _pipeline = pipeline_cache.get_ray_tracing(
+            "mesh/trace.rgen.spv",
+            "mesh/trace.rchit.spv",
+            "mesh/trace.rmiss.spv",
+            self.trace_pipeline_layout,
+        );
     }
 }
 
@@ -423,11 +456,16 @@ impl App {
         {
             self.accel_info = Some(AccelInfo::new(
                 &base.context.device,
+                descriptor_pool,
                 &resource_loader,
                 &mesh_info,
                 global_allocator,
                 &mut schedule,
             ));
+        }
+
+        if let Some(accel_info) = self.accel_info.as_ref() {
+            accel_info.dispatch(&base.context.device, pipeline_cache)
         }
 
         schedule.add_graphics(
@@ -530,9 +568,12 @@ impl Drop for App {
         unsafe {
             device.destroy_pipeline_layout(Some(self.test_pipeline_layout), None);
             device.destroy_descriptor_set_layout(Some(self.test_descriptor_set_layout.0), None);
-        }
-        if let Some(accel_info) = self.accel_info.take() {
-            unsafe { device.destroy_acceleration_structure_khr(Some(accel_info.accel), None) };
+            if let Some(accel_info) = self.accel_info.take() {
+                device.destroy_acceleration_structure_khr(Some(accel_info.accel), None);
+
+                device.destroy_pipeline_layout(Some(accel_info.trace_pipeline_layout), None);
+                device.destroy_descriptor_set_layout(Some(accel_info.trace_descriptor_set_layout.0), None);
+            }
         }
     }
 }

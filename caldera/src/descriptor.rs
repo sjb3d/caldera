@@ -159,6 +159,7 @@ pub enum DescriptorSetLayoutBinding {
     StorageImage,
     UniformData { size: u32 },
     StorageBuffer,
+    AccelerationStructure,
 }
 
 pub enum DescriptorSetBindingData<'a> {
@@ -166,6 +167,7 @@ pub enum DescriptorSetBindingData<'a> {
     StorageImage { image_view: vk::ImageView },
     UniformData { size: u32, writer: &'a dyn Fn(*mut c_void) },
     StorageBuffer { buffer: vk::Buffer },
+    AccelerationStructure { accel: vk::AccelerationStructureKHR },
 }
 
 pub struct DescriptorPool {
@@ -300,6 +302,13 @@ impl DescriptorPool {
                 DescriptorSetLayoutBinding::StorageBuffer => bindings_vk.push(vk::DescriptorSetLayoutBinding {
                     binding: i as u32,
                     descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                }),
+                DescriptorSetLayoutBinding::AccelerationStructure => bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
+                    descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
                     descriptor_count: 1,
                     stage_flags: vk::ShaderStageFlags::ALL,
                     ..Default::default()
@@ -441,6 +450,9 @@ impl DescriptorPool {
                         p_buffer_info: buffer_info.last().unwrap(),
                         ..Default::default()
                     });
+                }
+                DescriptorSetBindingData::AccelerationStructure { .. } => {
+                    unimplemented!()
                 }
             }
         }

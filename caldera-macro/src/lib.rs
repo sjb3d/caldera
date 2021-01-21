@@ -12,6 +12,7 @@ mod kw {
     syn::custom_keyword!(StorageImage);
     syn::custom_keyword!(UniformData);
     syn::custom_keyword!(StorageBuffer);
+    syn::custom_keyword!(AccelerationStructure);
 }
 
 enum BindingType {
@@ -29,6 +30,9 @@ enum BindingType {
     },
     StorageBuffer {
         _kw_token: kw::StorageBuffer,
+    },
+    AccelerationStructure {
+        _kw_token: kw::AccelerationStructure,
     },
 }
 
@@ -64,6 +68,10 @@ impl Parse for BindingType {
             })
         } else if lookahead.peek(kw::StorageBuffer) {
             Ok(BindingType::StorageBuffer {
+                _kw_token: input.parse()?,
+            })
+        } else if lookahead.peek(kw::AccelerationStructure) {
+            Ok(BindingType::AccelerationStructure {
                 _kw_token: input.parse()?,
             })
         } else {
@@ -111,6 +119,9 @@ impl Binding {
                 }),
             ),
             BindingType::StorageBuffer { .. } => (None, quote!(DescriptorSetLayoutBinding::StorageBuffer)),
+            BindingType::AccelerationStructure { .. } => {
+                (None, quote!(DescriptorSetLayoutBinding::AccelerationStructure))
+            }
         }
     }
 
@@ -145,6 +156,13 @@ impl Binding {
                 (
                     quote!(#buffer: vk::Buffer),
                     quote!(DescriptorSetBindingData::StorageBuffer { buffer: #buffer }),
+                )
+            }
+            BindingType::AccelerationStructure { .. } => {
+                let accel = format_ident!("{}_accel", self.name);
+                (
+                    quote!(#accel: vk::AccelerationStructureKHR),
+                    quote!(DescriptorSetBindingData::AccelerationStructure { accel: #accel }),
                 )
             }
         }

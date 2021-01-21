@@ -1,5 +1,6 @@
 GLSLC=glslangValidator
-GLSLCFLAGS=-V -Ishaders/common
+GLSLCFLAGS_COMMON=-V -Ishaders/common
+GLSLCFLAGS_RAYS=--target-env spirv1.4
 
 DISASM=spirv-dis
 
@@ -11,8 +12,11 @@ SRC=\
 	compute/trace.comp.glsl \
 	compute/copy.frag.glsl \
 	compute/copy.vert.glsl \
-	mesh/test.vert.glsl \
-	mesh/test.frag.glsl
+	mesh/raster.vert.glsl \
+	mesh/raster.frag.glsl \
+	mesh/trace.rchit.glsl \
+	mesh/trace.rgen.glsl \
+	mesh/trace.rmiss.glsl
 
 APPS=compute mesh
 SRC_DIR=shaders
@@ -34,8 +38,17 @@ clean:
 
 shaders: $(SHADERS)
 
+$(BIN_DIR)/%.rchit.spv: $(SRC_DIR)/%.rchit.glsl $(INCLUDES) Makefile
+	$(GLSLC) $(GLSLCFLAGS_COMMON) $(GLSLCFLAGS_RAYS) -o $@ $<
+
+$(BIN_DIR)/%.rgen.spv: $(SRC_DIR)/%.rgen.glsl $(INCLUDES) Makefile
+	$(GLSLC) $(GLSLCFLAGS_COMMON) $(GLSLCFLAGS_RAYS) -o $@ $<
+
+$(BIN_DIR)/%.rmiss.spv: $(SRC_DIR)/%.rmiss.glsl $(INCLUDES) Makefile
+	$(GLSLC) $(GLSLCFLAGS_COMMON) $(GLSLCFLAGS_RAYS) -o $@ $<
+
 $(BIN_DIR)/%.spv: $(SRC_DIR)/%.glsl $(INCLUDES) Makefile
-	$(GLSLC) $(GLSLCFLAGS) -o $@ $<
+	$(GLSLC) $(GLSLCFLAGS_COMMON) -o $@ $<
 
 listings: $(LISTINGS)
 

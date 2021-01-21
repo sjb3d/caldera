@@ -188,6 +188,12 @@ enum PipelineCacheKey {
         render_pass: vk::RenderPass,
         samples: vk::SampleCountFlags,
     },
+    RayTracing {
+        pipeline_layout: vk::PipelineLayout,
+        raygen_shader: vk::ShaderModule,
+        closest_hit_shader: vk::ShaderModule,
+        miss_shader: vk::ShaderModule,
+    },
 }
 
 pub struct PipelineCache {
@@ -372,6 +378,93 @@ impl PipelineCache {
             *new_pipelines
                 .entry(key)
                 .or_insert_with(|| ui_renderer.create_pipeline(&self.context.device, render_pass, samples))
+        })
+    }
+
+    pub fn get_ray_tracing(
+        &self,
+        raygen_shader_name: &str,
+        closest_hit_shader_name: &str,
+        miss_shader_name: &str,
+        pipeline_layout: vk::PipelineLayout,
+    ) -> vk::Pipeline {
+        let raygen_shader = self.shader_loader.get_shader(raygen_shader_name).unwrap();
+        let closest_hit_shader = self.shader_loader.get_shader(closest_hit_shader_name).unwrap();
+        let miss_shader = self.shader_loader.get_shader(miss_shader_name).unwrap();
+        let key = PipelineCacheKey::RayTracing {
+            pipeline_layout,
+            raygen_shader,
+            closest_hit_shader,
+            miss_shader,
+        };
+        self.current_pipelines.get(&key).copied().unwrap_or_else(|| {
+            // TODO: create pipeline on worker thread, for now we just block on miss
+            let mut new_pipelines = self.new_pipelines.lock().unwrap();
+            *new_pipelines.entry(key).or_insert_with(|| {
+                let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
+                let shader_stage_create_info = [
+                    vk::PipelineShaderStageCreateInfo {
+                        stage: vk::ShaderStageFlags::RAYGEN_KHR,
+                        module: Some(raygen_shader),
+                        p_name: shader_entry_name.as_ptr(),
+                        ..Default::default()
+                    },
+                    vk::PipelineShaderStageCreateInfo {
+                        stage: vk::ShaderStageFlags::MISS_KHR,
+                        module: Some(miss_shader),
+                        p_name: shader_entry_name.as_ptr(),
+                        ..Default::default()
+                    },
+                    vk::PipelineShaderStageCreateInfo {
+                        stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+                        module: Some(closest_hit_shader),
+                        p_name: shader_entry_name.as_ptr(),
+                        ..Default::default()
+                    },
+                ];
+
+                let shader_group_create_info = [
+                    vk::RayTracingShaderGroupCreateInfoKHR {
+                        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                        general_shader: 0,
+                        closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                        any_hit_shader: vk::SHADER_UNUSED_KHR,
+                        intersection_shader: vk::SHADER_UNUSED_KHR,
+                        ..Default::default()
+                    },
+                    vk::RayTracingShaderGroupCreateInfoKHR {
+                        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                        general_shader: 1,
+                        closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                        any_hit_shader: vk::SHADER_UNUSED_KHR,
+                        intersection_shader: vk::SHADER_UNUSED_KHR,
+                        ..Default::default()
+                    },
+                    vk::RayTracingShaderGroupCreateInfoKHR {
+                        ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
+                        general_shader: vk::SHADER_UNUSED_KHR,
+                        closest_hit_shader: 2,
+                        any_hit_shader: vk::SHADER_UNUSED_KHR,
+                        intersection_shader: vk::SHADER_UNUSED_KHR,
+                        ..Default::default()
+                    },
+                ];
+
+                let pipeline_create_info = vk::RayTracingPipelineCreateInfoKHR::builder()
+                    .p_stages(&shader_stage_create_info)
+                    .p_groups(&shader_group_create_info)
+                    .layout(pipeline_layout);
+
+                unsafe {
+                    self.context.device.create_ray_tracing_pipelines_khr_single(
+                        None,
+                        Some(self.pipeline_cache),
+                        &pipeline_create_info,
+                        None,
+                    )
+                }
+                .unwrap()
+            })
         })
     }
 
