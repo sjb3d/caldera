@@ -293,21 +293,22 @@ impl Context {
                 println!("loading device extension {:?}", name);
             }
 
-            let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder()
-                .ray_tracing_pipeline(true);
+            let mut buffer_device_address_features =
+                vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder().buffer_device_address(enable_ray_tracing);
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
-                .p_next(&mut ray_tracing_pipeline_features as *mut _ as *mut _)
                 .acceleration_structure(enable_ray_tracing);
-            let buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder()
-                .p_next(&mut acceleration_structure_features as *mut _ as *mut _)
-                .buffer_device_address(enable_ray_tracing);
+            let mut ray_tracing_pipeline_features =
+                vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder().ray_tracing_pipeline(enable_ray_tracing);
 
             let extension_name_ptrs: Vec<_> = extension_names.iter().map(|s| s.as_ptr()).collect();
             let device_create_info = vk::DeviceCreateInfo::builder()
-                .p_next(&buffer_device_address_features as *const _ as *const _)
                 .p_queue_create_infos(slice::from_ref(&device_queue_create_info))
                 .pp_enabled_extension_names(&extension_name_ptrs)
-                .p_enabled_features(Some(&enabled_features));
+                .p_enabled_features(Some(&enabled_features))
+                .insert_next(&mut buffer_device_address_features)
+                .insert_next(&mut acceleration_structure_features)
+                .insert_next(&mut ray_tracing_pipeline_features);
+
             unsafe { instance.create_device(physical_device, &device_create_info, None, params.version) }.unwrap()
         };
 

@@ -1,6 +1,6 @@
 use crate::context::*;
 use imgui::Ui;
-use spark::vk;
+use spark::{vk, Builder};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -20,18 +20,18 @@ struct Chunk {
 impl Chunk {
     pub fn new(context: &Arc<Context>, memory_type_index: u32, size: u32) -> Self {
         let mem = {
-            let flags_info = vk::MemoryAllocateFlagsInfo {
-                flags: vk::MemoryAllocateFlagsKHR::DEVICE_ADDRESS_KHR,
+            let mut flags_info = vk::MemoryAllocateFlagsInfo {
+                flags: if context.enable_buffer_device_addresses {
+                    vk::MemoryAllocateFlagsKHR::DEVICE_ADDRESS_KHR
+                } else {
+                    vk::MemoryAllocateFlagsKHR::empty()
+                },
                 ..Default::default()
             };
-            let mut memory_allocate_info = vk::MemoryAllocateInfo {
-                allocation_size: vk::DeviceSize::from(size),
-                memory_type_index,
-                ..Default::default()
-            };
-            if context.enable_buffer_device_addresses {
-                memory_allocate_info.p_next = &flags_info as *const _ as *const _;
-            }
+            let memory_allocate_info = vk::MemoryAllocateInfo::builder()
+                .allocation_size(vk::DeviceSize::from(size))
+                .memory_type_index(memory_type_index)
+                .insert_next(&mut flags_info);
             unsafe { context.device.allocate_memory(&memory_allocate_info, None) }.unwrap()
         };
         Self {

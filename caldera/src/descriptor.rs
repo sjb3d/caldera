@@ -219,16 +219,17 @@ impl DescriptorPool {
                 },
             ];
 
-            let mut descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
-                .max_sets(Self::MAX_SETS_PER_FRAME)
-                .p_pool_sizes(&descriptor_pool_sizes);
+            let mut inline_uniform_block_create_info = vk::DescriptorPoolInlineUniformBlockCreateInfoEXT::builder()
+                .max_inline_uniform_block_bindings(if use_inline_uniform_block {
+                    Self::MAX_DESCRIPTORS_PER_FRAME
+                } else {
+                    0
+                });
 
-            let inline_uniform_block_create_info = vk::DescriptorPoolInlineUniformBlockCreateInfoEXT::builder()
-                .max_inline_uniform_block_bindings(Self::MAX_DESCRIPTORS_PER_FRAME);
-            if use_inline_uniform_block {
-                descriptor_pool_create_info =
-                    descriptor_pool_create_info.p_next(&inline_uniform_block_create_info as *const _ as *const c_void);
-            }
+            let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
+                .max_sets(Self::MAX_SETS_PER_FRAME)
+                .p_pool_sizes(&descriptor_pool_sizes)
+                .insert_next(&mut inline_uniform_block_create_info);
 
             let mut pools = ArrayVec::new();
             for _i in 0..Self::COUNT {
