@@ -29,7 +29,9 @@ impl BufferUsage {
     pub const INDEX_BUFFER: BufferUsage = BufferUsage(0x8);
     pub const ACCELERATION_STRUCTURE_BUILD_INPUT: BufferUsage = BufferUsage(0x10);
     pub const ACCELERATION_STRUCTURE_BUILD_SCRATCH: BufferUsage = BufferUsage(0x20);
-    pub const ACCELERATION_STRUCTURE_BUILD_WRITE: BufferUsage = BufferUsage(0x40);
+    pub const ACCELERATION_STRUCTURE_WRITE: BufferUsage = BufferUsage(0x40);
+    pub const ACCELERATION_STRUCTURE_READ: BufferUsage = BufferUsage(0x80);
+    pub const SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x100);
 
     pub fn empty() -> Self {
         Self(0)
@@ -69,10 +71,13 @@ impl BufferUsage {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
                 }
-                Self::ACCELERATION_STRUCTURE_BUILD_WRITE => {
+                Self::ACCELERATION_STRUCTURE_WRITE | Self::ACCELERATION_STRUCTURE_READ => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
                 }
+                Self::SHADER_BINDING_TABLE => {
+                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
+                },
                 _ => unimplemented!(),
             })
             .fold(vk::BufferUsageFlags::empty(), |m, u| m | u)
@@ -87,7 +92,9 @@ impl BufferUsage {
                 Self::INDEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
                 Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
                 Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-                Self::ACCELERATION_STRUCTURE_BUILD_WRITE => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                Self::ACCELERATION_STRUCTURE_WRITE => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                Self::ACCELERATION_STRUCTURE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                Self::SHADER_BINDING_TABLE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 _ => unimplemented!(),
             })
             .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
@@ -104,7 +111,9 @@ impl BufferUsage {
                 Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
                     vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR | vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR
                 }
-                Self::ACCELERATION_STRUCTURE_BUILD_WRITE => vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
+                Self::ACCELERATION_STRUCTURE_WRITE => vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
+                Self::ACCELERATION_STRUCTURE_READ => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
+                Self::SHADER_BINDING_TABLE => vk::AccessFlags::SHADER_READ,
                 _ => unimplemented!(),
             })
             .fold(vk::AccessFlags::empty(), |m, u| m | u)
@@ -185,6 +194,7 @@ impl ImageUsage {
     pub const COMPUTE_STORAGE_WRITE: ImageUsage = ImageUsage(0x20);
     pub const TRANSIENT_COLOR_ATTACHMENT: ImageUsage = ImageUsage(0x40);
     pub const TRANSIENT_DEPTH_ATTACHMENT: ImageUsage = ImageUsage(0x80);
+    pub const RAY_TRACING_STORAGE_WRITE: ImageUsage = ImageUsage(0x100);
 
     pub fn empty() -> Self {
         Self(0)
@@ -224,6 +234,7 @@ impl ImageUsage {
                 Self::TRANSIENT_DEPTH_ATTACHMENT => {
                     vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
                 }
+                Self::RAY_TRACING_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
                 _ => unimplemented!(),
             })
             .fold(vk::ImageUsageFlags::empty(), |m, u| m | u)
@@ -266,6 +277,11 @@ impl ImageUsage {
                     stage_mask: vk::PipelineStageFlags::empty(),
                     access_mask: vk::AccessFlags::empty(),
                     image_layout: vk::ImageLayout::UNDEFINED,
+                },
+                Self::RAY_TRACING_STORAGE_WRITE => ImageUsageInfo {
+                    stage_mask: vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                    access_mask: vk::AccessFlags::SHADER_WRITE,
+                    image_layout: vk::ImageLayout::GENERAL,
                 },
                 _ => unimplemented!(),
             })

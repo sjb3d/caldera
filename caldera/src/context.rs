@@ -113,6 +113,12 @@ impl Default for ContextParams {
     }
 }
 
+pub struct ContextRayTracingPipelineProperties {
+    pub shader_group_handle_size: u32,
+    pub shader_group_base_alignment: u32,
+    pub shader_group_handle_alignment: u32,
+}
+
 pub struct Context {
     pub instance: Instance,
     pub debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
@@ -120,6 +126,7 @@ pub struct Context {
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub ray_tracing_pipeline_properties: Option<ContextRayTracingPipelineProperties>,
     pub enable_buffer_device_addresses: bool,
     pub queue_family_index: u32,
     pub queue_family_properties: vk::QueueFamilyProperties,
@@ -139,7 +146,7 @@ impl Context {
             );
             if instance_version < params.version {
                 panic!(
-                    "instance version {} is greater than the available version {}",
+                    "requested instance version {} is greater than the available version {}",
                     params.version, instance_version
                 );
             }
@@ -213,6 +220,23 @@ impl Context {
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
         let device_version = physical_device_properties.api_version;
 
+        let ray_tracing_pipeline_properties = if instance.extensions.core_version
+            >= vk::Version::from_raw_parts(1, 1, 0)
+        {
+            let mut rtpp =
+                vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
+            let mut properties2 = vk::PhysicalDeviceProperties2::builder()
+                .insert_next(&mut rtpp);
+            unsafe { instance.get_physical_device_properties2(physical_device, properties2.as_mut()) };
+            Some(ContextRayTracingPipelineProperties {
+                shader_group_handle_size: rtpp.shader_group_handle_size,
+                shader_group_base_alignment: rtpp.shader_group_base_alignment,
+                shader_group_handle_alignment: rtpp.shader_group_handle_alignment,
+            })
+        } else {
+            None
+        };
+
         let physical_device_memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
         for (i, mt) in physical_device_memory_properties.types().iter().enumerate() {
@@ -252,7 +276,7 @@ impl Context {
             );
             if device_version < params.version {
                 panic!(
-                    "device version {} is greater than the available version {}",
+                    "requested device version {} is greater than the available version {}",
                     params.version, device_version
                 );
             }
@@ -321,6 +345,7 @@ impl Context {
             physical_device,
             physical_device_properties,
             physical_device_memory_properties,
+            ray_tracing_pipeline_properties,
             enable_buffer_device_addresses: enable_ray_tracing,
             queue_family_index,
             queue_family_properties,
