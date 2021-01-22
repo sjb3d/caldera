@@ -3,7 +3,7 @@ use caldera_macro::descriptor_set_layout;
 use imgui::im_str;
 use imgui::Key;
 use ply_rs::{parser, ply};
-use spark::{vk, Device};
+use spark::vk;
 use std::ffi::CStr;
 use std::sync::{Arc, Mutex};
 use std::{env, fs, io, mem, slice};
@@ -40,8 +40,6 @@ descriptor_set_layout!(TestDescriptorSetLayout {
 struct TraceData {
     ray_origin: [f32; 3],
     ray_vec_from_coord: [f32; 9],
-    sbt_params: [u32; 2],
-    miss_index: u32,
 }
 
 descriptor_set_layout!(TraceDescriptorSetLayout {
@@ -106,17 +104,21 @@ impl MeshInfo {
 
 struct AccelInfo {
     accel: vk::AccelerationStructureKHR,
+    accel_buffer: BufferHandle,
     trace_descriptor_set_layout: TraceDescriptorSetLayout,
     trace_pipeline_layout: vk::PipelineLayout,
+    trace_pipeline: vk::Pipeline,
+    shader_binding_table: StaticBufferHandle,
 }
 
 impl AccelInfo {
     fn new<'a>(
-        device: &'a Device,
+        context: &'a Arc<Context>,
+        pipeline_cache: &PipelineCache,
         descriptor_pool: &DescriptorPool,
-        resource_loader: &'a ResourceLoader,
+        resource_loader: &mut ResourceLoader,
         mesh_info: &'a MeshInfo,
-        global_allocator: &'a mut Allocator,
+        global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> Self {
         let vertex_buffer = resource_loader.get_buffer(mesh_info.vertex_buffer).unwrap();
@@ -127,14 +129,14 @@ impl AccelInfo {
                 buffer: Some(vertex_buffer),
                 ..Default::default()
             };
-            unsafe { device.get_buffer_device_address(&info) }
+            unsafe { context.device.get_buffer_device_address(&info) }
         };
         let index_buffer_address = {
             let info = vk::BufferDeviceAddressInfo {
                 buffer: Some(index_buffer),
                 ..Default::default()
             };
-            unsafe { device.get_buffer_device_address(&info) }
+            unsafe { context.device.get_buffer_device_address(&info) }
         };
 
         let geometry_triangles_data = vk::AccelerationStructureGeometryTrianglesDataKHR {
@@ -172,7 +174,7 @@ impl AccelInfo {
             let max_primitive_count = mesh_info.triangle_count;
             let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
             unsafe {
-                device.get_acceleration_structure_build_sizes_khr(
+                context.device.get_acceleration_structure_build_sizes_khr(
                     vk::AccelerationStructureBuildTypeKHR::DEVICE,
                     &build_info,
                     Some(slice::from_ref(&max_primitive_count)),
@@ -188,7 +190,7 @@ impl AccelInfo {
         let accel_buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as u32);
         let accel_buffer = schedule.create_buffer(
             &accel_buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_BUILD_WRITE,
+            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::ACCELERATION_STRUCTURE_READ,
             global_allocator,
         );
         let accel = {
@@ -198,7 +200,7 @@ impl AccelInfo {
                 ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
                 ..Default::default()
             };
-            unsafe { device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+            unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
         };
 
         let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as u32));
@@ -216,7 +218,7 @@ impl AccelInfo {
                         buffer: Some(scratch_buffer),
                         ..Default::default()
                     };
-                    unsafe { device.get_buffer_device_address(&info) }
+                    unsafe { context.device.get_buffer_device_address(&info) }
                 };
 
                 let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
@@ -240,7 +242,7 @@ impl AccelInfo {
                 };
 
                 unsafe {
-                    device.cmd_build_acceleration_structures_khr(
+                    context.device.cmd_build_acceleration_structures_khr(
                         cmd,
                         slice::from_ref(&build_info),
                         &[&build_range_info],
@@ -251,22 +253,91 @@ impl AccelInfo {
 
         let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(&descriptor_pool);
         let trace_pipeline_layout =
-            unsafe { device.create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0) }.unwrap();
+            unsafe { context.device.create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0) }.unwrap();
 
-        Self {
-            accel,
-            trace_descriptor_set_layout,
-            trace_pipeline_layout,
-        }
-    }
-
-    fn dispatch(&self, _device: &Device, pipeline_cache: &PipelineCache) {
-        let _pipeline = pipeline_cache.get_ray_tracing(
+        // TODO: figure out live reload, needs to regenerate SBT!
+        let trace_pipeline = pipeline_cache.get_ray_tracing(
             "mesh/trace.rgen.spv",
             "mesh/trace.rchit.spv",
             "mesh/trace.rmiss.spv",
-            self.trace_pipeline_layout,
+            trace_pipeline_layout,
         );
+
+        let shader_binding_table = resource_loader.create_buffer();
+        resource_loader.async_load({
+            let context = Arc::clone(context);
+            move |allocator| {
+                let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+                let shader_group_count = 3;
+                let handle_size = rtpp.shader_group_handle_size as usize;
+                let mut handle_data = vec![0u8; (shader_group_count as usize)*handle_size];
+                unsafe { context.device.get_ray_tracing_shader_group_handles_khr(
+                    trace_pipeline, 0, shader_group_count, handle_data.len(), handle_data.as_mut_ptr() as *mut _) }.unwrap();
+    
+                let section_size = rtpp.shader_group_handle_size.max(rtpp.shader_group_handle_alignment).max(rtpp.shader_group_base_alignment) as usize;
+
+                let desc = BufferDesc::new(3*section_size as u32);
+                let mut mapping = allocator.map_buffer::<u8>(
+                    shader_binding_table,
+                    &desc,
+                    BufferUsage::SHADER_BINDING_TABLE,
+                )
+                .unwrap();
+
+                for (dst, src) in mapping.get_mut().chunks_exact_mut(section_size).zip(handle_data.chunks_exact(handle_size)) {
+                    dst[..handle_size].copy_from_slice(src);
+                }
+            }
+        });
+
+        Self {
+            accel,
+            accel_buffer,
+            trace_descriptor_set_layout,
+            trace_pipeline_layout,
+            trace_pipeline,
+            shader_binding_table,
+        }
+    }
+
+    fn dispatch<'a>(
+        &'a self,
+        context: &'a Arc<Context>,
+        resource_loader: &ResourceLoader,
+        schedule: &mut RenderSchedule<'a>,
+        descriptor_pool: &'a DescriptorPool,
+        swap_extent: &vk::Extent2D) -> Option<ImageHandle> {
+        
+        let shader_binding_table_buffer = resource_loader.get_buffer(self.shader_binding_table)?;
+        let shader_binding_table_address = {
+            let info = vk::BufferDeviceAddressInfo {
+                buffer: Some(shader_binding_table_buffer),
+                ..Default::default()
+            };
+            unsafe { context.device.get_buffer_device_address(&info) }
+        };
+
+        let output_desc = ImageDesc::new_2d(swap_extent.width, swap_extent.height, vk::Format::R32_UINT, vk::ImageAspectFlags::COLOR);
+        let output_image = schedule.describe_image(&output_desc);
+
+        schedule.add_compute(command_name!("trace"), |params| {
+            params.add_buffer(self.accel_buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
+            params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+        },
+        move |params, cmd| {
+            let output_image_view = params.get_image_view(output_image);
+
+            let descriptor_set = self.trace_descriptor_set_layout.write(
+                &descriptor_pool,
+                &|buf: &mut TraceData| *buf = TraceData {
+                    ray_origin: [0.0; 3],
+                    ray_vec_from_coord: [0.0; 9],
+                },
+                self.accel,
+                output_image_view);
+        });
+
+        Some(output_image)
     }
 }
 
@@ -399,7 +470,7 @@ impl App {
         let context = &base.context;
         let descriptor_pool = &base.systems.descriptor_pool;
         let pipeline_cache = &base.systems.pipeline_cache;
-        let resource_loader = &base.systems.resource_loader;
+        let resource_loader = &mut base.systems.resource_loader;
         let global_allocator = &mut base.systems.global_allocator;
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
@@ -455,9 +526,10 @@ impl App {
             && index_buffer.is_some()
         {
             self.accel_info = Some(AccelInfo::new(
-                &base.context.device,
+                &base.context,
+                pipeline_cache,
                 descriptor_pool,
-                &resource_loader,
+                resource_loader,
                 &mesh_info,
                 global_allocator,
                 &mut schedule,
@@ -465,7 +537,9 @@ impl App {
         }
 
         if let Some(accel_info) = self.accel_info.as_ref() {
-            accel_info.dispatch(&base.context.device, pipeline_cache)
+            accel_info.dispatch(
+                &base.context, resource_loader, &mut schedule,&descriptor_pool,&swap_extent);
+               
         }
 
         schedule.add_graphics(

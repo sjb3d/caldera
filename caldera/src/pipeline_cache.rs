@@ -453,7 +453,8 @@ impl PipelineCache {
                 let pipeline_create_info = vk::RayTracingPipelineCreateInfoKHR::builder()
                     .p_stages(&shader_stage_create_info)
                     .p_groups(&shader_group_create_info)
-                    .layout(pipeline_layout);
+                    .layout(pipeline_layout)
+                    .max_pipeline_ray_recursion_depth(1);
 
                 unsafe {
                     self.context.device.create_ray_tracing_pipelines_khr_single(

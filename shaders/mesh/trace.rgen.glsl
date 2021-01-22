@@ -5,9 +5,6 @@
 layout(std430, set = 0, binding = 0) uniform TraceData {
     vec3 ray_origin;
     mat3x3 ray_vec_from_coord;
-    uint sbt_offset;
-    uint sbt_stride;
-    uint miss_index;
 } g_trace;
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;  // TODO: store as u64 in uniforms
 layout(set = 0, binding = 2, r32ui) uniform writeonly uimage2D g_output;
@@ -22,9 +19,9 @@ void main()
         g_accel,
         gl_RayFlagsOpaqueEXT,
         0xff,
-        g_trace.sbt_offset,
-        g_trace.sbt_stride,
-        g_trace.miss_index,
+        0,
+        0,
+        0,
         g_trace.ray_origin,
         0.0,
         normalize(ray_vec),

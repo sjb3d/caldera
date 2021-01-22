@@ -195,31 +195,36 @@ impl DescriptorPool {
         }
 
         let pools = {
-            let descriptor_pool_sizes = [
+            let mut descriptor_pool_sizes = ArrayVec::<[_; 5]>::new();
+            descriptor_pool_sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
+            });
+            descriptor_pool_sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
+            });
+            descriptor_pool_sizes.push(if use_inline_uniform_block {
                 vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
-                },
+                    ty: vk::DescriptorType::INLINE_UNIFORM_BLOCK_EXT,
+                    descriptor_count: Self::MAX_UNIFORM_DATA_PER_FRAME,
+                }
+            } else {
                 vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::STORAGE_IMAGE,
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
                     descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
-                },
-                if use_inline_uniform_block {
-                    vk::DescriptorPoolSize {
-                        ty: vk::DescriptorType::INLINE_UNIFORM_BLOCK_EXT,
-                        descriptor_count: Self::MAX_UNIFORM_DATA_PER_FRAME,
-                    }
-                } else {
-                    vk::DescriptorPoolSize {
-                        ty: vk::DescriptorType::UNIFORM_BUFFER,
-                        descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
-                    }
-                },
-                vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                }
+            });
+            descriptor_pool_sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
+            });
+            if context.device.extensions.khr_acceleration_structure {
+                descriptor_pool_sizes.push(vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
                     descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
-                },
-            ];
+                });
+            }
 
             let mut inline_uniform_block_create_info = vk::DescriptorPoolInlineUniformBlockCreateInfoEXT::builder()
                 .max_inline_uniform_block_bindings(if use_inline_uniform_block {
@@ -346,11 +351,12 @@ impl DescriptorPool {
         }
         .unwrap();
 
-        let mut buffer_info: ArrayVec<[_; Self::MAX_DESCRIPTORS_PER_SET]> = ArrayVec::new();
-        let mut image_info: ArrayVec<[_; Self::MAX_DESCRIPTORS_PER_SET]> = ArrayVec::new();
-        let mut writes: ArrayVec<[_; Self::MAX_DESCRIPTORS_PER_SET]> = ArrayVec::new();
-        let mut inline_writes: ArrayVec<[_; Self::MAX_DESCRIPTORS_PER_SET]> = ArrayVec::new();
-        let mut inline_uniform_data: ArrayVec<[u8; Self::MAX_UNIFORM_DATA_PER_SET]> = ArrayVec::new();
+        let mut buffer_info = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
+        let mut image_info = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
+        let mut writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
+        let mut inline_writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
+        let mut inline_uniform_data = ArrayVec::<[u8; Self::MAX_UNIFORM_DATA_PER_SET]>::new();
+        let mut acceleration_structure_writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
 
         for (i, data) in data.iter().enumerate() {
             match data {
@@ -451,8 +457,21 @@ impl DescriptorPool {
                         ..Default::default()
                     });
                 }
-                DescriptorSetBindingData::AccelerationStructure { .. } => {
-                    unimplemented!()
+                DescriptorSetBindingData::AccelerationStructure { accel } => {
+                    acceleration_structure_writes.push(vk::WriteDescriptorSetAccelerationStructureKHR {
+                        acceleration_structure_count: 1,
+                        p_acceleration_structures: accel,
+                        ..Default::default()
+                    });
+
+                    writes.push(vk::WriteDescriptorSet {
+                        dst_set: Some(descriptor_set),
+                        dst_binding: i as u32,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
+                        p_next: acceleration_structure_writes.last().unwrap() as *const _ as *const c_void,
+                        ..Default::default()
+                    });
                 }
             }
         }
