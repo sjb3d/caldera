@@ -84,8 +84,7 @@ impl QueryPool {
                     set.query_pool,
                     0,
                     set.names.len() as u32,
-                    mem::size_of::<u64>() * (QuerySet::MAX_PER_FRAME as usize),
-                    query_results.as_mut_ptr() as _,
+                    &mut query_results,
                     mem::size_of::<u64>() as vk::DeviceSize,
                     vk::QueryResultFlags::N64 | vk::QueryResultFlags::WAIT,
                 )

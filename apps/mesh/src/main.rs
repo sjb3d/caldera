@@ -272,7 +272,7 @@ impl AccelInfo {
                 let handle_size = rtpp.shader_group_handle_size as usize;
                 let mut handle_data = vec![0u8; (shader_group_count as usize)*handle_size];
                 unsafe { context.device.get_ray_tracing_shader_group_handles_khr(
-                    trace_pipeline, 0, shader_group_count, handle_data.len(), handle_data.as_mut_ptr() as *mut _) }.unwrap();
+                    trace_pipeline, 0, shader_group_count, &mut handle_data) }.unwrap();
     
                 let section_size = rtpp.shader_group_handle_size.max(rtpp.shader_group_handle_alignment).max(rtpp.shader_group_base_alignment) as usize;
 
