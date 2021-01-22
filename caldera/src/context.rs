@@ -220,22 +220,19 @@ impl Context {
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
         let device_version = physical_device_properties.api_version;
 
-        let ray_tracing_pipeline_properties = if instance.extensions.core_version
-            >= vk::Version::from_raw_parts(1, 1, 0)
-        {
-            let mut rtpp =
-                vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
-            let mut properties2 = vk::PhysicalDeviceProperties2::builder()
-                .insert_next(&mut rtpp);
-            unsafe { instance.get_physical_device_properties2(physical_device, properties2.as_mut()) };
-            Some(ContextRayTracingPipelineProperties {
-                shader_group_handle_size: rtpp.shader_group_handle_size,
-                shader_group_base_alignment: rtpp.shader_group_base_alignment,
-                shader_group_handle_alignment: rtpp.shader_group_handle_alignment,
-            })
-        } else {
-            None
-        };
+        let ray_tracing_pipeline_properties =
+            if instance.extensions.core_version >= vk::Version::from_raw_parts(1, 1, 0) {
+                let mut rtpp = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
+                let mut properties2 = vk::PhysicalDeviceProperties2::builder().insert_next(&mut rtpp);
+                unsafe { instance.get_physical_device_properties2(physical_device, properties2.as_mut()) };
+                Some(ContextRayTracingPipelineProperties {
+                    shader_group_handle_size: rtpp.shader_group_handle_size,
+                    shader_group_base_alignment: rtpp.shader_group_base_alignment,
+                    shader_group_handle_alignment: rtpp.shader_group_handle_alignment,
+                })
+            } else {
+                None
+            };
 
         let physical_device_memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };

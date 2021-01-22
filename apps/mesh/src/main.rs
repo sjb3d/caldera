@@ -102,25 +102,19 @@ impl MeshInfo {
     }
 }
 
-struct AccelInfo {
+struct AccelLevel {
     accel: vk::AccelerationStructureKHR,
-    accel_buffer: BufferHandle,
-    trace_descriptor_set_layout: TraceDescriptorSetLayout,
-    trace_pipeline_layout: vk::PipelineLayout,
-    trace_pipeline: vk::Pipeline,
-    shader_binding_table: StaticBufferHandle,
+    buffer: BufferHandle,
 }
 
-impl AccelInfo {
-    fn new<'a>(
+impl AccelLevel {
+    fn new_bottom_level<'a>(
         context: &'a Arc<Context>,
-        pipeline_cache: &PipelineCache,
-        descriptor_pool: &DescriptorPool,
-        resource_loader: &mut ResourceLoader,
         mesh_info: &'a MeshInfo,
+        resource_loader: &ResourceLoader,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
-    ) -> Self {
+    ) -> AccelLevel {
         let vertex_buffer = resource_loader.get_buffer(mesh_info.vertex_buffer).unwrap();
         let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
 
@@ -187,16 +181,16 @@ impl AccelInfo {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let accel_buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as u32);
-        let accel_buffer = schedule.create_buffer(
-            &accel_buffer_desc,
+        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as u32);
+        let buffer = schedule.create_buffer(
+            &buffer_desc,
             BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::ACCELERATION_STRUCTURE_READ,
             global_allocator,
         );
         let accel = {
             let create_info = vk::AccelerationStructureCreateInfoKHR {
-                buffer: Some(schedule.get_buffer_hack(accel_buffer)),
-                size: accel_buffer_desc.size as vk::DeviceSize,
+                buffer: Some(schedule.get_buffer_hack(buffer)),
+                size: buffer_desc.size as vk::DeviceSize,
                 ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
                 ..Default::default()
             };
@@ -251,9 +245,159 @@ impl AccelInfo {
             },
         );
 
+        Self { accel, buffer }
+    }
+
+    fn new_top_level<'a>(
+        context: &'a Arc<Context>,
+        instance_buffer: vk::Buffer,
+        global_allocator: &mut Allocator,
+        schedule: &mut RenderSchedule<'a>,
+    ) -> Self {
+        let instance_buffer_address = {
+            let info = vk::BufferDeviceAddressInfo {
+                buffer: Some(instance_buffer),
+                ..Default::default()
+            };
+            unsafe { context.device.get_buffer_device_address(&info) }
+        };
+
+        let geometry_instance_data = vk::AccelerationStructureGeometryInstancesDataKHR {
+            data: vk::DeviceOrHostAddressConstKHR {
+                device_address: instance_buffer_address,
+            },
+            ..Default::default()
+        };
+
+        let geometry = vk::AccelerationStructureGeometryKHR {
+            geometry_type: vk::GeometryTypeKHR::INSTANCES,
+            geometry: vk::AccelerationStructureGeometryDataKHR {
+                instances: geometry_instance_data,
+            },
+            ..Default::default()
+        };
+
+        let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+            ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+            flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+            mode: vk::BuildAccelerationStructureModeKHR::BUILD,
+            geometry_count: 1,
+            p_geometries: &geometry,
+            ..Default::default()
+        };
+
+        let instance_count = 1;
+        let sizes = {
+            let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
+            unsafe {
+                context.device.get_acceleration_structure_build_sizes_khr(
+                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                    &build_info,
+                    Some(slice::from_ref(&instance_count)),
+                    &mut sizes,
+                )
+            };
+            sizes
+        };
+
+        println!("build scratch size: {}", sizes.build_scratch_size);
+        println!("acceleration structure size: {}", sizes.acceleration_structure_size);
+
+        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as u32);
+        let buffer = schedule.create_buffer(
+            &buffer_desc,
+            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::ACCELERATION_STRUCTURE_READ,
+            global_allocator,
+        );
+        let accel = {
+            let create_info = vk::AccelerationStructureCreateInfoKHR {
+                buffer: Some(schedule.get_buffer_hack(buffer)),
+                size: buffer_desc.size as vk::DeviceSize,
+                ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                ..Default::default()
+            };
+            unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+        };
+
+        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as u32));
+
+        schedule.add_compute(
+            command_name!("build"),
+            |params| {
+                params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
+            },
+            move |params, cmd| {
+                let scratch_buffer = params.get_buffer(scratch_buffer);
+
+                let scratch_buffer_address = {
+                    let info = vk::BufferDeviceAddressInfo {
+                        buffer: Some(scratch_buffer),
+                        ..Default::default()
+                    };
+                    unsafe { context.device.get_buffer_device_address(&info) }
+                };
+
+                let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+                    ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                    flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                    mode: vk::BuildAccelerationStructureModeKHR::BUILD,
+                    dst_acceleration_structure: Some(accel),
+                    geometry_count: 1,
+                    p_geometries: &geometry,
+                    scratch_data: vk::DeviceOrHostAddressKHR {
+                        device_address: scratch_buffer_address,
+                    },
+                    ..Default::default()
+                };
+
+                let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
+                    primitive_count: instance_count,
+                    primitive_offset: 0,
+                    first_vertex: 0,
+                    transform_offset: 0,
+                };
+
+                unsafe {
+                    context.device.cmd_build_acceleration_structures_khr(
+                        cmd,
+                        slice::from_ref(&build_info),
+                        &[&build_range_info],
+                    )
+                };
+            },
+        );
+
+        Self { accel, buffer }
+    }
+}
+
+struct AccelInfo {
+    trace_descriptor_set_layout: TraceDescriptorSetLayout,
+    trace_pipeline_layout: vk::PipelineLayout,
+    trace_pipeline: vk::Pipeline,
+    shader_binding_table: StaticBufferHandle,
+    bottom_level: AccelLevel,
+    instance_buffer: StaticBufferHandle,
+    top_level: Option<AccelLevel>,
+}
+
+impl AccelInfo {
+    fn new<'a>(
+        context: &'a Arc<Context>,
+        pipeline_cache: &PipelineCache,
+        descriptor_pool: &DescriptorPool,
+        resource_loader: &mut ResourceLoader,
+        mesh_info: &'a MeshInfo,
+        global_allocator: &mut Allocator,
+        schedule: &mut RenderSchedule<'a>,
+    ) -> Self {
         let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(&descriptor_pool);
-        let trace_pipeline_layout =
-            unsafe { context.device.create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0) }.unwrap();
+        let trace_pipeline_layout = unsafe {
+            context
+                .device
+                .create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0)
+        }
+        .unwrap();
 
         // TODO: figure out live reload, needs to regenerate SBT!
         let trace_pipeline = pipeline_cache.get_ray_tracing(
@@ -270,33 +414,103 @@ impl AccelInfo {
                 let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
                 let shader_group_count = 3;
                 let handle_size = rtpp.shader_group_handle_size as usize;
-                let mut handle_data = vec![0u8; (shader_group_count as usize)*handle_size];
-                unsafe { context.device.get_ray_tracing_shader_group_handles_khr(
-                    trace_pipeline, 0, shader_group_count, &mut handle_data) }.unwrap();
-    
-                let section_size = rtpp.shader_group_handle_size.max(rtpp.shader_group_handle_alignment).max(rtpp.shader_group_base_alignment) as usize;
-
-                let desc = BufferDesc::new(3*section_size as u32);
-                let mut mapping = allocator.map_buffer::<u8>(
-                    shader_binding_table,
-                    &desc,
-                    BufferUsage::SHADER_BINDING_TABLE,
-                )
+                let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
+                unsafe {
+                    context.device.get_ray_tracing_shader_group_handles_khr(
+                        trace_pipeline,
+                        0,
+                        shader_group_count,
+                        &mut handle_data,
+                    )
+                }
                 .unwrap();
 
-                for (dst, src) in mapping.get_mut().chunks_exact_mut(section_size).zip(handle_data.chunks_exact(handle_size)) {
+                let section_size = rtpp
+                    .shader_group_handle_size
+                    .max(rtpp.shader_group_handle_alignment)
+                    .max(rtpp.shader_group_base_alignment) as usize;
+
+                let desc = BufferDesc::new(3 * section_size as u32);
+                let mut mapping = allocator
+                    .map_buffer::<u8>(shader_binding_table, &desc, BufferUsage::SHADER_BINDING_TABLE)
+                    .unwrap();
+
+                for (dst, src) in mapping
+                    .get_mut()
+                    .chunks_exact_mut(section_size)
+                    .zip(handle_data.chunks_exact(handle_size))
+                {
                     dst[..handle_size].copy_from_slice(src);
                 }
             }
         });
 
+        let bottom_level =
+            AccelLevel::new_bottom_level(context, mesh_info, resource_loader, global_allocator, schedule);
+
+        let bottom_level_device_address = {
+            let info = vk::AccelerationStructureDeviceAddressInfoKHR {
+                acceleration_structure: Some(bottom_level.accel),
+                ..Default::default()
+            };
+            unsafe { context.device.get_acceleration_structure_device_address_khr(&info) }
+        };
+
+        let instance_buffer = resource_loader.create_buffer();
+        resource_loader.async_load({
+            let context = Arc::clone(context);
+            move |allocator| {
+                let desc = BufferDesc::new(mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u32);
+                let mut mapping = allocator
+                    .map_buffer::<vk::AccelerationStructureInstanceKHR>(
+                        instance_buffer,
+                        &desc,
+                        BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT,
+                    )
+                    .unwrap();
+
+                mapping
+                    .get_mut()
+                    .copy_from_slice(&[vk::AccelerationStructureInstanceKHR {
+                        transform: vk::TransformMatrixKHR {
+                            matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+                        },
+                        instance_custom_index_and_mask: 0xff00_0000,
+                        instance_shader_binding_table_record_offset_and_flags: 0,
+                        acceleration_structure_reference: bottom_level_device_address,
+                    }]);
+            }
+        });
+
         Self {
-            accel,
-            accel_buffer,
             trace_descriptor_set_layout,
             trace_pipeline_layout,
             trace_pipeline,
             shader_binding_table,
+            bottom_level,
+            instance_buffer,
+            top_level: None,
+        }
+    }
+
+    fn update<'a>(
+        &mut self,
+        context: &'a Arc<Context>,
+        pipeline_cache: &PipelineCache,
+        descriptor_pool: &DescriptorPool,
+        resource_loader: &ResourceLoader,
+        global_allocator: &mut Allocator,
+        schedule: &mut RenderSchedule<'a>,
+    ) {
+        if self.top_level.is_none() {
+            if let Some(instance_buffer) = resource_loader.get_buffer(self.instance_buffer) {
+                self.top_level = Some(AccelLevel::new_top_level(
+                    context,
+                    instance_buffer,
+                    global_allocator,
+                    schedule,
+                ));
+            }
         }
     }
 
@@ -306,9 +520,11 @@ impl AccelInfo {
         resource_loader: &ResourceLoader,
         schedule: &mut RenderSchedule<'a>,
         descriptor_pool: &'a DescriptorPool,
-        swap_extent: &vk::Extent2D) -> Option<ImageHandle> {
-        
+        swap_extent: &vk::Extent2D,
+    ) -> Option<ImageHandle> {
+        let top_level = self.top_level.as_ref()?;
         let shader_binding_table_buffer = resource_loader.get_buffer(self.shader_binding_table)?;
+
         let shader_binding_table_address = {
             let info = vk::BufferDeviceAddressInfo {
                 buffer: Some(shader_binding_table_buffer),
@@ -317,25 +533,36 @@ impl AccelInfo {
             unsafe { context.device.get_buffer_device_address(&info) }
         };
 
-        let output_desc = ImageDesc::new_2d(swap_extent.width, swap_extent.height, vk::Format::R32_UINT, vk::ImageAspectFlags::COLOR);
+        let output_desc = ImageDesc::new_2d(
+            swap_extent.width,
+            swap_extent.height,
+            vk::Format::R32_UINT,
+            vk::ImageAspectFlags::COLOR,
+        );
         let output_image = schedule.describe_image(&output_desc);
 
-        schedule.add_compute(command_name!("trace"), |params| {
-            params.add_buffer(self.accel_buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
-            params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-        },
-        move |params, cmd| {
-            let output_image_view = params.get_image_view(output_image);
+        schedule.add_compute(
+            command_name!("trace"),
+            |params| {
+                params.add_buffer(self.bottom_level.buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+            },
+            move |params, cmd| {
+                let output_image_view = params.get_image_view(output_image);
 
-            let descriptor_set = self.trace_descriptor_set_layout.write(
-                &descriptor_pool,
-                &|buf: &mut TraceData| *buf = TraceData {
-                    ray_origin: [0.0; 3],
-                    ray_vec_from_coord: [0.0; 9],
-                },
-                self.accel,
-                output_image_view);
-        });
+                let descriptor_set = self.trace_descriptor_set_layout.write(
+                    &descriptor_pool,
+                    &|buf: &mut TraceData| {
+                        *buf = TraceData {
+                            ray_origin: [0.0; 3],
+                            ray_vec_from_coord: [0.0; 9],
+                        }
+                    },
+                    top_level.accel,
+                    output_image_view,
+                );
+            },
+        );
 
         Some(output_image)
     }
@@ -535,11 +762,24 @@ impl App {
                 &mut schedule,
             ));
         }
-
+        if let Some(accel_info) = self.accel_info.as_mut() {
+            accel_info.update(
+                &base.context,
+                pipeline_cache,
+                descriptor_pool,
+                resource_loader,
+                global_allocator,
+                &mut schedule,
+            );
+        }
         if let Some(accel_info) = self.accel_info.as_ref() {
             accel_info.dispatch(
-                &base.context, resource_loader, &mut schedule,&descriptor_pool,&swap_extent);
-               
+                &base.context,
+                resource_loader,
+                &mut schedule,
+                &descriptor_pool,
+                &swap_extent,
+            );
         }
 
         schedule.add_graphics(
@@ -643,7 +883,10 @@ impl Drop for App {
             device.destroy_pipeline_layout(Some(self.test_pipeline_layout), None);
             device.destroy_descriptor_set_layout(Some(self.test_descriptor_set_layout.0), None);
             if let Some(accel_info) = self.accel_info.take() {
-                device.destroy_acceleration_structure_khr(Some(accel_info.accel), None);
+                if let Some(top_level) = accel_info.top_level {
+                    device.destroy_acceleration_structure_khr(Some(top_level.accel), None);
+                }
+                device.destroy_acceleration_structure_khr(Some(accel_info.bottom_level.accel), None);
 
                 device.destroy_pipeline_layout(Some(accel_info.trace_pipeline_layout), None);
                 device.destroy_descriptor_set_layout(Some(accel_info.trace_descriptor_set_layout.0), None);

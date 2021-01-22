@@ -77,7 +77,7 @@ impl BufferUsage {
                 }
                 Self::SHADER_BINDING_TABLE => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
-                },
+                }
                 _ => unimplemented!(),
             })
             .fold(vk::BufferUsageFlags::empty(), |m, u| m | u)
