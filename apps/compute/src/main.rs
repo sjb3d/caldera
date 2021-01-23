@@ -143,7 +143,9 @@ impl App {
                         vk::Format::R32_SFLOAT,
                         vk::ImageAspectFlags::COLOR,
                     ),
-                    ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
+                    ImageUsage::FRAGMENT_STORAGE_READ
+                        | ImageUsage::COMPUTE_STORAGE_READ
+                        | ImageUsage::COMPUTE_STORAGE_WRITE,
                     global_allocator,
                 )
             };
@@ -289,9 +291,9 @@ impl App {
             command_name!("main"),
             main_render_state,
             |params| {
-                params.add_image(self.trace_images.0, ImageUsage::COMPUTE_STORAGE_READ);
-                params.add_image(self.trace_images.1, ImageUsage::COMPUTE_STORAGE_READ);
-                params.add_image(self.trace_images.2, ImageUsage::COMPUTE_STORAGE_READ);
+                params.add_image(self.trace_images.0, ImageUsage::FRAGMENT_STORAGE_READ);
+                params.add_image(self.trace_images.1, ImageUsage::FRAGMENT_STORAGE_READ);
+                params.add_image(self.trace_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
             },
             |params, cmd, render_pass| {
                 let trace_image_views = (

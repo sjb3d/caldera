@@ -53,6 +53,23 @@ impl Scale2Offset2 {
     pub fn new(scale: Vec2, offset: Vec2) -> Self {
         Self { scale, offset }
     }
+
+    pub fn into_homogeneous_matrix(&self) -> Mat3 {
+        Mat3::new(
+            Vec3::new(self.scale.x, 0.0, 0.0),
+            Vec3::new(0.0, self.scale.y, 0.0),
+            self.offset.into_homogeneous_point(),
+        )
+    }
+
+    pub fn inversed(&self) -> Self {
+        // y = a*x + b => x = (y - b)/a
+        let scale_rcp = Vec2::broadcast(1.0) / self.scale;
+        Scale2Offset2 {
+            scale: scale_rcp,
+            offset: -self.offset * scale_rcp,
+        }
+    }
 }
 
 impl Mul for Scale2Offset2 {

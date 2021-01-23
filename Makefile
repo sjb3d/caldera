@@ -12,6 +12,8 @@ SRC=\
 	compute/trace.comp.glsl \
 	compute/copy.frag.glsl \
 	compute/copy.vert.glsl \
+	mesh/copy.frag.glsl \
+	mesh/copy.vert.glsl \
 	mesh/raster.vert.glsl \
 	mesh/raster.frag.glsl \
 	mesh/trace.rchit.glsl \

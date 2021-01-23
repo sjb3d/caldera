@@ -2,7 +2,7 @@
 #extension GL_EXT_ray_tracing : enable
 #extension GL_EXT_scalar_block_layout : require
 
-layout(std430, set = 0, binding = 0) uniform TraceData {
+layout(scalar, set = 0, binding = 0) uniform TraceData {
     vec3 ray_origin;
     mat3x3 ray_vec_from_coord;
 } g_trace;
@@ -14,6 +14,7 @@ layout(location = 0) rayPayloadEXT uint g_payload;
 void main()
 {
     const vec3 ray_vec = g_trace.ray_vec_from_coord * vec3(gl_LaunchIDEXT.xy, 1.f);
+    const vec3 ray_dir = normalize(ray_vec);
 
     traceRayEXT(
         g_accel,
@@ -24,7 +25,7 @@ void main()
         0,
         g_trace.ray_origin,
         0.0,
-        normalize(ray_vec),
+        ray_dir,
         1000.f,
         0);
 

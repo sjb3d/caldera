@@ -296,6 +296,7 @@ impl Context {
 
             let mut extensions = DeviceExtensions::new(params.version);
             extensions.enable_khr_swapchain();
+            extensions.enable_ext_scalar_block_layout();
             if params.allow_inline_uniform_block && available_extensions.supports_ext_inline_uniform_block() {
                 extensions.enable_ext_inline_uniform_block();
             }
@@ -314,6 +315,8 @@ impl Context {
                 println!("loading device extension {:?}", name);
             }
 
+            let mut scalar_block_layout_features =
+                vk::PhysicalDeviceScalarBlockLayoutFeaturesEXT::builder().scalar_block_layout(true);
             let mut buffer_device_address_features =
                 vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder().buffer_device_address(enable_ray_tracing);
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
@@ -326,6 +329,7 @@ impl Context {
                 .p_queue_create_infos(slice::from_ref(&device_queue_create_info))
                 .pp_enabled_extension_names(&extension_name_ptrs)
                 .p_enabled_features(Some(&enabled_features))
+                .insert_next(&mut scalar_block_layout_features)
                 .insert_next(&mut buffer_device_address_features)
                 .insert_next(&mut acceleration_structure_features)
                 .insert_next(&mut ray_tracing_pipeline_features);

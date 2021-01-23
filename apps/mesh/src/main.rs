@@ -48,6 +48,8 @@ descriptor_set_layout!(TraceDescriptorSetLayout {
     output: StorageImage,
 });
 
+descriptor_set_layout!(CopyDescriptorSetLayout { ids: StorageImage });
+
 impl ply::PropertyAccess for PlyVertex {
     fn new() -> Self {
         Self { x: 0.0, y: 0.0, z: 0.0 }
@@ -152,6 +154,7 @@ impl AccelLevel {
             geometry: vk::AccelerationStructureGeometryDataKHR {
                 triangles: geometry_triangles_data,
             },
+            flags: vk::GeometryFlagsKHR::OPAQUE,
             ..Default::default()
         };
 
@@ -458,7 +461,6 @@ impl AccelInfo {
 
         let instance_buffer = resource_loader.create_buffer();
         resource_loader.async_load({
-            let context = Arc::clone(context);
             move |allocator| {
                 let desc = BufferDesc::new(mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u32);
                 let mut mapping = allocator
@@ -473,9 +475,9 @@ impl AccelInfo {
                     .get_mut()
                     .copy_from_slice(&[vk::AccelerationStructureInstanceKHR {
                         transform: vk::TransformMatrixKHR {
-                            matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+                            matrix: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
                         },
-                        instance_custom_index_and_mask: 0xff00_0000,
+                        instance_custom_index_and_mask: 0xff_00_00_00,
                         instance_shader_binding_table_record_offset_and_flags: 0,
                         acceleration_structure_reference: bottom_level_device_address,
                     }]);
@@ -496,8 +498,6 @@ impl AccelInfo {
     fn update<'a>(
         &mut self,
         context: &'a Arc<Context>,
-        pipeline_cache: &PipelineCache,
-        descriptor_pool: &DescriptorPool,
         resource_loader: &ResourceLoader,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
@@ -520,7 +520,9 @@ impl AccelInfo {
         resource_loader: &ResourceLoader,
         schedule: &mut RenderSchedule<'a>,
         descriptor_pool: &'a DescriptorPool,
-        swap_extent: &vk::Extent2D,
+        swap_extent: &'a vk::Extent2D,
+        ray_origin: Vec3,
+        ray_vec_from_coord: Mat3,
     ) -> Option<ImageHandle> {
         let top_level = self.top_level.as_ref()?;
         let shader_binding_table_buffer = resource_loader.get_buffer(self.shader_binding_table)?;
@@ -541,6 +543,12 @@ impl AccelInfo {
         );
         let output_image = schedule.describe_image(&output_desc);
 
+        let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+        let section_size = rtpp
+            .shader_group_handle_size
+            .max(rtpp.shader_group_handle_alignment)
+            .max(rtpp.shader_group_base_alignment) as u64;
+
         schedule.add_compute(
             command_name!("trace"),
             |params| {
@@ -550,17 +558,64 @@ impl AccelInfo {
             move |params, cmd| {
                 let output_image_view = params.get_image_view(output_image);
 
-                let descriptor_set = self.trace_descriptor_set_layout.write(
+                let trace_descriptor_set = self.trace_descriptor_set_layout.write(
                     &descriptor_pool,
                     &|buf: &mut TraceData| {
                         *buf = TraceData {
-                            ray_origin: [0.0; 3],
-                            ray_vec_from_coord: [0.0; 9],
+                            ray_origin: ray_origin.into(),
+                            ray_vec_from_coord: *ray_vec_from_coord.as_array(),
                         }
                     },
                     top_level.accel,
                     output_image_view,
                 );
+
+                unsafe {
+                    context
+                        .device
+                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::RAY_TRACING_KHR, self.trace_pipeline);
+                    context.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::RAY_TRACING_KHR,
+                        self.trace_pipeline_layout,
+                        0,
+                        slice::from_ref(&trace_descriptor_set),
+                        &[],
+                    );
+                }
+
+                let raygen_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
+                    device_address: shader_binding_table_address,
+                    stride: section_size,
+                    size: section_size,
+                };
+                let miss_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
+                    device_address: shader_binding_table_address + section_size,
+                    stride: section_size,
+                    size: section_size,
+                };
+                let hit_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
+                    device_address: shader_binding_table_address + 2 * section_size,
+                    stride: section_size,
+                    size: section_size,
+                };
+                let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
+                    device_address: 0,
+                    stride: 0,
+                    size: 0,
+                };
+                unsafe {
+                    context.device.cmd_trace_rays_khr(
+                        cmd,
+                        &raygen_shader_binding_table,
+                        &miss_shader_binding_table,
+                        &hit_shader_binding_table,
+                        &callable_shader_binding_table,
+                        swap_extent.width,
+                        swap_extent.height,
+                        1,
+                    );
+                }
             },
         );
 
@@ -574,9 +629,13 @@ struct App {
     test_descriptor_set_layout: TestDescriptorSetLayout,
     test_pipeline_layout: vk::PipelineLayout,
 
+    copy_descriptor_set_layout: CopyDescriptorSetLayout,
+    copy_pipeline_layout: vk::PipelineLayout,
+
     mesh_info: Arc<Mutex<MeshInfo>>,
     accel_info: Option<AccelInfo>,
     use_msaa: bool,
+    show_trace: bool,
     angle: f32,
 }
 
@@ -591,6 +650,14 @@ impl App {
             context
                 .device
                 .create_pipeline_layout_from_ref(&test_descriptor_set_layout.0)
+        }
+        .unwrap();
+
+        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(&descriptor_pool);
+        let copy_pipeline_layout = unsafe {
+            context
+                .device
+                .create_pipeline_layout_from_ref(&copy_descriptor_set_layout.0)
         }
         .unwrap();
 
@@ -626,7 +693,7 @@ impl App {
                     }
                 }
 
-                let mut mi = mesh_info.lock().unwrap().clone();
+                let mut mi = *mesh_info.lock().unwrap();
 
                 let vertex_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<PlyVertex>()) as u32);
                 let mut mapping = allocator
@@ -663,9 +730,12 @@ impl App {
             context: Arc::clone(&context),
             test_descriptor_set_layout,
             test_pipeline_layout,
+            copy_descriptor_set_layout,
+            copy_pipeline_layout,
             mesh_info,
             accel_info: None,
             use_msaa: false,
+            show_trace: true,
             angle: 0.0,
         }
     }
@@ -680,6 +750,7 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, || {
                 ui.checkbox(im_str!("Use MSAA"), &mut self.use_msaa);
+                ui.checkbox(im_str!("Show Trace"), &mut self.show_trace);
             });
 
         let cbar = base.systems.acquire_command_buffer();
@@ -743,9 +814,23 @@ impl App {
             main_render_state = main_render_state.with_color_temp(msaa_image);
         }
 
-        let mesh_info = self.mesh_info.lock().unwrap().clone();
+        let mesh_info = *self.mesh_info.lock().unwrap();
         let vertex_buffer = resource_loader.get_buffer(mesh_info.vertex_buffer);
         let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer);
+
+        let centre = 0.5 * (mesh_info.max + mesh_info.min);
+        let half_size = 0.5 * (mesh_info.max - mesh_info.min).component_max();
+        let world_from_local = uv::Isometry3::new(-centre, uv::Rotor3::identity());
+        let view_from_world = uv::Isometry3::new(
+            Vec3::new(0.0, 0.0, -8.0 * half_size),
+            uv::Rotor3::from_rotation_xz(self.angle) * uv::Rotor3::from_rotation_xy(0.5),
+        );
+        let view_from_local = view_from_world * world_from_local;
+
+        let vertical_fov = 0.5;
+        let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
+        let proj_from_view =
+            uv::projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
         if context.device.extensions.khr_acceleration_structure
             && self.accel_info.is_none()
@@ -763,48 +848,73 @@ impl App {
             ));
         }
         if let Some(accel_info) = self.accel_info.as_mut() {
-            accel_info.update(
-                &base.context,
-                pipeline_cache,
-                descriptor_pool,
-                resource_loader,
-                global_allocator,
-                &mut schedule,
-            );
+            accel_info.update(&base.context, resource_loader, global_allocator, &mut schedule);
         }
-        if let Some(accel_info) = self.accel_info.as_ref() {
+        let trace_image = if let Some(accel_info) = self.accel_info.as_ref().filter(|_| self.show_trace) {
+            let local_from_view = view_from_local.inversed();
+
+            let xy_from_st =
+                Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * vertical_fov).tan(), Vec2::zero());
+            let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
+            let coord_from_uv = Scale2Offset2::new(
+                UVec2::new(swap_extent.width, swap_extent.height).as_float(),
+                Vec2::broadcast(0.5),
+            );
+            let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
+
+            let ray_origin = local_from_view.translation;
+            let ray_vec_from_coord = local_from_view.rotation.into_matrix()
+                * Mat3::from_scale(-1.0)
+                * xy_from_coord.into_homogeneous_matrix();
+
             accel_info.dispatch(
                 &base.context,
                 resource_loader,
                 &mut schedule,
                 &descriptor_pool,
                 &swap_extent,
-            );
-        }
+                ray_origin,
+                ray_vec_from_coord,
+            )
+        } else {
+            None
+        };
 
         schedule.add_graphics(
             command_name!("main"),
             main_render_state,
-            |_params| {},
-            |_params, cmd, render_pass| {
+            |params| {
+                if let Some(trace_image) = trace_image {
+                    params.add_image(trace_image, ImageUsage::FRAGMENT_STORAGE_READ);
+                }
+            },
+            |params, cmd, render_pass| {
                 set_viewport_helper(&context.device, cmd, swap_extent);
 
-                if let (Some(vertex_buffer), Some(index_buffer)) = (vertex_buffer, index_buffer) {
-                    let centre = 0.5 * (mesh_info.max + mesh_info.min);
-                    let half_size = 0.5 * (mesh_info.max - mesh_info.min).component_max();
-                    let view_from_local = Mat4::look_at(
-                        centre + half_size * Vec3::new(6.0 * self.angle.cos(), 3.0, 6.0 * self.angle.sin()),
-                        centre,
-                        Vec3::unit_y(),
+                if let Some(trace_image) = trace_image {
+                    let trace_image_view = params.get_image_view(trace_image);
+
+                    let copy_descriptor_set = self
+                        .copy_descriptor_set_layout
+                        .write(&descriptor_pool, trace_image_view);
+
+                    let state = GraphicsPipelineState::new(render_pass, main_sample_count);
+
+                    draw_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        self.copy_pipeline_layout,
+                        &state,
+                        "mesh/copy.vert.spv",
+                        "mesh/copy.frag.spv",
+                        copy_descriptor_set,
+                        3,
                     );
-
-                    let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
-                    let proj_from_view =
-                        uv::projection::rh_yup::perspective_reversed_infinite_z_vk(0.5, aspect_ratio, 0.1);
-
+                } else if let (Some(vertex_buffer), Some(index_buffer)) = (vertex_buffer, index_buffer) {
                     let test_descriptor_set = self.test_descriptor_set_layout.write(&descriptor_pool, &|buf| {
                         *buf = TestData {
-                            proj_from_local: *(proj_from_view * view_from_local).as_array(),
+                            proj_from_local: *(proj_from_view * view_from_local.into_homogeneous_matrix()).as_array(),
                         };
                     });
 
@@ -882,6 +992,10 @@ impl Drop for App {
         unsafe {
             device.destroy_pipeline_layout(Some(self.test_pipeline_layout), None);
             device.destroy_descriptor_set_layout(Some(self.test_descriptor_set_layout.0), None);
+
+            device.destroy_pipeline_layout(Some(self.copy_pipeline_layout), None);
+            device.destroy_descriptor_set_layout(Some(self.copy_descriptor_set_layout.0), None);
+
             if let Some(accel_info) = self.accel_info.take() {
                 if let Some(top_level) = accel_info.top_level {
                     device.destroy_acceleration_structure_khr(Some(top_level.accel), None);
@@ -896,10 +1010,12 @@ impl Drop for App {
 }
 
 fn main() {
-    let mut params = ContextParams::default();
-    params.version = vk::Version::from_raw_parts(1, 1, 0); // Vulkan 1.1 needed for ray tracing
-    params.allow_ray_tracing = true;
-    params.enable_geometry_shader = true; // for gl_PrimitiveID in fragment shader
+    let mut params = ContextParams {
+        version: vk::Version::from_raw_parts(1, 1, 0), // Vulkan 1.1 needed for ray tracing
+        allow_ray_tracing: true,
+        enable_geometry_shader: true, // for gl_PrimitiveID in fragment shader
+        ..Default::default()
+    };
     let mut mesh_file_name = None;
     for arg in env::args().skip(1) {
         let arg = arg.as_str();
@@ -907,7 +1023,7 @@ fn main() {
             "--no-rays" => params.allow_ray_tracing = false,
             _ => {
                 if !params.parse_arg(arg) {
-                    if !mesh_file_name.is_some() {
+                    if mesh_file_name.is_none() {
                         mesh_file_name = Some(arg.to_owned());
                     } else {
                         panic!("unknown argument {:?}", arg);

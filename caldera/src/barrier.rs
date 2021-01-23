@@ -189,12 +189,13 @@ impl ImageUsage {
     pub const TRANSFER_WRITE: ImageUsage = ImageUsage(0x1);
     pub const SWAPCHAIN: ImageUsage = ImageUsage(0x2);
     pub const COLOR_ATTACHMENT_WRITE: ImageUsage = ImageUsage(0x4);
-    pub const FRAGMENT_SAMPLED: ImageUsage = ImageUsage(0x8);
-    pub const COMPUTE_STORAGE_READ: ImageUsage = ImageUsage(0x10);
-    pub const COMPUTE_STORAGE_WRITE: ImageUsage = ImageUsage(0x20);
-    pub const TRANSIENT_COLOR_ATTACHMENT: ImageUsage = ImageUsage(0x40);
-    pub const TRANSIENT_DEPTH_ATTACHMENT: ImageUsage = ImageUsage(0x80);
-    pub const RAY_TRACING_STORAGE_WRITE: ImageUsage = ImageUsage(0x100);
+    pub const FRAGMENT_STORAGE_READ: ImageUsage = ImageUsage(0x8);
+    pub const FRAGMENT_SAMPLED: ImageUsage = ImageUsage(0x10);
+    pub const COMPUTE_STORAGE_READ: ImageUsage = ImageUsage(0x20);
+    pub const COMPUTE_STORAGE_WRITE: ImageUsage = ImageUsage(0x40);
+    pub const TRANSIENT_COLOR_ATTACHMENT: ImageUsage = ImageUsage(0x80);
+    pub const TRANSIENT_DEPTH_ATTACHMENT: ImageUsage = ImageUsage(0x100);
+    pub const RAY_TRACING_STORAGE_WRITE: ImageUsage = ImageUsage(0x200);
 
     pub fn empty() -> Self {
         Self(0)
@@ -225,6 +226,7 @@ impl ImageUsage {
                 Self::TRANSFER_WRITE => vk::ImageUsageFlags::TRANSFER_DST,
                 Self::SWAPCHAIN => vk::ImageUsageFlags::empty(),
                 Self::COLOR_ATTACHMENT_WRITE => vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                Self::FRAGMENT_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
                 Self::FRAGMENT_SAMPLED => vk::ImageUsageFlags::SAMPLED,
                 Self::COMPUTE_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
                 Self::COMPUTE_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
@@ -257,6 +259,11 @@ impl ImageUsage {
                     stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                     access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                     image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                },
+                Self::FRAGMENT_STORAGE_READ => ImageUsageInfo {
+                    stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                    access_mask: vk::AccessFlags::SHADER_READ,
+                    image_layout: vk::ImageLayout::GENERAL,
                 },
                 Self::FRAGMENT_SAMPLED => ImageUsageInfo {
                     stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,

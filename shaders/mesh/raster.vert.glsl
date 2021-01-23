@@ -3,7 +3,7 @@
 
 layout(location = 0) in vec3 a_pos;
 
-layout(std430, set = 0, binding = 0) uniform TestData {
+layout(scalar, set = 0, binding = 0) uniform TestData {
     mat4 proj_from_local;
 } g_test;
 
