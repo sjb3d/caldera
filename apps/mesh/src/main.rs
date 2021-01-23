@@ -643,7 +643,6 @@ impl App {
     fn new(base: &mut AppBase, mesh_file_name: String) -> Self {
         let context = &base.context;
         let descriptor_pool = &base.systems.descriptor_pool;
-        let resource_loader = &mut base.systems.resource_loader;
 
         let test_descriptor_set_layout = TestDescriptorSetLayout::new(&descriptor_pool);
         let test_pipeline_layout = unsafe {
@@ -667,8 +666,8 @@ impl App {
             BufferUsage::empty()
         };
 
-        let mesh_info = Arc::new(Mutex::new(MeshInfo::new(resource_loader)));
-        resource_loader.async_load({
+        let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
+        base.systems.resource_loader.async_load({
             let mesh_info = Arc::clone(&mesh_info);
             move |allocator| {
                 let vertex_parser = parser::Parser::<PlyVertex>::new();
@@ -754,22 +753,12 @@ impl App {
             });
 
         let cbar = base.systems.acquire_command_buffer();
-        let ui_platform = &mut base.ui_platform;
-        let ui_renderer = &mut base.ui_renderer;
-        let window = &base.window;
-        ui_renderer.begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
+        base.ui_renderer
+            .begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
 
         base.systems.draw_ui(&ui);
 
-        let mut ui = Some(ui);
-
         let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
-
-        let context = &base.context;
-        let descriptor_pool = &base.systems.descriptor_pool;
-        let pipeline_cache = &base.systems.pipeline_cache;
-        let resource_loader = &mut base.systems.resource_loader;
-        let global_allocator = &mut base.systems.global_allocator;
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
         let swap_extent = base.display.swapchain.get_extent();
@@ -815,8 +804,8 @@ impl App {
         }
 
         let mesh_info = *self.mesh_info.lock().unwrap();
-        let vertex_buffer = resource_loader.get_buffer(mesh_info.vertex_buffer);
-        let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer);
+        let vertex_buffer = base.systems.resource_loader.get_buffer(mesh_info.vertex_buffer);
+        let index_buffer = base.systems.resource_loader.get_buffer(mesh_info.index_buffer);
 
         let centre = 0.5 * (mesh_info.max + mesh_info.min);
         let half_size = 0.5 * (mesh_info.max - mesh_info.min).component_max();
@@ -832,23 +821,28 @@ impl App {
         let proj_from_view =
             uv::projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
-        if context.device.extensions.khr_acceleration_structure
+        if base.context.device.extensions.khr_acceleration_structure
             && self.accel_info.is_none()
             && vertex_buffer.is_some()
             && index_buffer.is_some()
         {
             self.accel_info = Some(AccelInfo::new(
                 &base.context,
-                pipeline_cache,
-                descriptor_pool,
-                resource_loader,
+                &base.systems.pipeline_cache,
+                &base.systems.descriptor_pool,
+                &mut base.systems.resource_loader,
                 &mesh_info,
-                global_allocator,
+                &mut base.systems.global_allocator,
                 &mut schedule,
             ));
         }
         if let Some(accel_info) = self.accel_info.as_mut() {
-            accel_info.update(&base.context, resource_loader, global_allocator, &mut schedule);
+            accel_info.update(
+                &base.context,
+                &base.systems.resource_loader,
+                &mut base.systems.global_allocator,
+                &mut schedule,
+            );
         }
         let trace_image = if let Some(accel_info) = self.accel_info.as_ref().filter(|_| self.show_trace) {
             let local_from_view = view_from_local.inversed();
@@ -869,9 +863,9 @@ impl App {
 
             accel_info.dispatch(
                 &base.context,
-                resource_loader,
+                &base.systems.resource_loader,
                 &mut schedule,
-                &descriptor_pool,
+                &base.systems.descriptor_pool,
                 &swap_extent,
                 ray_origin,
                 ray_vec_from_coord,
@@ -888,80 +882,90 @@ impl App {
                     params.add_image(trace_image, ImageUsage::FRAGMENT_STORAGE_READ);
                 }
             },
-            |params, cmd, render_pass| {
-                set_viewport_helper(&context.device, cmd, swap_extent);
+            {
+                let context = &base.context;
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
+                let copy_pipeline_layout = self.copy_pipeline_layout;
+                let test_descriptor_set_layout = &self.test_descriptor_set_layout;
+                let test_pipeline_layout = self.test_pipeline_layout;
+                let window = &base.window;
+                let ui_platform = &mut base.ui_platform;
+                let ui_renderer = &mut base.ui_renderer;
+                move |params, cmd, render_pass| {
+                    set_viewport_helper(&context.device, cmd, swap_extent);
 
-                if let Some(trace_image) = trace_image {
-                    let trace_image_view = params.get_image_view(trace_image);
+                    if let Some(trace_image) = trace_image {
+                        let trace_image_view = params.get_image_view(trace_image);
 
-                    let copy_descriptor_set = self
-                        .copy_descriptor_set_layout
-                        .write(&descriptor_pool, trace_image_view);
+                        let copy_descriptor_set = copy_descriptor_set_layout.write(&descriptor_pool, trace_image_view);
 
-                    let state = GraphicsPipelineState::new(render_pass, main_sample_count);
+                        let state = GraphicsPipelineState::new(render_pass, main_sample_count);
 
-                    draw_helper(
-                        &context.device,
-                        pipeline_cache,
-                        cmd,
-                        self.copy_pipeline_layout,
-                        &state,
-                        "mesh/copy.vert.spv",
-                        "mesh/copy.frag.spv",
-                        copy_descriptor_set,
-                        3,
-                    );
-                } else if let (Some(vertex_buffer), Some(index_buffer)) = (vertex_buffer, index_buffer) {
-                    let test_descriptor_set = self.test_descriptor_set_layout.write(&descriptor_pool, &|buf| {
-                        *buf = TestData {
-                            proj_from_local: *(proj_from_view * view_from_local.into_homogeneous_matrix()).as_array(),
-                        };
-                    });
-
-                    let state = GraphicsPipelineState::new(render_pass, main_sample_count).with_vertex_inputs(
-                        &[vk::VertexInputBindingDescription {
-                            binding: 0,
-                            stride: mem::size_of::<PlyVertex>() as u32,
-                            input_rate: vk::VertexInputRate::VERTEX,
-                        }],
-                        &[vk::VertexInputAttributeDescription {
-                            location: 0,
-                            binding: 0,
-                            format: vk::Format::R32G32B32_SFLOAT,
-                            offset: 0,
-                        }],
-                    );
-                    let pipeline = pipeline_cache.get_graphics(
-                        "mesh/test.vert.spv",
-                        "mesh/test.frag.spv",
-                        self.test_pipeline_layout,
-                        &state,
-                    );
-                    unsafe {
-                        context
-                            .device
-                            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                        context.device.cmd_bind_descriptor_sets(
+                        draw_helper(
+                            &context.device,
+                            pipeline_cache,
                             cmd,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            self.test_pipeline_layout,
-                            0,
-                            slice::from_ref(&test_descriptor_set),
-                            &[],
+                            copy_pipeline_layout,
+                            &state,
+                            "mesh/copy.vert.spv",
+                            "mesh/copy.frag.spv",
+                            copy_descriptor_set,
+                            3,
                         );
-                        context
-                            .device
-                            .cmd_bind_vertex_buffers(cmd, 0, slice::from_ref(&vertex_buffer), &[0]);
-                        context
-                            .device
-                            .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
-                        context
-                            .device
-                            .cmd_draw_indexed(cmd, mesh_info.triangle_count * 3, 1, 0, 0, 0);
-                    }
-                }
+                    } else if let (Some(vertex_buffer), Some(index_buffer)) = (vertex_buffer, index_buffer) {
+                        let test_descriptor_set = test_descriptor_set_layout.write(&descriptor_pool, &|buf| {
+                            *buf = TestData {
+                                proj_from_local: *(proj_from_view * view_from_local.into_homogeneous_matrix())
+                                    .as_array(),
+                            };
+                        });
 
-                if let Some(ui) = ui.take() {
+                        let state = GraphicsPipelineState::new(render_pass, main_sample_count).with_vertex_inputs(
+                            &[vk::VertexInputBindingDescription {
+                                binding: 0,
+                                stride: mem::size_of::<PlyVertex>() as u32,
+                                input_rate: vk::VertexInputRate::VERTEX,
+                            }],
+                            &[vk::VertexInputAttributeDescription {
+                                location: 0,
+                                binding: 0,
+                                format: vk::Format::R32G32B32_SFLOAT,
+                                offset: 0,
+                            }],
+                        );
+                        let pipeline = pipeline_cache.get_graphics(
+                            "mesh/test.vert.spv",
+                            "mesh/test.frag.spv",
+                            test_pipeline_layout,
+                            &state,
+                        );
+                        unsafe {
+                            context
+                                .device
+                                .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                            context.device.cmd_bind_descriptor_sets(
+                                cmd,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                test_pipeline_layout,
+                                0,
+                                slice::from_ref(&test_descriptor_set),
+                                &[],
+                            );
+                            context
+                                .device
+                                .cmd_bind_vertex_buffers(cmd, 0, slice::from_ref(&vertex_buffer), &[0]);
+                            context
+                                .device
+                                .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
+                            context
+                                .device
+                                .cmd_draw_indexed(cmd, mesh_info.triangle_count * 3, 1, 0, 0, 0);
+                        }
+                    }
+
+                    // draw imgui
                     ui_platform.prepare_render(&ui, window);
 
                     let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
@@ -971,13 +975,12 @@ impl App {
         );
 
         schedule.run(
-            &context,
+            &base.context,
             cbar.pre_swapchain_cmd,
             cbar.post_swapchain_cmd,
             swap_image,
             &mut base.systems.query_pool,
         );
-        drop(ui);
 
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
         base.display.present(swap_vk_image, rendering_finished_semaphore);

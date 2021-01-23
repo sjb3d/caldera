@@ -468,12 +468,12 @@ struct CommandCommon {
 enum Command<'a> {
     Compute {
         common: CommandCommon,
-        callback: Box<dyn FnMut(RenderParameterAccess, vk::CommandBuffer) + 'a>,
+        callback: Box<dyn FnOnce(RenderParameterAccess, vk::CommandBuffer) + 'a>,
     },
     Graphics {
         common: CommandCommon,
         state: RenderState,
-        callback: Box<dyn FnMut(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'a>,
+        callback: Box<dyn FnOnce(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'a>,
     },
 }
 
@@ -613,7 +613,7 @@ impl<'a> RenderSchedule<'a> {
         &mut self,
         name: &'static CStr,
         decl: impl FnOnce(&mut RenderParameterDeclaration),
-        callback: impl FnMut(RenderParameterAccess, vk::CommandBuffer) + 'a,
+        callback: impl FnOnce(RenderParameterAccess, vk::CommandBuffer) + 'a,
     ) {
         let mut params = RenderParameterDeclaration::new();
         decl(&mut params);
@@ -628,7 +628,7 @@ impl<'a> RenderSchedule<'a> {
         name: &'static CStr,
         state: RenderState,
         decl: impl FnOnce(&mut RenderParameterDeclaration),
-        callback: impl FnMut(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'a,
+        callback: impl FnOnce(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'a,
     ) {
         let mut params = RenderParameterDeclaration::new();
         decl(&mut params);
@@ -744,13 +744,11 @@ impl<'a> RenderSchedule<'a> {
 
             let timestamp_name = common.name;
             match command {
-                Command::Compute { mut callback, .. } => {
+                Command::Compute { callback, .. } => {
                     query_pool.emit_timestamp(cmd.current, timestamp_name);
                     (callback)(RenderParameterAccess::new(self.render_graph), cmd.current);
                 }
-                Command::Graphics {
-                    state, mut callback, ..
-                } => {
+                Command::Graphics { state, callback, .. } => {
                     // TODO: initial layout as part of render pass (assumes UNDEFINED for now)
                     cmd.notify_image_use(state.color_output, query_pool);
 

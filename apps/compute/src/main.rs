@@ -74,14 +74,11 @@ impl App {
     }
 
     fn new(base: &mut AppBase) -> Self {
-        let context = &base.context;
         let descriptor_pool = &base.systems.descriptor_pool;
-        let global_allocator = &mut base.systems.global_allocator;
-        let resource_loader = &mut base.systems.resource_loader;
 
         let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(&descriptor_pool);
         let trace_pipeline_layout = unsafe {
-            context
+            base.context
                 .device
                 .create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0)
         }
@@ -89,14 +86,14 @@ impl App {
 
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(&descriptor_pool);
         let copy_pipeline_layout = unsafe {
-            context
+            base.context
                 .device
                 .create_pipeline_layout_from_ref(&copy_descriptor_set_layout.0)
         }
         .unwrap();
 
-        let sample_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let sample_image = base.systems.resource_loader.create_image();
+        base.systems.resource_loader.async_load(move |allocator| {
             const TILE_SIZE: u32 = 64;
             const PIXEL_COUNT: usize = (TILE_SIZE * TILE_SIZE) as usize;
 
@@ -133,27 +130,30 @@ impl App {
         });
 
         let trace_images = {
-            let render_graph = &mut base.systems.render_graph;
-            let trace_image_size = Self::trace_image_size();
-            let mut trace_image_alloc = || -> ImageHandle {
-                render_graph.create_image(
-                    &ImageDesc::new_2d(
-                        trace_image_size.x,
-                        trace_image_size.y,
-                        vk::Format::R32_SFLOAT,
-                        vk::ImageAspectFlags::COLOR,
-                    ),
-                    ImageUsage::FRAGMENT_STORAGE_READ
-                        | ImageUsage::COMPUTE_STORAGE_READ
-                        | ImageUsage::COMPUTE_STORAGE_WRITE,
-                    global_allocator,
-                )
+            let mut trace_image_alloc = {
+                let trace_image_size = Self::trace_image_size();
+                let render_graph = &mut base.systems.render_graph;
+                let global_allocator = &mut base.systems.global_allocator;
+                move || -> ImageHandle {
+                    render_graph.create_image(
+                        &ImageDesc::new_2d(
+                            trace_image_size.x,
+                            trace_image_size.y,
+                            vk::Format::R32_SFLOAT,
+                            vk::ImageAspectFlags::COLOR,
+                        ),
+                        ImageUsage::FRAGMENT_STORAGE_READ
+                            | ImageUsage::COMPUTE_STORAGE_READ
+                            | ImageUsage::COMPUTE_STORAGE_WRITE,
+                        global_allocator,
+                    )
+                }
             };
             (trace_image_alloc(), trace_image_alloc(), trace_image_alloc())
         };
 
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(&base.context),
 
             trace_descriptor_set_layout,
             trace_pipeline_layout,
@@ -191,26 +191,19 @@ impl App {
             });
 
         let cbar = base.systems.acquire_command_buffer();
-        let ui_platform = &mut base.ui_platform;
-        let ui_renderer = &mut base.ui_renderer;
-        let window = &base.window;
-        ui_renderer.begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
+        base.ui_renderer
+            .begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
 
         base.systems.draw_ui(&ui);
 
-        let mut ui = Some(ui);
-
         let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
 
-        let context = &base.context;
-        let descriptor_pool = &base.systems.descriptor_pool;
-        let pipeline_cache = &base.systems.pipeline_cache;
-        let resource_loader = &base.systems.resource_loader;
-
-        let sample_image_view = resource_loader.get_image_view(self.sample_image);
+        let sample_image_view = base.systems.resource_loader.get_image_view(self.sample_image);
 
         let trace_image_size = Self::trace_image_size();
-        let pass_count = if self.next_pass_index != self.target_pass_count && sample_image_view.is_some() {
+        let pass_count = if let Some(sample_image_view) =
+            sample_image_view.filter(|_| self.next_pass_index != self.target_pass_count)
+        {
             if self.next_pass_index > self.target_pass_count {
                 self.next_pass_index = 0;
             }
@@ -230,38 +223,48 @@ impl App {
                         ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
                     );
                 },
-                |params, cmd| {
-                    let trace_image_views = (
-                        params.get_image_view(self.trace_images.0),
-                        params.get_image_view(self.trace_images.1),
-                        params.get_image_view(self.trace_images.2),
-                    );
+                {
+                    let context = &base.context;
+                    let descriptor_pool = &base.systems.descriptor_pool;
+                    let pipeline_cache = &base.systems.pipeline_cache;
+                    let trace_images = &self.trace_images;
+                    let trace_descriptor_set_layout = &self.trace_descriptor_set_layout;
+                    let trace_pipeline_layout = self.trace_pipeline_layout;
+                    let next_pass_index = self.next_pass_index;
+                    move |params, cmd| {
+                        let sample_image_view = sample_image_view;
+                        let trace_image_views = (
+                            params.get_image_view(trace_images.0),
+                            params.get_image_view(trace_images.1),
+                            params.get_image_view(trace_images.2),
+                        );
 
-                    let descriptor_set = self.trace_descriptor_set_layout.write(
-                        &descriptor_pool,
-                        &|buf: &mut TraceData| {
-                            let dims_rcp = Vec2::broadcast(1.0) / trace_image_size.as_float();
-                            *buf = TraceData {
-                                dims: trace_image_size.into(),
-                                dims_rcp: dims_rcp.into(),
-                                pass_index: self.next_pass_index,
-                            };
-                        },
-                        trace_image_views.0,
-                        trace_image_views.1,
-                        trace_image_views.2,
-                        sample_image_view.unwrap(),
-                    );
+                        let descriptor_set = trace_descriptor_set_layout.write(
+                            &descriptor_pool,
+                            &|buf: &mut TraceData| {
+                                let dims_rcp = Vec2::broadcast(1.0) / trace_image_size.as_float();
+                                *buf = TraceData {
+                                    dims: trace_image_size.into(),
+                                    dims_rcp: dims_rcp.into(),
+                                    pass_index: next_pass_index,
+                                };
+                            },
+                            trace_image_views.0,
+                            trace_image_views.1,
+                            trace_image_views.2,
+                            sample_image_view,
+                        );
 
-                    dispatch_helper(
-                        &context.device,
-                        &pipeline_cache,
-                        cmd,
-                        self.trace_pipeline_layout,
-                        "compute/trace.comp.spv",
-                        descriptor_set,
-                        trace_image_size.div_round_up(16),
-                    );
+                        dispatch_helper(
+                            &context.device,
+                            &pipeline_cache,
+                            cmd,
+                            trace_pipeline_layout,
+                            "compute/trace.comp.spv",
+                            descriptor_set,
+                            trace_image_size.div_round_up(16),
+                        );
+                    }
                 },
             );
             self.next_pass_index + 1
@@ -295,42 +298,53 @@ impl App {
                 params.add_image(self.trace_images.1, ImageUsage::FRAGMENT_STORAGE_READ);
                 params.add_image(self.trace_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
             },
-            |params, cmd, render_pass| {
-                let trace_image_views = (
-                    params.get_image_view(self.trace_images.0),
-                    params.get_image_view(self.trace_images.1),
-                    params.get_image_view(self.trace_images.2),
-                );
-                let swap_size = UVec2::new(swap_extent.width, swap_extent.height);
+            {
+                let context = &base.context;
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                let trace_images = &self.trace_images;
+                let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
+                let log2_exposure_scale = self.log2_exposure_scale;
+                let copy_pipeline_layout = self.copy_pipeline_layout;
+                let window = &base.window;
+                let ui_platform = &mut base.ui_platform;
+                let ui_renderer = &mut base.ui_renderer;
+                move |params, cmd, render_pass| {
+                    let trace_image_views = (
+                        params.get_image_view(trace_images.0),
+                        params.get_image_view(trace_images.1),
+                        params.get_image_view(trace_images.2),
+                    );
+                    let swap_size = UVec2::new(swap_extent.width, swap_extent.height);
 
-                set_viewport_helper(&context.device, cmd, swap_extent);
+                    set_viewport_helper(&context.device, cmd, swap_extent);
 
-                let copy_descriptor_set = self.copy_descriptor_set_layout.write(
-                    &descriptor_pool,
-                    &|buf| {
-                        *buf = CopyData {
-                            offset: ((trace_image_size.as_signed() - swap_size.as_signed()) / 2).into(),
-                            trace_dims: trace_image_size.into(),
-                            trace_scale: self.log2_exposure_scale.exp2() / (pass_count as f32),
-                        };
-                    },
-                    trace_image_views.0,
-                    trace_image_views.1,
-                    trace_image_views.2,
-                );
-                draw_helper(
-                    &context.device,
-                    &pipeline_cache,
-                    cmd,
-                    self.copy_pipeline_layout,
-                    &GraphicsPipelineState::new(render_pass, main_sample_count),
-                    "compute/copy.vert.spv",
-                    "compute/copy.frag.spv",
-                    copy_descriptor_set,
-                    3,
-                );
+                    let copy_descriptor_set = copy_descriptor_set_layout.write(
+                        &descriptor_pool,
+                        &|buf| {
+                            *buf = CopyData {
+                                offset: ((trace_image_size.as_signed() - swap_size.as_signed()) / 2).into(),
+                                trace_dims: trace_image_size.into(),
+                                trace_scale: log2_exposure_scale.exp2() / (pass_count as f32),
+                            };
+                        },
+                        trace_image_views.0,
+                        trace_image_views.1,
+                        trace_image_views.2,
+                    );
+                    draw_helper(
+                        &context.device,
+                        &pipeline_cache,
+                        cmd,
+                        copy_pipeline_layout,
+                        &GraphicsPipelineState::new(render_pass, main_sample_count),
+                        "compute/copy.vert.spv",
+                        "compute/copy.frag.spv",
+                        copy_descriptor_set,
+                        3,
+                    );
 
-                if let Some(ui) = ui.take() {
+                    // draw imgui
                     ui_platform.prepare_render(&ui, window);
 
                     let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
@@ -340,13 +354,12 @@ impl App {
         );
 
         schedule.run(
-            &context,
+            &base.context,
             cbar.pre_swapchain_cmd,
             cbar.post_swapchain_cmd,
             swap_image,
             &mut base.systems.query_pool,
         );
-        drop(ui);
 
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
         base.display.present(swap_vk_image, rendering_finished_semaphore);
