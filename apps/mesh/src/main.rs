@@ -937,7 +937,7 @@ impl App {
         .with_samples(main_sample_count);
         let depth_image = schedule.describe_image(&depth_image_desc);
         let mut main_render_state =
-            RenderState::new(swap_image, &[0f32, 0f32, 0f32, 0f32]).with_depth_temp(depth_image);
+            RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]).with_depth_temp(depth_image);
         if main_sample_count != vk::SampleCountFlags::N1 {
             let msaa_image = schedule.describe_image(
                 &ImageDesc::new_2d(

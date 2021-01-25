@@ -12,7 +12,7 @@ void main()
     const uint trace_output = imageLoad(g_trace_output, ivec2(gl_FragCoord.xy)).x;
     const vec3 normal = normalize(vec_from_oct32(trace_output));
 
-    const vec3 col = (trace_output == 0) ? vec3(0.f) : (.5f*normal + .5f);
+    const vec3 col = (trace_output == 0) ? vec3(.1f) : (.5f*normal + .5f);
 
     o_col = vec4(col, 1.f);
 }
