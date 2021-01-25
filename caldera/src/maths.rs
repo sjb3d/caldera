@@ -1,15 +1,6 @@
 use std::convert::TryInto;
 use std::ops::Mul;
-pub use ultraviolet as uv;
-
-pub type Vec2 = uv::Vec2;
-pub type UVec2 = uv::UVec2;
-pub type IVec2 = uv::IVec2;
-
-pub type Vec3 = uv::Vec3;
-
-pub type Mat3 = uv::Mat3;
-pub type Mat4 = uv::Mat4;
+pub use ultraviolet::*;
 
 pub trait AsSigned {
     type Output;
@@ -49,7 +40,7 @@ pub trait IntoTransposedTransform {
     fn into_transposed_transform(&self) -> [f32; 12];
 }
 
-impl IntoTransposedTransform for uv::Similarity3 {
+impl IntoTransposedTransform for Similarity3 {
     fn into_transposed_transform(&self) -> [f32; 12] {
         self.into_homogeneous_matrix().transposed().as_slice()[..12]
             .try_into()

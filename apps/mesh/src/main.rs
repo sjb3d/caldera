@@ -91,7 +91,7 @@ impl ply::PropertyAccess for PlyFace {
 struct MeshInfo {
     vertex_buffer: StaticBufferHandle,
     index_buffer: StaticBufferHandle,
-    instances: [uv::Similarity3; Self::INSTANCE_COUNT],
+    instances: [Similarity3; Self::INSTANCE_COUNT],
     instance_buffer: StaticBufferHandle,
     vertex_count: u32,
     triangle_count: u32,
@@ -104,7 +104,7 @@ impl MeshInfo {
         Self {
             vertex_buffer: resource_loader.create_buffer(),
             index_buffer: resource_loader.create_buffer(),
-            instances: [uv::Similarity3::identity(); Self::INSTANCE_COUNT],
+            instances: [Similarity3::identity(); Self::INSTANCE_COUNT],
             instance_buffer: resource_loader.create_buffer(),
             vertex_count: 0,
             triangle_count: 0,
@@ -167,9 +167,9 @@ impl MeshInfo {
         let offset = (-0.5 * scale) * (max + min);
         for i in 0..Self::INSTANCE_COUNT {
             let corner = |i: usize, b| if ((i >> b) & 1usize) != 0usize { 0.5 } else { -0.5 };
-            self.instances[i] = uv::Similarity3::new(
+            self.instances[i] = Similarity3::new(
                 offset + Vec3::new(corner(i, 0), corner(i, 1), corner(i, 2)),
-                uv::Rotor3::identity(),
+                Rotor3::identity(),
                 scale,
             );
         }
@@ -864,15 +864,14 @@ impl App {
         let index_buffer = base.systems.resource_loader.get_buffer(mesh_info.index_buffer);
         let instance_buffer = base.systems.resource_loader.get_buffer(mesh_info.instance_buffer);
 
-        let view_from_world = uv::Isometry3::new(
+        let view_from_world = Isometry3::new(
             Vec3::new(0.0, 0.0, -8.0),
-            uv::Rotor3::from_rotation_yz(0.5) * uv::Rotor3::from_rotation_xz(self.angle),
+            Rotor3::from_rotation_yz(0.5) * Rotor3::from_rotation_xz(self.angle),
         );
 
         let vertical_fov = 0.5;
         let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
-        let proj_from_view =
-            uv::projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
+        let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
         if base.context.device.extensions.khr_acceleration_structure
             && self.accel_info.is_none()
