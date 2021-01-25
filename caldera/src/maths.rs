@@ -2,6 +2,8 @@ use std::convert::TryInto;
 use std::ops::Mul;
 pub use ultraviolet::*;
 
+pub const PI: f32 = 3.1415926536;
+
 pub trait AsSigned {
     type Output;
     fn as_signed(&self) -> Self::Output;

@@ -14,22 +14,27 @@ use winit::{
 };
 
 #[derive(Clone, Copy)]
-#[repr(C)]
 struct PlyVertex {
-    x: f32,
-    y: f32,
-    z: f32,
+    pos: Vec3,
 }
 
 #[derive(Clone, Copy)]
-#[repr(C)]
 struct PlyFace {
-    indices: [u32; 3],
+    indices: UVec3,
 }
 
-#[derive(Clone, Copy)]
 #[repr(C)]
-struct PlyInstance {
+struct PositionData {
+    pos: [f32; 3],
+}
+
+#[repr(C)]
+struct AttributeData {
+    normal: [f32; 3],
+}
+
+#[repr(C)]
+struct InstanceData {
     matrix: [f32; 12],
 }
 
@@ -58,13 +63,13 @@ descriptor_set_layout!(CopyDescriptorSetLayout { ids: StorageImage });
 
 impl ply::PropertyAccess for PlyVertex {
     fn new() -> Self {
-        Self { x: 0.0, y: 0.0, z: 0.0 }
+        Self { pos: Vec3::zero() }
     }
     fn set_property(&mut self, key: String, property: ply::Property) {
         match (key.as_ref(), property) {
-            ("x", ply::Property::Float(v)) => self.x = v,
-            ("y", ply::Property::Float(v)) => self.y = v,
-            ("z", ply::Property::Float(v)) => self.z = v,
+            ("x", ply::Property::Float(v)) => self.pos.x = v,
+            ("y", ply::Property::Float(v)) => self.pos.y = v,
+            ("z", ply::Property::Float(v)) => self.pos.z = v,
             _ => {}
         }
     }
@@ -72,13 +77,13 @@ impl ply::PropertyAccess for PlyVertex {
 
 impl ply::PropertyAccess for PlyFace {
     fn new() -> Self {
-        Self { indices: [0, 0, 0] }
+        Self { indices: UVec3::zero() }
     }
     fn set_property(&mut self, key: String, property: ply::Property) {
         match (key.as_ref(), property) {
             ("vertex_indices", ply::Property::ListInt(v)) => {
                 assert_eq!(v.len(), 3);
-                for (dst, src) in self.indices.iter_mut().zip(v.iter().rev()) {
+                for (dst, src) in self.indices.as_mut_slice().iter_mut().zip(v.iter().rev()) {
                     *dst = *src as u32;
                 }
             }
@@ -89,7 +94,8 @@ impl ply::PropertyAccess for PlyFace {
 
 #[derive(Clone, Copy)]
 struct MeshInfo {
-    vertex_buffer: StaticBufferHandle,
+    position_buffer: StaticBufferHandle,
+    attribute_buffer: StaticBufferHandle,
     index_buffer: StaticBufferHandle,
     instances: [Similarity3; Self::INSTANCE_COUNT],
     instance_buffer: StaticBufferHandle,
@@ -102,7 +108,8 @@ impl MeshInfo {
 
     fn new(resource_loader: &mut ResourceLoader) -> Self {
         Self {
-            vertex_buffer: resource_loader.create_buffer(),
+            position_buffer: resource_loader.create_buffer(),
+            attribute_buffer: resource_loader.create_buffer(),
             index_buffer: resource_loader.create_buffer(),
             instances: [Similarity3::identity(); Self::INSTANCE_COUNT],
             instance_buffer: resource_loader.create_buffer(),
@@ -111,7 +118,7 @@ impl MeshInfo {
         }
     }
 
-    fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &str, extra_buffer_usage: BufferUsage) {
+    fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &str, with_ray_tracing: bool) {
         let vertex_parser = parser::Parser::<PlyVertex>::new();
         let face_parser = parser::Parser::<PlyFace>::new();
 
@@ -134,34 +141,73 @@ impl MeshInfo {
             }
         }
 
-        let vertex_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<PlyVertex>()) as u32);
+        let position_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<PositionData>()) as u32);
         let mut mapping = allocator
-            .map_buffer::<PlyVertex>(
-                self.vertex_buffer,
-                &vertex_buffer_desc,
-                BufferUsage::VERTEX_BUFFER | extra_buffer_usage,
+            .map_buffer::<PositionData>(
+                self.position_buffer,
+                &position_buffer_desc,
+                if with_ray_tracing {
+                    BufferUsage::VERTEX_BUFFER | BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
+                } else {
+                    BufferUsage::VERTEX_BUFFER
+                },
             )
             .unwrap();
         let mut min = Vec3::broadcast(f32::MAX);
         let mut max = Vec3::broadcast(-f32::MAX);
         for (dst, src) in mapping.get_mut().iter_mut().zip(vertices.iter()) {
-            *dst = *src;
-            let v = Vec3::new(src.x, src.y, src.z);
+            let v = src.pos;
+            dst.pos = *v.as_array();
             min = min.min_by_component(v);
             max = max.max_by_component(v);
         }
         self.vertex_count = vertices.len() as u32;
 
-        let index_buffer_desc = BufferDesc::new((faces.len() * mem::size_of::<PlyFace>()) as u32);
+        let index_buffer_desc = BufferDesc::new((faces.len() * 3 * mem::size_of::<u32>()) as u32);
         let mut mapping = allocator
-            .map_buffer::<PlyFace>(
+            .map_buffer::<u32>(
                 self.index_buffer,
                 &index_buffer_desc,
-                BufferUsage::INDEX_BUFFER | extra_buffer_usage,
+                if with_ray_tracing {
+                    BufferUsage::INDEX_BUFFER | BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
+                } else {
+                    BufferUsage::INDEX_BUFFER
+                },
             )
             .unwrap();
-        mapping.get_mut().copy_from_slice(&faces);
+        let mut normals = vec![Vec3::zero(); vertices.len()];
+        for (dst, src) in mapping.get_mut().chunks_mut(3).zip(faces.iter()) {
+            for i in 0..3 {
+                dst[i] = src.indices[i];
+            }
+            let v0 = vertices[src.indices[0] as usize].pos;
+            let v1 = vertices[src.indices[1] as usize].pos;
+            let v2 = vertices[src.indices[2] as usize].pos;
+            let normal = (v2 - v0).cross(v1 - v0).normalized();
+            if !normal.x.is_nan() && !normal.y.is_nan() && !normal.z.is_nan() {
+                // TODO: weight by angle at vertex?
+                normals[src.indices[0] as usize] += normal;
+                normals[src.indices[1] as usize] += normal;
+                normals[src.indices[2] as usize] += normal;
+            }
+        }
         self.triangle_count = faces.len() as u32;
+
+        let attribute_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<AttributeData>()) as u32);
+        let mut mapping = allocator
+            .map_buffer::<AttributeData>(
+                self.attribute_buffer,
+                &attribute_buffer_desc,
+                if with_ray_tracing {
+                    BufferUsage::VERTEX_BUFFER | BufferUsage::RAY_TRACING_STORAGE_READ
+                } else {
+                    BufferUsage::VERTEX_BUFFER
+                },
+            )
+            .unwrap();
+        for (dst, src) in mapping.get_mut().iter_mut().zip(normals.iter()) {
+            dst.normal = *src.as_array();
+        }
 
         let scale = 0.9 / (max - min).component_max();
         let offset = (-0.5 * scale) * (max + min);
@@ -174,12 +220,12 @@ impl MeshInfo {
             );
         }
 
-        let instance_buffer_desc = BufferDesc::new((Self::INSTANCE_COUNT * mem::size_of::<PlyInstance>()) as u32);
+        let instance_buffer_desc = BufferDesc::new((Self::INSTANCE_COUNT * mem::size_of::<InstanceData>()) as u32);
         let mut mapping = allocator
-            .map_buffer::<PlyInstance>(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
+            .map_buffer::<InstanceData>(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
             .unwrap();
         for (dst, src) in mapping.get_mut().iter_mut().zip(self.instances.iter()) {
-            *dst = PlyInstance {
+            *dst = InstanceData {
                 matrix: src.into_transposed_transform(),
             };
         }
@@ -199,12 +245,12 @@ impl AccelLevel {
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> AccelLevel {
-        let vertex_buffer = resource_loader.get_buffer(mesh_info.vertex_buffer).unwrap();
+        let position_buffer = resource_loader.get_buffer(mesh_info.position_buffer).unwrap();
         let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
 
         let vertex_buffer_address = {
             let info = vk::BufferDeviceAddressInfo {
-                buffer: Some(vertex_buffer),
+                buffer: Some(position_buffer),
                 ..Default::default()
             };
             unsafe { context.device.get_buffer_device_address(&info) }
@@ -727,6 +773,7 @@ struct App {
     mesh_info: Arc<Mutex<MeshInfo>>,
     accel_info: Option<AccelInfo>,
     render_mode: RenderMode,
+    is_rotating: bool,
     angle: f32,
 }
 
@@ -751,18 +798,13 @@ impl App {
         }
         .unwrap();
 
-        let extra_buffer_usage = if context.device.extensions.khr_acceleration_structure {
-            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
-        } else {
-            BufferUsage::empty()
-        };
-
         let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
         base.systems.resource_loader.async_load({
             let mesh_info = Arc::clone(&mesh_info);
+            let with_ray_tracing = context.device.extensions.khr_acceleration_structure;
             move |allocator| {
                 let mut mesh_info_clone = *mesh_info.lock().unwrap();
-                mesh_info_clone.load(allocator, &mesh_file_name, extra_buffer_usage);
+                mesh_info_clone.load(allocator, &mesh_file_name, with_ray_tracing);
                 *mesh_info.lock().unwrap() = mesh_info_clone;
             }
         });
@@ -776,7 +818,8 @@ impl App {
             mesh_info,
             accel_info: None,
             render_mode: RenderMode::Raster,
-            angle: 0.0,
+            is_rotating: false,
+            angle: PI / 8.0,
         }
     }
 
@@ -792,6 +835,7 @@ impl App {
                 let ui = &ui;
                 let context = &base.context;
                 let render_mode = &mut self.render_mode;
+                let is_rotating = &mut self.is_rotating;
                 move || {
                     ui.text("Render Mode:");
                     ui.radio_button(im_str!("Raster"), render_mode, RenderMode::Raster);
@@ -805,6 +849,7 @@ impl App {
                     } else {
                         ui.text_disabled("Ray Tracing Not Supported!");
                     }
+                    ui.checkbox(im_str!("Rotate"), is_rotating);
                 }
             });
 
@@ -860,22 +905,24 @@ impl App {
         }
 
         let mesh_info = *self.mesh_info.lock().unwrap();
-        let vertex_buffer = base.systems.resource_loader.get_buffer(mesh_info.vertex_buffer);
+        let position_buffer = base.systems.resource_loader.get_buffer(mesh_info.position_buffer);
+        let attribute_buffer = base.systems.resource_loader.get_buffer(mesh_info.attribute_buffer);
         let index_buffer = base.systems.resource_loader.get_buffer(mesh_info.index_buffer);
         let instance_buffer = base.systems.resource_loader.get_buffer(mesh_info.instance_buffer);
 
         let view_from_world = Isometry3::new(
-            Vec3::new(0.0, 0.0, -8.0),
+            Vec3::new(0.0, 0.0, -6.0),
             Rotor3::from_rotation_yz(0.5) * Rotor3::from_rotation_xz(self.angle),
         );
 
-        let vertical_fov = 0.5;
+        let vertical_fov = PI / 7.0;
         let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
         if base.context.device.extensions.khr_acceleration_structure
             && self.accel_info.is_none()
-            && vertex_buffer.is_some()
+            && position_buffer.is_some()
+            && attribute_buffer.is_some()
             && index_buffer.is_some()
         {
             self.accel_info = Some(AccelInfo::new(
@@ -970,8 +1017,12 @@ impl App {
                             copy_descriptor_set,
                             3,
                         );
-                    } else if let (Some(vertex_buffer), Some(index_buffer), Some(instance_buffer)) =
-                        (vertex_buffer, index_buffer, instance_buffer)
+                    } else if let (
+                        Some(position_buffer),
+                        Some(attribute_buffer),
+                        Some(index_buffer),
+                        Some(instance_buffer),
+                    ) = (position_buffer, attribute_buffer, index_buffer, instance_buffer)
                     {
                         let test_descriptor_set = test_descriptor_set_layout.write(&descriptor_pool, &|buf| {
                             *buf = TestData {
@@ -984,12 +1035,17 @@ impl App {
                             &[
                                 vk::VertexInputBindingDescription {
                                     binding: 0,
-                                    stride: mem::size_of::<PlyVertex>() as u32,
+                                    stride: mem::size_of::<PositionData>() as u32,
                                     input_rate: vk::VertexInputRate::VERTEX,
                                 },
                                 vk::VertexInputBindingDescription {
                                     binding: 1,
-                                    stride: mem::size_of::<PlyInstance>() as u32,
+                                    stride: mem::size_of::<AttributeData>() as u32,
+                                    input_rate: vk::VertexInputRate::VERTEX,
+                                },
+                                vk::VertexInputBindingDescription {
+                                    binding: 2,
+                                    stride: mem::size_of::<InstanceData>() as u32,
                                     input_rate: vk::VertexInputRate::INSTANCE,
                                 },
                             ],
@@ -1003,18 +1059,24 @@ impl App {
                                 vk::VertexInputAttributeDescription {
                                     location: 1,
                                     binding: 1,
-                                    format: vk::Format::R32G32B32A32_SFLOAT,
+                                    format: vk::Format::R32G32B32_SFLOAT,
                                     offset: 0,
                                 },
                                 vk::VertexInputAttributeDescription {
                                     location: 2,
-                                    binding: 1,
+                                    binding: 2,
+                                    format: vk::Format::R32G32B32A32_SFLOAT,
+                                    offset: 0,
+                                },
+                                vk::VertexInputAttributeDescription {
+                                    location: 3,
+                                    binding: 2,
                                     format: vk::Format::R32G32B32A32_SFLOAT,
                                     offset: 16,
                                 },
                                 vk::VertexInputAttributeDescription {
-                                    location: 3,
-                                    binding: 1,
+                                    location: 4,
+                                    binding: 2,
                                     format: vk::Format::R32G32B32A32_SFLOAT,
                                     offset: 32,
                                 },
@@ -1038,9 +1100,12 @@ impl App {
                                 slice::from_ref(&test_descriptor_set),
                                 &[],
                             );
-                            context
-                                .device
-                                .cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer, instance_buffer], &[0, 0]);
+                            context.device.cmd_bind_vertex_buffers(
+                                cmd,
+                                0,
+                                &[position_buffer, attribute_buffer, instance_buffer],
+                                &[0, 0, 0],
+                            );
                             context
                                 .device
                                 .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
@@ -1075,7 +1140,9 @@ impl App {
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
         base.display.present(swap_vk_image, rendering_finished_semaphore);
 
-        self.angle += base.ui_context.io().delta_time;
+        if self.is_rotating {
+            self.angle += base.ui_context.io().delta_time;
+        }
     }
 }
 
@@ -1106,7 +1173,6 @@ fn main() {
     let mut params = ContextParams {
         version: vk::Version::from_raw_parts(1, 1, 0), // Vulkan 1.1 needed for ray tracing
         allow_ray_tracing: true,
-        enable_geometry_shader: true, // for gl_PrimitiveID in fragment shader
         ..Default::default()
     };
     let mut mesh_file_name = None;
@@ -1131,7 +1197,7 @@ fn main() {
 
     let window = WindowBuilder::new()
         .with_title("mesh")
-        .with_inner_size(Size::Logical(LogicalSize::new(640.0, 480.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(1920.0, 1080.0)))
         .build(&event_loop)
         .unwrap();
 

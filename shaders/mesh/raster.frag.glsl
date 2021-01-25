@@ -1,14 +1,12 @@
 #version 460 core
 
-#extension GL_GOOGLE_include_directive : require
-#include "sampler.glsl"
+layout(location = 0) in vec3 v_normal;
 
 layout(location = 0) out vec4 o_col;
 
 void main()
 {
-    const uint id = 1 + gl_PrimitiveID;
-    const vec3 col = unpackUnorm4x8(hash(id)).xyz;
+    const vec3 normal = normalize(v_normal);
 
-    o_col = vec4(col, 0.f);
+    o_col = vec4(.5f*normal + .5f, 0.f);
 }

@@ -32,6 +32,7 @@ impl BufferUsage {
     pub const ACCELERATION_STRUCTURE_WRITE: BufferUsage = BufferUsage(0x40);
     pub const ACCELERATION_STRUCTURE_READ: BufferUsage = BufferUsage(0x80);
     pub const SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x100);
+    pub const RAY_TRACING_STORAGE_READ: BufferUsage = BufferUsage(0x200);
 
     pub fn empty() -> Self {
         Self(0)
@@ -78,6 +79,9 @@ impl BufferUsage {
                 Self::SHADER_BINDING_TABLE => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
                 }
+                Self::RAY_TRACING_STORAGE_READ => {
+                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::STORAGE_BUFFER
+                }
                 _ => unimplemented!(),
             })
             .fold(vk::BufferUsageFlags::empty(), |m, u| m | u)
@@ -95,6 +99,7 @@ impl BufferUsage {
                 Self::ACCELERATION_STRUCTURE_WRITE => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
                 Self::ACCELERATION_STRUCTURE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 Self::SHADER_BINDING_TABLE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                Self::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 _ => unimplemented!(),
             })
             .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
@@ -114,6 +119,7 @@ impl BufferUsage {
                 Self::ACCELERATION_STRUCTURE_WRITE => vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
                 Self::ACCELERATION_STRUCTURE_READ => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
                 Self::SHADER_BINDING_TABLE => vk::AccessFlags::SHADER_READ,
+                Self::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
                 _ => unimplemented!(),
             })
             .fold(vk::AccessFlags::empty(), |m, u| m | u)
