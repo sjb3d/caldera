@@ -27,9 +27,15 @@ struct PlyFace {
     indices: [u32; 3],
 }
 
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct PlyInstance {
+    matrix: [f32; 12],
+}
+
 #[repr(C)]
 struct TestData {
-    proj_from_local: [f32; 16],
+    proj_from_world: [f32; 16],
 }
 
 descriptor_set_layout!(TestDescriptorSetLayout {
@@ -85,21 +91,97 @@ impl ply::PropertyAccess for PlyFace {
 struct MeshInfo {
     vertex_buffer: StaticBufferHandle,
     index_buffer: StaticBufferHandle,
-    min: Vec3,
-    max: Vec3,
+    instances: [uv::Similarity3; Self::INSTANCE_COUNT],
+    instance_buffer: StaticBufferHandle,
     vertex_count: u32,
     triangle_count: u32,
 }
 
 impl MeshInfo {
+    const INSTANCE_COUNT: usize = 8;
+
     fn new(resource_loader: &mut ResourceLoader) -> Self {
         Self {
             vertex_buffer: resource_loader.create_buffer(),
             index_buffer: resource_loader.create_buffer(),
-            min: Vec3::broadcast(f32::MAX),
-            max: Vec3::broadcast(-f32::MAX),
+            instances: [uv::Similarity3::identity(); Self::INSTANCE_COUNT],
+            instance_buffer: resource_loader.create_buffer(),
             vertex_count: 0,
             triangle_count: 0,
+        }
+    }
+
+    fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &str, extra_buffer_usage: BufferUsage) {
+        let vertex_parser = parser::Parser::<PlyVertex>::new();
+        let face_parser = parser::Parser::<PlyFace>::new();
+
+        let mut f = io::BufReader::new(fs::File::open(mesh_file_name).unwrap());
+        let header = vertex_parser.read_header(&mut f).unwrap();
+
+        let mut vertices = Vec::new();
+        let mut faces = Vec::new();
+        for (_key, element) in header.elements.iter() {
+            match element.name.as_ref() {
+                "vertex" => {
+                    vertices = vertex_parser
+                        .read_payload_for_element(&mut f, element, &header)
+                        .unwrap();
+                }
+                "face" => {
+                    faces = face_parser.read_payload_for_element(&mut f, element, &header).unwrap();
+                }
+                _ => panic!("unexpected element {:?}", element),
+            }
+        }
+
+        let vertex_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<PlyVertex>()) as u32);
+        let mut mapping = allocator
+            .map_buffer::<PlyVertex>(
+                self.vertex_buffer,
+                &vertex_buffer_desc,
+                BufferUsage::VERTEX_BUFFER | extra_buffer_usage,
+            )
+            .unwrap();
+        let mut min = Vec3::broadcast(f32::MAX);
+        let mut max = Vec3::broadcast(-f32::MAX);
+        for (dst, src) in mapping.get_mut().iter_mut().zip(vertices.iter()) {
+            *dst = *src;
+            let v = Vec3::new(src.x, src.y, src.z);
+            min = min.min_by_component(v);
+            max = max.max_by_component(v);
+        }
+        self.vertex_count = vertices.len() as u32;
+
+        let index_buffer_desc = BufferDesc::new((faces.len() * mem::size_of::<PlyFace>()) as u32);
+        let mut mapping = allocator
+            .map_buffer::<PlyFace>(
+                self.index_buffer,
+                &index_buffer_desc,
+                BufferUsage::INDEX_BUFFER | extra_buffer_usage,
+            )
+            .unwrap();
+        mapping.get_mut().copy_from_slice(&faces);
+        self.triangle_count = faces.len() as u32;
+
+        let scale = 0.9 / (max - min).component_max();
+        let offset = (-0.5 * scale) * (max + min);
+        for i in 0..Self::INSTANCE_COUNT {
+            let corner = |i: usize, b| if ((i >> b) & 1usize) != 0usize { 0.5 } else { -0.5 };
+            self.instances[i] = uv::Similarity3::new(
+                offset + Vec3::new(corner(i, 0), corner(i, 1), corner(i, 2)),
+                uv::Rotor3::identity(),
+                scale,
+            );
+        }
+
+        let instance_buffer_desc = BufferDesc::new((Self::INSTANCE_COUNT * mem::size_of::<PlyInstance>()) as u32);
+        let mut mapping = allocator
+            .map_buffer::<PlyInstance>(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
+            .unwrap();
+        for (dst, src) in mapping.get_mut().iter_mut().zip(self.instances.iter()) {
+            *dst = PlyInstance {
+                matrix: src.into_transposed_transform(),
+            };
         }
     }
 }
@@ -289,7 +371,7 @@ impl AccelLevel {
             ..Default::default()
         };
 
-        let instance_count = 1;
+        let instance_count = MeshInfo::INSTANCE_COUNT as u32;
         let sizes = {
             let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
             unsafe {
@@ -461,8 +543,11 @@ impl AccelInfo {
 
         let instance_buffer = resource_loader.create_buffer();
         resource_loader.async_load({
+            let instances = mesh_info.instances;
             move |allocator| {
-                let desc = BufferDesc::new(mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u32);
+                let desc = BufferDesc::new(
+                    (MeshInfo::INSTANCE_COUNT * mem::size_of::<vk::AccelerationStructureInstanceKHR>()) as u32,
+                );
                 let mut mapping = allocator
                     .map_buffer::<vk::AccelerationStructureInstanceKHR>(
                         instance_buffer,
@@ -471,16 +556,16 @@ impl AccelInfo {
                     )
                     .unwrap();
 
-                mapping
-                    .get_mut()
-                    .copy_from_slice(&[vk::AccelerationStructureInstanceKHR {
+                for (dst, src) in mapping.get_mut().iter_mut().zip(instances.iter()) {
+                    *dst = vk::AccelerationStructureInstanceKHR {
                         transform: vk::TransformMatrixKHR {
-                            matrix: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                            matrix: src.into_transposed_transform(),
                         },
                         instance_custom_index_and_mask: 0xff_00_00_00,
                         instance_shader_binding_table_record_offset_and_flags: 0,
                         acceleration_structure_reference: bottom_level_device_address,
-                    }]);
+                    };
+                }
             }
         });
 
@@ -623,6 +708,13 @@ impl AccelInfo {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RenderMode {
+    Raster,
+    RasterMultisampled,
+    RayTrace,
+}
+
 struct App {
     context: Arc<Context>,
 
@@ -634,8 +726,7 @@ struct App {
 
     mesh_info: Arc<Mutex<MeshInfo>>,
     accel_info: Option<AccelInfo>,
-    use_msaa: bool,
-    show_trace: bool,
+    render_mode: RenderMode,
     angle: f32,
 }
 
@@ -670,58 +761,9 @@ impl App {
         base.systems.resource_loader.async_load({
             let mesh_info = Arc::clone(&mesh_info);
             move |allocator| {
-                let vertex_parser = parser::Parser::<PlyVertex>::new();
-                let face_parser = parser::Parser::<PlyFace>::new();
-
-                let mut f = io::BufReader::new(fs::File::open(mesh_file_name).unwrap());
-                let header = vertex_parser.read_header(&mut f).unwrap();
-
-                let mut vertices = Vec::new();
-                let mut faces = Vec::new();
-                for (_key, element) in header.elements.iter() {
-                    match element.name.as_ref() {
-                        "vertex" => {
-                            vertices = vertex_parser
-                                .read_payload_for_element(&mut f, element, &header)
-                                .unwrap();
-                        }
-                        "face" => {
-                            faces = face_parser.read_payload_for_element(&mut f, element, &header).unwrap();
-                        }
-                        _ => panic!("unexpected element {:?}", element),
-                    }
-                }
-
-                let mut mi = *mesh_info.lock().unwrap();
-
-                let vertex_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<PlyVertex>()) as u32);
-                let mut mapping = allocator
-                    .map_buffer::<PlyVertex>(
-                        mi.vertex_buffer,
-                        &vertex_buffer_desc,
-                        BufferUsage::VERTEX_BUFFER | extra_buffer_usage,
-                    )
-                    .unwrap();
-                for (dst, src) in mapping.get_mut().iter_mut().zip(vertices.iter()) {
-                    *dst = *src;
-                    let v = Vec3::new(src.x, src.y, src.z);
-                    mi.min = mi.min.min_by_component(v);
-                    mi.max = mi.max.max_by_component(v);
-                }
-                mi.vertex_count = vertices.len() as u32;
-
-                let index_buffer_desc = BufferDesc::new((faces.len() * mem::size_of::<PlyFace>()) as u32);
-                let mut mapping = allocator
-                    .map_buffer::<PlyFace>(
-                        mi.index_buffer,
-                        &index_buffer_desc,
-                        BufferUsage::INDEX_BUFFER | extra_buffer_usage,
-                    )
-                    .unwrap();
-                mapping.get_mut().copy_from_slice(&faces);
-                mi.triangle_count = faces.len() as u32;
-
-                *mesh_info.lock().unwrap() = mi;
+                let mut mesh_info_clone = *mesh_info.lock().unwrap();
+                mesh_info_clone.load(allocator, &mesh_file_name, extra_buffer_usage);
+                *mesh_info.lock().unwrap() = mesh_info_clone;
             }
         });
 
@@ -733,8 +775,7 @@ impl App {
             copy_pipeline_layout,
             mesh_info,
             accel_info: None,
-            use_msaa: false,
-            show_trace: true,
+            render_mode: RenderMode::Raster,
             angle: 0.0,
         }
     }
@@ -747,9 +788,24 @@ impl App {
         imgui::Window::new(im_str!("Debug"))
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, || {
-                ui.checkbox(im_str!("Use MSAA"), &mut self.use_msaa);
-                ui.checkbox(im_str!("Show Trace"), &mut self.show_trace);
+            .build(&ui, {
+                let ui = &ui;
+                let context = &base.context;
+                let render_mode = &mut self.render_mode;
+                move || {
+                    ui.text("Render Mode:");
+                    ui.radio_button(im_str!("Raster"), render_mode, RenderMode::Raster);
+                    ui.radio_button(
+                        im_str!("Raster (Multisampled)"),
+                        render_mode,
+                        RenderMode::RasterMultisampled,
+                    );
+                    if context.device.extensions.khr_acceleration_structure {
+                        ui.radio_button(im_str!("Ray Trace"), render_mode, RenderMode::RayTrace);
+                    } else {
+                        ui.text_disabled("Ray Tracing Not Supported!");
+                    }
+                }
             });
 
         let cbar = base.systems.acquire_command_buffer();
@@ -775,7 +831,7 @@ impl App {
             ImageUsage::empty(),
         );
 
-        let main_sample_count = if self.use_msaa {
+        let main_sample_count = if matches!(self.render_mode, RenderMode::RasterMultisampled) {
             vk::SampleCountFlags::N4
         } else {
             vk::SampleCountFlags::N1
@@ -806,15 +862,12 @@ impl App {
         let mesh_info = *self.mesh_info.lock().unwrap();
         let vertex_buffer = base.systems.resource_loader.get_buffer(mesh_info.vertex_buffer);
         let index_buffer = base.systems.resource_loader.get_buffer(mesh_info.index_buffer);
+        let instance_buffer = base.systems.resource_loader.get_buffer(mesh_info.instance_buffer);
 
-        let centre = 0.5 * (mesh_info.max + mesh_info.min);
-        let half_size = 0.5 * (mesh_info.max - mesh_info.min).component_max();
-        let world_from_local = uv::Isometry3::new(-centre, uv::Rotor3::identity());
         let view_from_world = uv::Isometry3::new(
-            Vec3::new(0.0, 0.0, -8.0 * half_size),
-            uv::Rotor3::from_rotation_xz(self.angle) * uv::Rotor3::from_rotation_xy(0.5),
+            Vec3::new(0.0, 0.0, -8.0),
+            uv::Rotor3::from_rotation_yz(0.5) * uv::Rotor3::from_rotation_xz(self.angle),
         );
-        let view_from_local = view_from_world * world_from_local;
 
         let vertical_fov = 0.5;
         let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
@@ -844,20 +897,24 @@ impl App {
                 &mut schedule,
             );
         }
-        let trace_image = if let Some(accel_info) = self.accel_info.as_ref().filter(|_| self.show_trace) {
-            let local_from_view = view_from_local.inversed();
+        let trace_image = if let Some(accel_info) = self
+            .accel_info
+            .as_ref()
+            .filter(|_| matches!(self.render_mode, RenderMode::RayTrace))
+        {
+            let world_from_view = view_from_world.inversed();
 
             let xy_from_st =
                 Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * vertical_fov).tan(), Vec2::zero());
             let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
             let coord_from_uv = Scale2Offset2::new(
                 UVec2::new(swap_extent.width, swap_extent.height).as_float(),
-                Vec2::broadcast(0.5),
+                Vec2::broadcast(-0.5), // coord is pixel centre
             );
             let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
 
-            let ray_origin = local_from_view.translation;
-            let ray_vec_from_coord = local_from_view.rotation.into_matrix()
+            let ray_origin = world_from_view.translation;
+            let ray_vec_from_coord = world_from_view.rotation.into_matrix()
                 * Mat3::from_scale(-1.0)
                 * xy_from_coord.into_homogeneous_matrix();
 
@@ -914,30 +971,59 @@ impl App {
                             copy_descriptor_set,
                             3,
                         );
-                    } else if let (Some(vertex_buffer), Some(index_buffer)) = (vertex_buffer, index_buffer) {
+                    } else if let (Some(vertex_buffer), Some(index_buffer), Some(instance_buffer)) =
+                        (vertex_buffer, index_buffer, instance_buffer)
+                    {
                         let test_descriptor_set = test_descriptor_set_layout.write(&descriptor_pool, &|buf| {
                             *buf = TestData {
-                                proj_from_local: *(proj_from_view * view_from_local.into_homogeneous_matrix())
+                                proj_from_world: *(proj_from_view * view_from_world.into_homogeneous_matrix())
                                     .as_array(),
                             };
                         });
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count).with_vertex_inputs(
-                            &[vk::VertexInputBindingDescription {
-                                binding: 0,
-                                stride: mem::size_of::<PlyVertex>() as u32,
-                                input_rate: vk::VertexInputRate::VERTEX,
-                            }],
-                            &[vk::VertexInputAttributeDescription {
-                                location: 0,
-                                binding: 0,
-                                format: vk::Format::R32G32B32_SFLOAT,
-                                offset: 0,
-                            }],
+                            &[
+                                vk::VertexInputBindingDescription {
+                                    binding: 0,
+                                    stride: mem::size_of::<PlyVertex>() as u32,
+                                    input_rate: vk::VertexInputRate::VERTEX,
+                                },
+                                vk::VertexInputBindingDescription {
+                                    binding: 1,
+                                    stride: mem::size_of::<PlyInstance>() as u32,
+                                    input_rate: vk::VertexInputRate::INSTANCE,
+                                },
+                            ],
+                            &[
+                                vk::VertexInputAttributeDescription {
+                                    location: 0,
+                                    binding: 0,
+                                    format: vk::Format::R32G32B32_SFLOAT,
+                                    offset: 0,
+                                },
+                                vk::VertexInputAttributeDescription {
+                                    location: 1,
+                                    binding: 1,
+                                    format: vk::Format::R32G32B32A32_SFLOAT,
+                                    offset: 0,
+                                },
+                                vk::VertexInputAttributeDescription {
+                                    location: 2,
+                                    binding: 1,
+                                    format: vk::Format::R32G32B32A32_SFLOAT,
+                                    offset: 16,
+                                },
+                                vk::VertexInputAttributeDescription {
+                                    location: 3,
+                                    binding: 1,
+                                    format: vk::Format::R32G32B32A32_SFLOAT,
+                                    offset: 32,
+                                },
+                            ],
                         );
                         let pipeline = pipeline_cache.get_graphics(
-                            "mesh/test.vert.spv",
-                            "mesh/test.frag.spv",
+                            "mesh/raster.vert.spv",
+                            "mesh/raster.frag.spv",
                             test_pipeline_layout,
                             &state,
                         );
@@ -955,13 +1041,18 @@ impl App {
                             );
                             context
                                 .device
-                                .cmd_bind_vertex_buffers(cmd, 0, slice::from_ref(&vertex_buffer), &[0]);
+                                .cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer, instance_buffer], &[0, 0]);
                             context
                                 .device
                                 .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
-                            context
-                                .device
-                                .cmd_draw_indexed(cmd, mesh_info.triangle_count * 3, 1, 0, 0, 0);
+                            context.device.cmd_draw_indexed(
+                                cmd,
+                                mesh_info.triangle_count * 3,
+                                MeshInfo::INSTANCE_COUNT as u32,
+                                0,
+                                0,
+                                0,
+                            );
                         }
                     }
 

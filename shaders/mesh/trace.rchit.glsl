@@ -5,5 +5,5 @@ layout(location = 0) rayPayloadInEXT uint g_payload;
 
 void main()
 {
-    g_payload = gl_PrimitiveID;
+    g_payload = 1 + gl_PrimitiveID;
 }

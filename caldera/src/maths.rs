@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::ops::Mul;
 pub use ultraviolet as uv;
 
@@ -41,6 +42,18 @@ pub trait DivRoundUp {
 impl DivRoundUp for UVec2 {
     fn div_round_up(&self, divisor: u32) -> Self {
         (*self + Self::broadcast(divisor - 1)) / divisor
+    }
+}
+
+pub trait IntoTransposedTransform {
+    fn into_transposed_transform(&self) -> [f32; 12];
+}
+
+impl IntoTransposedTransform for uv::Similarity3 {
+    fn into_transposed_transform(&self) -> [f32; 12] {
+        self.into_homogeneous_matrix().transposed().as_slice()[..12]
+            .try_into()
+            .unwrap()
     }
 }
 
