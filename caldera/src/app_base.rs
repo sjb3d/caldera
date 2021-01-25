@@ -185,7 +185,7 @@ impl AppSystems {
         cbar
     }
 
-    pub fn draw_ui(&self, ui: &imgui::Ui) {
+    pub fn draw_ui(&mut self, ui: &imgui::Ui) {
         imgui::Window::new(im_str!("Memory"))
             .position([360.0, 5.0], imgui::Condition::FirstUseEver)
             .size([270.0, 310.0], imgui::Condition::FirstUseEver)

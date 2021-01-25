@@ -49,6 +49,7 @@ pub struct QueryPool {
     timestamp_valid_mask: u64,
     timestamp_period_us: f32,
     index: usize,
+    is_enabled: bool,
 }
 
 impl QueryPool {
@@ -69,6 +70,7 @@ impl QueryPool {
                 .wrapping_sub(1),
             timestamp_period_us: context.physical_device_properties.limits.timestamp_period / 1000.0,
             index: 0,
+            is_enabled: true,
         }
     }
 
@@ -109,24 +111,9 @@ impl QueryPool {
         };
     }
 
-    pub fn emit_timestamp(&mut self, cmd: vk::CommandBuffer, name: &'static CStr) {
+    fn emit_timestamp_impl(&mut self, cmd: vk::CommandBuffer, name: Option<&'static CStr>) {
         let set = &mut self.sets[self.index];
-        if !set.names.is_full() {
-            unsafe {
-                self.context.device.cmd_write_timestamp(
-                    cmd,
-                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                    set.query_pool,
-                    set.names.len() as u32,
-                )
-            };
-            set.names.push(Some(name));
-        }
-    }
-
-    pub fn end_command_buffer(&mut self, cmd: vk::CommandBuffer) {
-        let set = &mut self.sets[self.index];
-        if !set.names.is_full() {
+        if self.is_enabled && !set.names.is_full() {
             unsafe {
                 self.context.device.cmd_write_timestamp(
                     cmd,
@@ -135,11 +122,20 @@ impl QueryPool {
                     set.names.len() as u32,
                 )
             };
-            set.names.push(None);
+            set.names.push(name);
         }
     }
 
-    pub fn ui_timestamp_table(&self, ui: &Ui) {
+    pub fn emit_timestamp(&mut self, cmd: vk::CommandBuffer, name: &'static CStr) {
+        self.emit_timestamp_impl(cmd, Some(name));
+    }
+
+    pub fn end_command_buffer(&mut self, cmd: vk::CommandBuffer) {
+        self.emit_timestamp_impl(cmd, None);
+    }
+
+    pub fn ui_timestamp_table(&mut self, ui: &Ui) {
+        ui.checkbox(im_str!("Enabled"), &mut self.is_enabled);
         ui.columns(2, im_str!("QueryPoolBegin"), true);
         ui.text("Pass");
         ui.next_column();
