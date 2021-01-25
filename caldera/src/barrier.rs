@@ -166,28 +166,6 @@ pub fn emit_buffer_barrier(
     }
 }
 
-#[derive(Copy, Clone, Default)]
-struct ImageUsageInfo {
-    stage_mask: vk::PipelineStageFlags,
-    access_mask: vk::AccessFlags,
-    image_layout: vk::ImageLayout,
-}
-
-impl ImageUsageInfo {
-    fn merge_with(&mut self, other: &Self) {
-        self.stage_mask |= other.stage_mask;
-        self.access_mask |= other.access_mask;
-        if self.image_layout == vk::ImageLayout::UNDEFINED {
-            self.image_layout = other.image_layout;
-        } else if self.image_layout != other.image_layout {
-            panic!(
-                "cannot set image layouts {} and {} at the same time",
-                self.image_layout, other.image_layout
-            );
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageUsage(u32);
 
@@ -248,59 +226,62 @@ impl ImageUsage {
             .fold(vk::ImageUsageFlags::empty(), |m, u| m | u)
     }
 
-    fn as_info(self) -> ImageUsageInfo {
+    pub fn as_stage_mask(self) -> vk::PipelineStageFlags {
         SetBitIterator(self.0)
             .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::TRANSFER,
-                    access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                    image_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                },
-                Self::SWAPCHAIN => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::empty(),
-                    access_mask: vk::AccessFlags::empty(),
-                    image_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-                },
-                Self::COLOR_ATTACHMENT_WRITE => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                    image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                },
-                Self::FRAGMENT_STORAGE_READ => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    access_mask: vk::AccessFlags::SHADER_READ,
-                    image_layout: vk::ImageLayout::GENERAL,
-                },
-                Self::FRAGMENT_SAMPLED => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    access_mask: vk::AccessFlags::SHADER_READ,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                },
-                Self::COMPUTE_STORAGE_READ => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::COMPUTE_SHADER,
-                    access_mask: vk::AccessFlags::SHADER_READ,
-                    image_layout: vk::ImageLayout::GENERAL,
-                },
-                Self::COMPUTE_STORAGE_WRITE => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::COMPUTE_SHADER,
-                    access_mask: vk::AccessFlags::SHADER_WRITE,
-                    image_layout: vk::ImageLayout::GENERAL,
-                },
-                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::empty(),
-                    access_mask: vk::AccessFlags::empty(),
-                    image_layout: vk::ImageLayout::UNDEFINED,
-                },
-                Self::RAY_TRACING_STORAGE_WRITE => ImageUsageInfo {
-                    stage_mask: vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
-                    access_mask: vk::AccessFlags::SHADER_WRITE,
-                    image_layout: vk::ImageLayout::GENERAL,
-                },
+                Self::TRANSFER_WRITE => vk::PipelineStageFlags::TRANSFER,
+                Self::SWAPCHAIN => vk::PipelineStageFlags::empty(),
+                Self::COLOR_ATTACHMENT_WRITE => vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                Self::FRAGMENT_STORAGE_READ => vk::PipelineStageFlags::FRAGMENT_SHADER,
+                Self::FRAGMENT_SAMPLED => vk::PipelineStageFlags::FRAGMENT_SHADER,
+                Self::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
+                Self::COMPUTE_STORAGE_WRITE => vk::PipelineStageFlags::COMPUTE_SHADER,
+                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::PipelineStageFlags::empty(),
+                Self::RAY_TRACING_STORAGE_WRITE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 _ => unimplemented!(),
             })
-            .fold(ImageUsageInfo::default(), |mut m, u| {
-                m.merge_with(&u);
-                m
+            .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
+    }
+
+    pub fn as_access_mask(self) -> vk::AccessFlags {
+        SetBitIterator(self.0)
+            .map(|bit| match Self(bit) {
+                Self::TRANSFER_WRITE => vk::AccessFlags::TRANSFER_WRITE,
+                Self::SWAPCHAIN => vk::AccessFlags::empty(),
+                Self::COLOR_ATTACHMENT_WRITE => vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                Self::FRAGMENT_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                Self::FRAGMENT_SAMPLED => vk::AccessFlags::SHADER_READ,
+                Self::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                Self::COMPUTE_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
+                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::AccessFlags::empty(),
+                Self::RAY_TRACING_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
+                _ => unimplemented!(),
+            })
+            .fold(vk::AccessFlags::empty(), |m, u| m | u)
+    }
+
+    pub fn as_image_layout(self) -> vk::ImageLayout {
+        SetBitIterator(self.0)
+            .map(|bit| match Self(bit) {
+                Self::TRANSFER_WRITE => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                Self::SWAPCHAIN => vk::ImageLayout::PRESENT_SRC_KHR,
+                Self::COLOR_ATTACHMENT_WRITE => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                Self::FRAGMENT_STORAGE_READ => vk::ImageLayout::GENERAL,
+                Self::FRAGMENT_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                Self::COMPUTE_STORAGE_READ => vk::ImageLayout::GENERAL,
+                Self::COMPUTE_STORAGE_WRITE => vk::ImageLayout::GENERAL,
+                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::ImageLayout::UNDEFINED,
+                Self::RAY_TRACING_STORAGE_WRITE => vk::ImageLayout::GENERAL,
+                _ => unimplemented!(),
+            })
+            .fold(vk::ImageLayout::UNDEFINED, |m, u| {
+                if m == u {
+                    m
+                } else if m == vk::ImageLayout::UNDEFINED {
+                    u
+                } else {
+                    panic!("cannot set image layouts {} and {} at the same time", m, u)
+                }
             })
     }
 }
@@ -313,14 +294,11 @@ pub fn emit_image_barrier(
     device: &Device,
     cmd: vk::CommandBuffer,
 ) {
-    let old_info = old_usage.as_info();
-    let new_info = new_usage.as_info();
-
     let image_memory_barrier = vk::ImageMemoryBarrier {
-        src_access_mask: old_info.access_mask,
-        dst_access_mask: new_info.access_mask,
-        old_layout: old_info.image_layout,
-        new_layout: new_info.image_layout,
+        src_access_mask: old_usage.as_access_mask(),
+        dst_access_mask: new_usage.as_access_mask(),
+        old_layout: old_usage.as_image_layout(),
+        new_layout: new_usage.as_image_layout(),
         src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
         dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
         image: Some(image),
@@ -333,18 +311,20 @@ pub fn emit_image_barrier(
         },
         ..Default::default()
     };
+    let old_stage_mask = old_usage.as_stage_mask();
+    let new_stage_mask = new_usage.as_stage_mask();
     unsafe {
         device.cmd_pipeline_barrier(
             cmd,
-            if old_info.stage_mask.is_empty() {
+            if old_stage_mask.is_empty() {
                 vk::PipelineStageFlags::TOP_OF_PIPE
             } else {
-                old_info.stage_mask
+                old_stage_mask
             },
-            if new_info.stage_mask.is_empty() {
+            if new_stage_mask.is_empty() {
                 vk::PipelineStageFlags::BOTTOM_OF_PIPE
             } else {
-                new_info.stage_mask
+                new_stage_mask
             },
             vk::DependencyFlags::empty(),
             &[],
