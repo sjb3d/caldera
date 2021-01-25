@@ -6,6 +6,7 @@ DISASM=spirv-dis
 
 INC=\
 	common/color_space.glsl \
+	common/normal_pack.glsl \
 	common/sampler.glsl
 
 SRC=\

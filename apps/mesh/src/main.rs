@@ -53,6 +53,12 @@ struct TraceData {
     ray_vec_from_coord: [f32; 9],
 }
 
+#[repr(C)]
+struct HitRecordData {
+    index_buffer_address: u64,
+    attribute_buffer_address: u64,
+}
+
 descriptor_set_layout!(TraceDescriptorSetLayout {
     trace: UniformData<TraceData>,
     accel: AccelerationStructure,
@@ -248,20 +254,8 @@ impl AccelLevel {
         let position_buffer = resource_loader.get_buffer(mesh_info.position_buffer).unwrap();
         let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
 
-        let vertex_buffer_address = {
-            let info = vk::BufferDeviceAddressInfo {
-                buffer: Some(position_buffer),
-                ..Default::default()
-            };
-            unsafe { context.device.get_buffer_device_address(&info) }
-        };
-        let index_buffer_address = {
-            let info = vk::BufferDeviceAddressInfo {
-                buffer: Some(index_buffer),
-                ..Default::default()
-            };
-            unsafe { context.device.get_buffer_device_address(&info) }
-        };
+        let vertex_buffer_address = unsafe { context.device.get_buffer_device_address_helper(position_buffer) };
+        let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
 
         let geometry_triangles_data = vk::AccelerationStructureGeometryTrianglesDataKHR {
             vertex_format: vk::Format::R32G32B32_SFLOAT,
@@ -338,13 +332,7 @@ impl AccelLevel {
             move |params, cmd| {
                 let scratch_buffer = params.get_buffer(scratch_buffer);
 
-                let scratch_buffer_address = {
-                    let info = vk::BufferDeviceAddressInfo {
-                        buffer: Some(scratch_buffer),
-                        ..Default::default()
-                    };
-                    unsafe { context.device.get_buffer_device_address(&info) }
-                };
+                let scratch_buffer_address = unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
 
                 let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
                     ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
@@ -385,13 +373,7 @@ impl AccelLevel {
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> Self {
-        let instance_buffer_address = {
-            let info = vk::BufferDeviceAddressInfo {
-                buffer: Some(instance_buffer),
-                ..Default::default()
-            };
-            unsafe { context.device.get_buffer_device_address(&info) }
-        };
+        let instance_buffer_address = unsafe { context.device.get_buffer_device_address_helper(instance_buffer) };
 
         let geometry_instance_data = vk::AccelerationStructureGeometryInstancesDataKHR {
             data: vk::DeviceOrHostAddressConstKHR {
@@ -460,13 +442,7 @@ impl AccelLevel {
             move |params, cmd| {
                 let scratch_buffer = params.get_buffer(scratch_buffer);
 
-                let scratch_buffer_address = {
-                    let info = vk::BufferDeviceAddressInfo {
-                        buffer: Some(scratch_buffer),
-                        ..Default::default()
-                    };
-                    unsafe { context.device.get_buffer_device_address(&info) }
-                };
+                let scratch_buffer_address = unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
 
                 let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
                     ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
@@ -502,11 +478,31 @@ impl AccelLevel {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ShaderBindingRegion {
+    offset: u32,
+    stride: u32,
+    size: u32,
+}
+
+impl ShaderBindingRegion {
+    fn into_device_address_region(&self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
+        vk::StridedDeviceAddressRegionKHR {
+            device_address: base_device_address + self.offset as vk::DeviceSize,
+            stride: self.stride as vk::DeviceSize,
+            size: self.size as vk::DeviceSize,
+        }
+    }
+}
+
 struct AccelInfo {
     trace_descriptor_set_layout: TraceDescriptorSetLayout,
     trace_pipeline_layout: vk::PipelineLayout,
     trace_pipeline: vk::Pipeline,
     shader_binding_table: StaticBufferHandle,
+    shader_binding_raygen_region: ShaderBindingRegion,
+    shader_binding_miss_region: ShaderBindingRegion,
+    shader_binding_hit_region: ShaderBindingRegion,
     bottom_level: AccelLevel,
     instance_buffer: StaticBufferHandle,
     top_level: Option<AccelLevel>,
@@ -530,6 +526,13 @@ impl AccelInfo {
         }
         .unwrap();
 
+        let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
+        let index_buffer_device_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
+
+        let attribute_buffer = resource_loader.get_buffer(mesh_info.attribute_buffer).unwrap();
+        let attribute_buffer_device_address =
+            unsafe { context.device.get_buffer_device_address_helper(attribute_buffer) };
+
         // TODO: figure out live reload, needs to regenerate SBT!
         let trace_pipeline = pipeline_cache.get_ray_tracing(
             "mesh/trace.rgen.spv",
@@ -537,6 +540,57 @@ impl AccelInfo {
             "mesh/trace.rmiss.spv",
             trace_pipeline_layout,
         );
+
+        let (
+            shader_binding_raygen_region,
+            shader_binding_miss_region,
+            shader_binding_hit_region,
+            shader_binding_table_size,
+        ) = {
+            let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+
+            let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
+
+            let mut next_offset = 0;
+
+            let raygen_record_size = 0;
+            let raygen_stride = align_up(
+                rtpp.shader_group_handle_size + raygen_record_size,
+                rtpp.shader_group_handle_alignment,
+            );
+            let raygen_region = ShaderBindingRegion {
+                offset: next_offset,
+                stride: raygen_stride,
+                size: raygen_stride,
+            };
+            next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
+
+            let miss_record_size = 0;
+            let miss_stride = align_up(
+                rtpp.shader_group_handle_size + miss_record_size,
+                rtpp.shader_group_handle_alignment,
+            );
+            let miss_region = ShaderBindingRegion {
+                offset: next_offset,
+                stride: miss_stride,
+                size: miss_stride,
+            };
+            next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
+
+            let hit_record_size = mem::size_of::<HitRecordData>() as u32;
+            let hit_stride = align_up(
+                rtpp.shader_group_handle_size + hit_record_size,
+                rtpp.shader_group_handle_alignment,
+            );
+            let hit_region = ShaderBindingRegion {
+                offset: next_offset,
+                stride: hit_stride,
+                size: hit_stride,
+            };
+            next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
+
+            (raygen_region, miss_region, hit_region, next_offset)
+        };
 
         let shader_binding_table = resource_loader.create_buffer();
         resource_loader.async_load({
@@ -556,23 +610,31 @@ impl AccelInfo {
                 }
                 .unwrap();
 
-                let section_size = rtpp
-                    .shader_group_handle_size
-                    .max(rtpp.shader_group_handle_alignment)
-                    .max(rtpp.shader_group_base_alignment) as usize;
+                let remain = handle_data.as_slice();
+                let (raygen_group_handle, remain) = remain.split_at(handle_size);
+                let (miss_group_handle, remain) = remain.split_at(handle_size);
+                let hit_group_handle = remain;
 
-                let desc = BufferDesc::new(3 * section_size as u32);
+                let desc = BufferDesc::new(shader_binding_table_size);
                 let mut mapping = allocator
                     .map_buffer::<u8>(shader_binding_table, &desc, BufferUsage::SHADER_BINDING_TABLE)
                     .unwrap();
 
-                for (dst, src) in mapping
-                    .get_mut()
-                    .chunks_exact_mut(section_size)
-                    .zip(handle_data.chunks_exact(handle_size))
-                {
-                    dst[..handle_size].copy_from_slice(src);
-                }
+                let remain = mapping.get_mut();
+                let (remain, hit_mapping) = remain.split_at_mut(shader_binding_hit_region.offset as usize);
+                let (remain, miss_mapping) = remain.split_at_mut(shader_binding_miss_region.offset as usize);
+                let raygen_mapping = remain;
+
+                let hit_data = HitRecordData {
+                    index_buffer_address: index_buffer_device_address,
+                    attribute_buffer_address: attribute_buffer_device_address,
+                };
+                let hit_data_bytes: [u8; 16] = unsafe { mem::transmute(hit_data) };
+
+                raygen_mapping[..handle_size].copy_from_slice(raygen_group_handle);
+                miss_mapping[..handle_size].copy_from_slice(miss_group_handle);
+                hit_mapping[..handle_size].copy_from_slice(hit_group_handle);
+                hit_mapping[handle_size..handle_size + 16].copy_from_slice(&hit_data_bytes);
             }
         });
 
@@ -620,6 +682,9 @@ impl AccelInfo {
             trace_pipeline_layout,
             trace_pipeline,
             shader_binding_table,
+            shader_binding_raygen_region,
+            shader_binding_miss_region,
+            shader_binding_hit_region,
             bottom_level,
             instance_buffer,
             top_level: None,
@@ -658,12 +723,10 @@ impl AccelInfo {
         let top_level = self.top_level.as_ref()?;
         let shader_binding_table_buffer = resource_loader.get_buffer(self.shader_binding_table)?;
 
-        let shader_binding_table_address = {
-            let info = vk::BufferDeviceAddressInfo {
-                buffer: Some(shader_binding_table_buffer),
-                ..Default::default()
-            };
-            unsafe { context.device.get_buffer_device_address(&info) }
+        let shader_binding_table_address = unsafe {
+            context
+                .device
+                .get_buffer_device_address_helper(shader_binding_table_buffer)
         };
 
         let output_desc = ImageDesc::new_2d(
@@ -673,12 +736,6 @@ impl AccelInfo {
             vk::ImageAspectFlags::COLOR,
         );
         let output_image = schedule.describe_image(&output_desc);
-
-        let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
-        let section_size = rtpp
-            .shader_group_handle_size
-            .max(rtpp.shader_group_handle_alignment)
-            .max(rtpp.shader_group_base_alignment) as u64;
 
         schedule.add_compute(
             command_name!("trace"),
@@ -715,26 +772,16 @@ impl AccelInfo {
                     );
                 }
 
-                let raygen_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
-                    device_address: shader_binding_table_address,
-                    stride: section_size,
-                    size: section_size,
-                };
-                let miss_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
-                    device_address: shader_binding_table_address + section_size,
-                    stride: section_size,
-                    size: section_size,
-                };
-                let hit_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
-                    device_address: shader_binding_table_address + 2 * section_size,
-                    stride: section_size,
-                    size: section_size,
-                };
-                let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR {
-                    device_address: 0,
-                    stride: 0,
-                    size: 0,
-                };
+                let raygen_shader_binding_table = self
+                    .shader_binding_raygen_region
+                    .into_device_address_region(shader_binding_table_address);
+                let miss_shader_binding_table = self
+                    .shader_binding_miss_region
+                    .into_device_address_region(shader_binding_table_address);
+                let hit_shader_binding_table = self
+                    .shader_binding_hit_region
+                    .into_device_address_region(shader_binding_table_address);
+                let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
                 unsafe {
                     context.device.cmd_trace_rays_khr(
                         cmd,

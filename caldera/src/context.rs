@@ -20,6 +20,8 @@ unsafe extern "system" fn debug_messenger(
 }
 
 pub trait DeviceExt {
+    unsafe fn get_buffer_device_address_helper(&self, buffer: vk::Buffer) -> vk::DeviceAddress;
+
     unsafe fn create_pipeline_layout_from_ref(
         &self,
         descriptor_set_layout: &vk::DescriptorSetLayout,
@@ -27,6 +29,14 @@ pub trait DeviceExt {
 }
 
 impl DeviceExt for Device {
+    unsafe fn get_buffer_device_address_helper(&self, buffer: vk::Buffer) -> vk::DeviceAddress {
+        let info = vk::BufferDeviceAddressInfo {
+            buffer: Some(buffer),
+            ..Default::default()
+        };
+        self.get_buffer_device_address(&info)
+    }
+
     unsafe fn create_pipeline_layout_from_ref(
         &self,
         descriptor_set_layout: &vk::DescriptorSetLayout,
