@@ -10,7 +10,7 @@ Vulkan and rust experiments, everything is work in progress, in the areas of:
   * Automatic memory allocation of temporary buffers and images
   * Automatic placement of barriers and layout transitions
 * Various helpers to cache Vulkan objects, with live reload of shaders
-  * Supported for vertex/fragment/compute but not yet for ray tracing pipeline shaders
+  * Live reload not yet supported for ray tracing pipeline shaders (shader binding table not updated yet)
 * Asynchronous loading of static buffers and images from the CPU
 
 ## Test Apps
@@ -31,8 +31,8 @@ A simple path tracer in a compute shader, also for tinkering with:
 
 * [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) implemented in [pmj](https://github.com/sjb3d/pmj)
   * Several sequences are generated into a texture at startup and used tiled over the image
-* Wide colour gamut in the [ACEScg](https://en.wikipedia.org/wiki/Academy_Color_Encoding_System) colour space, converted back to Rec709 using the fit from [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
-  * There are some derivations for these matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/apps/compute/src/color_space.rs), but the tonemap curve fit is used as-is
+* Wide colour gamut in the [ACEScg](https://en.wikipedia.org/wiki/Academy_Color_Encoding_System) colour space, transformed to sRGB/Rec709 using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
+  * There is code to re-derive the colour space conversion matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/apps/compute/src/color_space.rs), but the tonemap curve fit is used as-is
 
 ### mesh
 
