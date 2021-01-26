@@ -1390,6 +1390,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "trace"
+version = "0.1.0"
+dependencies = [
+ "caldera",
+ "caldera-macro",
+ "imgui",
+ "spark",
+ "winit",
+]
+
+[[package]]
 name = "ttf-parser"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

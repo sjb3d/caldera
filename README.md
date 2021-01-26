@@ -10,11 +10,12 @@ Vulkan and rust experiments, everything is work in progress, in the areas of:
   * Automatic memory allocation of temporary buffers and images
   * Automatic placement of barriers and layout transitions
 * Various helpers to cache Vulkan objects, with live reload of shaders
+  * Supported for vertex/fragment/compute but not yet for ray tracing pipeline shaders
 * Asynchronous loading of static buffers and images from the CPU
 
 ## Test Apps
 
-Shaders are currently built using and glslangValidator (using [make for windows](http://gnuwin32.sourceforge.net/packages/make.htm) and the (LunarG Vulkan SDK)[https://vulkan.lunarg.com/] on Windows).
+Shaders are currently built using make and [glslangValidator](https://github.com/KhronosGroup/glslang) (using [make for windows](http://gnuwin32.sourceforge.net/packages/make.htm) and the [LunarG Vulkan SDK](https://vulkan.lunarg.com/) on Windows).
 
 Test apps can be run using:
 
@@ -30,7 +31,7 @@ A simple path tracer in a compute shader, also for tinkering with:
 
 * [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) implemented in [pmj](https://github.com/sjb3d/pmj)
   * Several sequences are generated into a texture at startup and used tiled over the image
-* Wide colour gamut in the AcesCG colour space, converted back to Rec709 using the fit from [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
+* Wide colour gamut in the [ACEScg](https://en.wikipedia.org/wiki/Academy_Color_Encoding_System) colour space, converted back to Rec709 using the fit from [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
   * There are some derivations for these matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/apps/compute/src/color_space.rs), but the tonemap curve fit is used as-is
 
 ### mesh
@@ -49,7 +50,7 @@ Has code for:
 * Simple ray tracing pipeline
   * Binds the index and vertex attribute buffers using a `shaderRecordEXT` block in the shader binding table, to be able to interpolate a vertex normal on hit
 
-## Feature Details
+## Library Details
 
 ### Procedural Macro for Descriptor Set Layout
 
@@ -73,4 +74,4 @@ This helps to cut down on boilerplate code for descriptor sets that can be decla
 
 ### Render Graph Details
 
-TODO
+_TODO: figure out what bits are worth documenting_

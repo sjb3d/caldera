@@ -4,4 +4,5 @@ members = [
     "caldera",
     "apps/compute",
     "apps/mesh",
+    "apps/trace",
 ]
