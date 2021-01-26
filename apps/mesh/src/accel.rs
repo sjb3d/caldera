@@ -1,6 +1,6 @@
+use crate::loader::*;
 use caldera::*;
 use caldera_macro::descriptor_set_layout;
-use crate::loader::*;
 use spark::vk;
 use std::sync::Arc;
 use std::{mem, slice};
@@ -271,7 +271,10 @@ pub struct ShaderBindingRegion {
 }
 
 impl ShaderBindingRegion {
-    pub fn into_device_address_region(&self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
+    pub fn into_device_address_region(
+        &self,
+        base_device_address: vk::DeviceAddress,
+    ) -> vk::StridedDeviceAddressRegionKHR {
         vk::StridedDeviceAddressRegionKHR {
             device_address: base_device_address + self.offset as vk::DeviceSize,
             stride: self.stride as vk::DeviceSize,

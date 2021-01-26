@@ -1,6 +1,6 @@
 use caldera::*;
 use ply_rs::{parser, ply};
-use std::{io, fs, mem};
+use std::{fs, io, mem};
 
 #[derive(Clone, Copy)]
 struct PlyVertex {
