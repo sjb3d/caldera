@@ -5,7 +5,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, parse_macro_input, token, Ident, Result};
+use syn::{braced, parse_macro_input, token, Ident, Result, Token};
 
 mod kw {
     syn::custom_keyword!(SampledImage);
@@ -43,6 +43,7 @@ struct Binding {
 }
 
 struct Layout {
+    visibility: Option<Token![pub]>,
     name: Ident,
     _brace_token: token::Brace,
     bindings: Punctuated<Binding, token::Comma>,
@@ -94,6 +95,7 @@ impl Parse for Layout {
     fn parse(input: ParseStream) -> Result<Self> {
         let content;
         Ok(Self {
+            visibility: input.parse()?,
             name: input.parse()?,
             _brace_token: braced!(content in input),
             bindings: content.parse_terminated(Binding::parse)?,
@@ -172,6 +174,7 @@ impl Binding {
 #[proc_macro]
 pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
     let Layout {
+        visibility,
         name,
         _brace_token,
         bindings,
@@ -182,7 +185,7 @@ pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
     let (data_args, data_entries): (Vec<_>, Vec<_>) = bindings.iter().map(Binding::get_data).unzip();
 
     quote!(
-        struct #name(vk::DescriptorSetLayout);
+        #visibility struct #name(pub vk::DescriptorSetLayout);
 
         impl #name {
             pub fn new(descriptor_pool: &DescriptorPool, #(#binding_args),*) -> Self {

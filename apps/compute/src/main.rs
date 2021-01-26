@@ -7,7 +7,6 @@ use rand::rngs::SmallRng;
 use rayon::prelude::*;
 use spark::vk;
 use std::env;
-use std::ffi::CStr;
 use std::sync::Arc;
 use winit::{
     dpi::{LogicalSize, Size},

@@ -11,7 +11,7 @@ use std::sync::Arc;
 #[macro_export]
 macro_rules! command_name {
     ($e:tt) => {
-        unsafe { CStr::from_bytes_with_nul_unchecked(concat!($e, "\0").as_bytes()) }
+        unsafe { ::std::ffi::CStr::from_bytes_with_nul_unchecked(concat!($e, "\0").as_bytes()) }
     };
 }
 

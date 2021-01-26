@@ -3,7 +3,6 @@ use imgui::im_str;
 use imgui::Key;
 use spark::vk;
 use std::env;
-use std::ffi::CStr;
 use std::sync::Arc;
 use winit::{
     dpi::{LogicalSize, Size},
