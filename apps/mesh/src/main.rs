@@ -54,28 +54,18 @@ struct App {
 impl App {
     fn new(base: &mut AppBase, mesh_file_name: String) -> Self {
         let context = &base.context;
-        let descriptor_pool = &base.systems.descriptor_pool;
+        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
-        let raster_descriptor_set_layout = RasterDescriptorSetLayout::new(&descriptor_pool);
-        let raster_pipeline_layout = unsafe {
-            context
-                .device
-                .create_pipeline_layout_from_ref(&raster_descriptor_set_layout.0)
-        }
-        .unwrap();
+        let raster_descriptor_set_layout = RasterDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let raster_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(raster_descriptor_set_layout.0);
 
-        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(&descriptor_pool);
-        let copy_pipeline_layout = unsafe {
-            context
-                .device
-                .create_pipeline_layout_from_ref(&copy_descriptor_set_layout.0)
-        }
-        .unwrap();
+        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
 
         let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
         base.systems.resource_loader.async_load({
             let mesh_info = Arc::clone(&mesh_info);
-            let with_ray_tracing = context.device.extensions.khr_acceleration_structure;
+            let with_ray_tracing = context.device.extensions.supports_khr_acceleration_structure();
             move |allocator| {
                 let mut mesh_info_clone = *mesh_info.lock().unwrap();
                 mesh_info_clone.load(allocator, &mesh_file_name, with_ray_tracing);
@@ -118,7 +108,7 @@ impl App {
                         render_mode,
                         RenderMode::RasterMultisampled,
                     );
-                    if context.device.extensions.khr_acceleration_structure {
+                    if context.device.extensions.supports_khr_acceleration_structure() {
                         ui.radio_button(im_str!("Ray Trace"), render_mode, RenderMode::RayTrace);
                     } else {
                         ui.text_disabled("Ray Tracing Not Supported!");
@@ -193,7 +183,7 @@ impl App {
         let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
-        if base.context.device.extensions.khr_acceleration_structure
+        if base.context.device.extensions.supports_khr_acceleration_structure()
             && self.accel_info.is_none()
             && position_buffer.is_some()
             && attribute_buffer.is_some()
@@ -202,7 +192,7 @@ impl App {
             self.accel_info = Some(AccelInfo::new(
                 &base.context,
                 &base.systems.pipeline_cache,
-                &base.systems.descriptor_pool,
+                &mut base.systems.descriptor_set_layout_cache,
                 &mut base.systems.resource_loader,
                 &mesh_info,
                 &mut base.systems.global_allocator,
@@ -416,29 +406,6 @@ impl App {
 
         if self.is_rotating {
             self.angle += base.ui_context.io().delta_time;
-        }
-    }
-}
-
-impl Drop for App {
-    fn drop(&mut self) {
-        let device = self.context.device;
-        unsafe {
-            device.destroy_pipeline_layout(Some(self.raster_pipeline_layout), None);
-            device.destroy_descriptor_set_layout(Some(self.raster_descriptor_set_layout.0), None);
-
-            device.destroy_pipeline_layout(Some(self.copy_pipeline_layout), None);
-            device.destroy_descriptor_set_layout(Some(self.copy_descriptor_set_layout.0), None);
-
-            if let Some(accel_info) = self.accel_info.take() {
-                if let Some(top_level) = accel_info.top_level {
-                    device.destroy_acceleration_structure_khr(Some(top_level.accel), None);
-                }
-                device.destroy_acceleration_structure_khr(Some(accel_info.bottom_level.accel), None);
-
-                device.destroy_pipeline_layout(Some(accel_info.trace_pipeline_layout), None);
-                device.destroy_descriptor_set_layout(Some(accel_info.trace_descriptor_set_layout.0), None);
-            }
         }
     }
 }

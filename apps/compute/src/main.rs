@@ -73,23 +73,13 @@ impl App {
     }
 
     fn new(base: &mut AppBase) -> Self {
-        let descriptor_pool = &base.systems.descriptor_pool;
+        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
-        let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(&descriptor_pool);
-        let trace_pipeline_layout = unsafe {
-            base.context
-                .device
-                .create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0)
-        }
-        .unwrap();
+        let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(trace_descriptor_set_layout.0);
 
-        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(&descriptor_pool);
-        let copy_pipeline_layout = unsafe {
-            base.context
-                .device
-                .create_pipeline_layout_from_ref(&copy_descriptor_set_layout.0)
-        }
-        .unwrap();
+        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
 
         let sample_image = base.systems.resource_loader.create_image();
         base.systems.resource_loader.async_load(move |allocator| {
@@ -364,19 +354,6 @@ impl App {
         base.display.present(swap_vk_image, rendering_finished_semaphore);
 
         self.next_pass_index = pass_count;
-    }
-}
-
-impl Drop for App {
-    fn drop(&mut self) {
-        let device = self.context.device;
-        unsafe {
-            device.destroy_descriptor_set_layout(Some(self.trace_descriptor_set_layout.0), None);
-            device.destroy_descriptor_set_layout(Some(self.copy_descriptor_set_layout.0), None);
-
-            device.destroy_pipeline_layout(Some(self.trace_pipeline_layout), None);
-            device.destroy_pipeline_layout(Some(self.copy_pipeline_layout), None);
-        }
     }
 }
 

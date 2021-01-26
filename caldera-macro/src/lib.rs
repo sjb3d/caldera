@@ -188,9 +188,9 @@ pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
         #visibility struct #name(pub vk::DescriptorSetLayout);
 
         impl #name {
-            pub fn new(descriptor_pool: &DescriptorPool, #(#binding_args),*) -> Self {
+            pub fn new(descriptor_set_layout_cache: &mut DescriptorSetLayoutCache, #(#binding_args),*) -> Self {
                 let bindings = &[#(#binding_entries),*];
-                Self(descriptor_pool.create_descriptor_set_layout(bindings))
+                Self(descriptor_set_layout_cache.create_descriptor_set_layout(bindings))
             }
 
             pub fn write(&self, descriptor_pool: &DescriptorPool, #(#data_args),*) -> vk::DescriptorSet {

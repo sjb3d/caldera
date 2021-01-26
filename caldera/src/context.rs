@@ -21,11 +21,6 @@ unsafe extern "system" fn debug_messenger(
 
 pub trait DeviceExt {
     unsafe fn get_buffer_device_address_helper(&self, buffer: vk::Buffer) -> vk::DeviceAddress;
-
-    unsafe fn create_pipeline_layout_from_ref(
-        &self,
-        descriptor_set_layout: &vk::DescriptorSetLayout,
-    ) -> spark::Result<vk::PipelineLayout>;
 }
 
 impl DeviceExt for Device {
@@ -35,14 +30,6 @@ impl DeviceExt for Device {
             ..Default::default()
         };
         self.get_buffer_device_address(&info)
-    }
-
-    unsafe fn create_pipeline_layout_from_ref(
-        &self,
-        descriptor_set_layout: &vk::DescriptorSetLayout,
-    ) -> spark::Result<vk::PipelineLayout> {
-        let create_info = vk::PipelineLayoutCreateInfo::builder().p_set_layouts(slice::from_ref(descriptor_set_layout));
-        self.create_pipeline_layout(&create_info, None)
     }
 }
 

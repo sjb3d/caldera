@@ -24,6 +24,7 @@ descriptor_set_layout!(pub TraceDescriptorSetLayout {
 });
 
 pub struct AccelLevel {
+    pub context: Arc<Context>,
     pub accel: vk::AccelerationStructureKHR,
     pub buffer: BufferHandle,
 }
@@ -149,7 +150,11 @@ impl AccelLevel {
             },
         );
 
-        Self { accel, buffer }
+        Self {
+            context: Arc::clone(&context),
+            accel,
+            buffer,
+        }
     }
 
     pub fn new_top_level<'a>(
@@ -259,7 +264,18 @@ impl AccelLevel {
             },
         );
 
-        Self { accel, buffer }
+        Self {
+            context: Arc::clone(&context),
+            accel,
+            buffer,
+        }
+    }
+}
+
+impl Drop for AccelLevel {
+    fn drop(&mut self) {
+        let device = &self.context.device;
+        unsafe { device.destroy_acceleration_structure_khr(Some(self.accel), None) };
     }
 }
 
@@ -300,19 +316,14 @@ impl AccelInfo {
     pub fn new<'a>(
         context: &'a Arc<Context>,
         pipeline_cache: &PipelineCache,
-        descriptor_pool: &DescriptorPool,
+        descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
         resource_loader: &mut ResourceLoader,
         mesh_info: &'a MeshInfo,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> Self {
-        let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(&descriptor_pool);
-        let trace_pipeline_layout = unsafe {
-            context
-                .device
-                .create_pipeline_layout_from_ref(&trace_descriptor_set_layout.0)
-        }
-        .unwrap();
+        let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(trace_descriptor_set_layout.0);
 
         let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
         let index_buffer_device_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };

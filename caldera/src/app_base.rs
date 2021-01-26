@@ -94,6 +94,7 @@ pub struct AppDisplay {
 }
 
 pub struct AppSystems {
+    pub descriptor_set_layout_cache: DescriptorSetLayoutCache,
     pub descriptor_pool: DescriptorPool,
     pub pipeline_cache: PipelineCache,
     pub command_buffer_pool: CommandBufferPool,
@@ -152,6 +153,7 @@ impl AppDisplay {
 
 impl AppSystems {
     pub fn new(context: &Arc<Context>) -> Self {
+        let descriptor_set_layout_cache = DescriptorSetLayoutCache::new(&context);
         let descriptor_pool = DescriptorPool::new(&context);
         let pipeline_cache = PipelineCache::new(&context, "spv/bin");
         let command_buffer_pool = CommandBufferPool::new(&context);
@@ -163,6 +165,7 @@ impl AppSystems {
         let render_graph = RenderGraph::new(&context, 64, 64, CHUNK_SIZE, CHUNK_SIZE);
 
         Self {
+            descriptor_set_layout_cache,
             descriptor_pool,
             pipeline_cache,
             command_buffer_pool,
