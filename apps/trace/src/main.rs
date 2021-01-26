@@ -1,6 +1,10 @@
+mod accel;
+mod scene;
+
 use caldera::*;
 use imgui::im_str;
 use imgui::Key;
+use scene::create_cornell_box_scene;
 use spark::vk;
 use std::env;
 use std::sync::Arc;
@@ -17,6 +21,8 @@ struct App {
 impl App {
     fn new(base: &mut AppBase) -> Self {
         let context = &base.context;
+
+        let _scene = create_cornell_box_scene();
 
         Self {
             context: Arc::clone(&context),
