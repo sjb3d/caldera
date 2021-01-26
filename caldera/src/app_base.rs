@@ -161,8 +161,8 @@ impl AppSystems {
 
         const CHUNK_SIZE: u32 = 128 * 1024 * 1024;
         let mut global_allocator = Allocator::new(&context, CHUNK_SIZE);
-        let resource_loader = ResourceLoader::new(context, &mut global_allocator, CHUNK_SIZE, 64, 64);
-        let render_graph = RenderGraph::new(&context, 64, 64, CHUNK_SIZE, CHUNK_SIZE);
+        let resource_loader = ResourceLoader::new(context, &mut global_allocator, CHUNK_SIZE);
+        let render_graph = RenderGraph::new(&context, CHUNK_SIZE, CHUNK_SIZE);
 
         Self {
             descriptor_set_layout_cache,

@@ -16,3 +16,4 @@ raw-window-handle = "0.3"
 imgui = "0.6"
 imgui-winit-support = "0.6"
 ultraviolet = { version = "0.6.1", features = ["int"] }
+bitvec = "0.20"

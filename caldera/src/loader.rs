@@ -73,8 +73,8 @@ unsafe impl Sync for ResourceStagingMapping {}
 struct ResourceLoaderShared {
     context: Arc<Context>,
     exit_signal: AtomicBool,
-    buffers: Mutex<ResourceArray<StaticBufferResource>>,
-    images: Mutex<ResourceArray<StaticImageResource>>,
+    buffers: Mutex<ResourceVec<StaticBufferResource>>,
+    images: Mutex<ResourceVec<StaticImageResource>>,
     staging_buffer: UniqueBuffer,
     staging_mapping: ResourceStagingMapping,
     staging_size: u32,
@@ -133,13 +133,7 @@ pub struct ResourceLoader {
 }
 
 impl ResourceLoader {
-    pub fn new(
-        context: &Arc<Context>,
-        allocator: &mut Allocator,
-        staging_size: u32,
-        buffer_capacity: usize,
-        image_capacity: usize,
-    ) -> Self {
+    pub fn new(context: &Arc<Context>, allocator: &mut Allocator, staging_size: u32) -> Self {
         let mut resource_cache = ResourceCache::new(context);
 
         let (staging_buffer, staging_mapping) = {
@@ -161,8 +155,8 @@ impl ResourceLoader {
         let shared = Arc::new(ResourceLoaderShared {
             context: Arc::clone(&context),
             exit_signal: AtomicBool::new(false),
-            buffers: Mutex::new(ResourceArray::new(buffer_capacity)),
-            images: Mutex::new(ResourceArray::new(image_capacity)),
+            buffers: Mutex::new(ResourceVec::new()),
+            images: Mutex::new(ResourceVec::new()),
             staging_buffer,
             staging_mapping: ResourceStagingMapping(staging_mapping),
             staging_size,
@@ -194,18 +188,12 @@ impl ResourceLoader {
 
     pub fn create_buffer(&mut self) -> StaticBufferHandle {
         let mut buffers = self.shared.buffers.lock().unwrap();
-        buffers
-            .allocate(StaticBufferResource::Empty)
-            .map(StaticBufferHandle)
-            .unwrap()
+        StaticBufferHandle(buffers.allocate(StaticBufferResource::Empty))
     }
 
     pub fn create_image(&mut self) -> StaticImageHandle {
         let mut images = self.shared.images.lock().unwrap();
-        images
-            .allocate(StaticImageResource::Empty)
-            .map(StaticImageHandle)
-            .unwrap()
+        StaticImageHandle(images.allocate(StaticImageResource::Empty))
     }
 
     pub fn async_load(&mut self, loader: impl FnOnce(&mut ResourceAllocator) + Send + 'static) {
@@ -409,6 +397,16 @@ impl ResourceLoader {
     }
 
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
+        ui.text("loader buffers");
+        ui.next_column();
+        ui.text(format!("{}", self.shared.buffers.lock().unwrap().active_count()));
+        ui.next_column();
+
+        ui.text("loader images");
+        ui.next_column();
+        ui.text(format!("{}", self.shared.images.lock().unwrap().active_count()));
+        ui.next_column();
+
         self.resource_cache.ui_stats_table_rows(ui, "loader");
     }
 }

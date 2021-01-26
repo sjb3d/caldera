@@ -201,7 +201,7 @@ impl ResourceSet {
         }
     }
 
-    fn begin_frame(&mut self, buffers: &mut ResourceArray<BufferResource>, images: &mut ResourceArray<ImageResource>) {
+    fn begin_frame(&mut self, buffers: &mut ResourceVec<BufferResource>, images: &mut ResourceVec<ImageResource>) {
         self.allocator.reset();
         for buffer in self.buffers.drain(..) {
             buffers.free(buffer.0);
@@ -215,8 +215,8 @@ impl ResourceSet {
 pub struct RenderGraph {
     resource_cache: ResourceCache,
     render_cache: RenderCache,
-    buffers: ResourceArray<BufferResource>,
-    images: ResourceArray<ImageResource>,
+    buffers: ResourceVec<BufferResource>,
+    images: ResourceVec<ImageResource>,
     temp_allocator: Allocator,
     ping_pong_current_set: ResourceSet,
     ping_pong_prev_set: ResourceSet,
@@ -224,18 +224,12 @@ pub struct RenderGraph {
 }
 
 impl RenderGraph {
-    pub fn new(
-        context: &Arc<Context>,
-        buffer_capacity: usize,
-        image_capacity: usize,
-        temp_chunk_size: u32,
-        ping_pong_chunk_size: u32,
-    ) -> Self {
+    pub fn new(context: &Arc<Context>, temp_chunk_size: u32, ping_pong_chunk_size: u32) -> Self {
         Self {
             resource_cache: ResourceCache::new(context),
             render_cache: RenderCache::new(context),
-            buffers: ResourceArray::new(buffer_capacity),
-            images: ResourceArray::new(image_capacity),
+            buffers: ResourceVec::new(),
+            images: ResourceVec::new(),
             temp_allocator: Allocator::new(context, temp_chunk_size),
             ping_pong_current_set: ResourceSet::new(context, ping_pong_chunk_size),
             ping_pong_prev_set: ResourceSet::new(context, ping_pong_chunk_size),
@@ -250,15 +244,12 @@ impl RenderGraph {
         buffer: UniqueBuffer,
         current_usage: BufferUsage,
     ) -> BufferHandle {
-        self.buffers
-            .allocate(BufferResource::Ready {
-                desc: *desc,
-                buffer,
-                current_usage,
-                all_usage_check: all_usage,
-            })
-            .map(BufferHandle)
-            .unwrap()
+        BufferHandle(self.buffers.allocate(BufferResource::Ready {
+            desc: *desc,
+            buffer,
+            current_usage,
+            all_usage_check: all_usage,
+        }))
     }
 
     pub fn create_buffer(
@@ -313,16 +304,13 @@ impl RenderGraph {
         current_usage: ImageUsage,
     ) -> ImageHandle {
         let image_view = self.resource_cache.get_image_view(desc, image);
-        self.images
-            .allocate(ImageResource::Ready {
-                desc: *desc,
-                image,
-                image_view,
-                current_usage,
-                all_usage_check: all_usage,
-            })
-            .map(ImageHandle)
-            .unwrap()
+        ImageHandle(self.images.allocate(ImageResource::Ready {
+            desc: *desc,
+            image,
+            image_view,
+            current_usage,
+            all_usage_check: all_usage,
+        }))
     }
 
     pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage, allocator: &mut Allocator) -> ImageHandle {
@@ -403,6 +391,16 @@ impl RenderGraph {
     }
 
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
+        ui.text("graph buffers");
+        ui.next_column();
+        ui.text(format!("{}", self.buffers.active_count()));
+        ui.next_column();
+
+        ui.text("graph images");
+        ui.next_column();
+        ui.text(format!("{}", self.images.active_count()));
+        ui.next_column();
+
         self.resource_cache.ui_stats_table_rows(ui, "graph");
         self.render_cache.ui_stats_table_rows(ui);
 
@@ -568,15 +566,10 @@ impl<'a> RenderSchedule<'a> {
     }
 
     pub fn describe_buffer(&mut self, desc: &BufferDesc) -> BufferHandle {
-        let handle = self
-            .render_graph
-            .buffers
-            .allocate(BufferResource::Temporary {
-                desc: *desc,
-                all_usage: BufferUsage::empty(),
-            })
-            .map(BufferHandle)
-            .unwrap();
+        let handle = BufferHandle(self.render_graph.buffers.allocate(BufferResource::Temporary {
+            desc: *desc,
+            all_usage: BufferUsage::empty(),
+        }));
         self.temporaries.push(TemporaryHandle::Buffer(handle));
         handle
     }
@@ -596,15 +589,10 @@ impl<'a> RenderSchedule<'a> {
     }
 
     pub fn describe_image(&mut self, desc: &ImageDesc) -> ImageHandle {
-        let handle = self
-            .render_graph
-            .images
-            .allocate(ImageResource::Temporary {
-                desc: *desc,
-                all_usage: ImageUsage::empty(),
-            })
-            .map(ImageHandle)
-            .unwrap();
+        let handle = ImageHandle(self.render_graph.images.allocate(ImageResource::Temporary {
+            desc: *desc,
+            all_usage: ImageUsage::empty(),
+        }));
         self.temporaries.push(TemporaryHandle::Image(handle));
         handle
     }

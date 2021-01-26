@@ -1,3 +1,4 @@
+use bitvec::prelude::*;
 use std::num;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -19,7 +20,7 @@ impl Default for Generation {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct ResourceHandle {
     generation: Generation,
     index: u16,
@@ -39,44 +40,41 @@ impl<T> Default for ResourceEntry<T> {
     }
 }
 
-pub(crate) struct ResourceArray<T> {
-    entries: Box<[ResourceEntry<T>]>,
+pub(crate) struct ResourceVec<T> {
+    active: BitVec,
+    entries: Vec<ResourceEntry<T>>,
 }
 
-impl<T> ResourceArray<T> {
-    pub(crate) fn new(capacity: usize) -> Self {
-        let mut entries = Vec::with_capacity(capacity);
-        for _i in 0..capacity {
-            entries.push(Default::default());
-        }
+impl<T> ResourceVec<T> {
+    pub(crate) fn new() -> Self {
         Self {
-            entries: entries.into_boxed_slice(),
+            active: BitVec::new(),
+            entries: Vec::new(),
         }
     }
 
-    pub(crate) fn allocate(&mut self, data: T) -> Option<ResourceHandle> {
-        // TODO: maintain bitmask of free slots
-        self.entries
-            .iter_mut()
-            .enumerate()
-            .find(|(_, e)| e.data.is_none())
-            .map(|(i, e)| {
-                e.generation.advance();
-                e.data = Some(data);
-                ResourceHandle {
-                    generation: e.generation,
-                    index: i as u16,
-                }
-            })
+    pub(crate) fn allocate(&mut self, data: T) -> ResourceHandle {
+        let index = self.active.count_ones();
+        if index < self.active.len() {
+            self.active.set(index, true);
+        } else {
+            assert_eq!(index, self.active.len());
+            self.active.push(true);
+            self.entries.push(ResourceEntry::default());
+        }
+        let entry = self.entries.get_mut(index).unwrap();
+        entry.generation.advance();
+        entry.data = Some(data);
+        ResourceHandle {
+            generation: entry.generation,
+            index: index as u16,
+        }
     }
 
     pub(crate) fn free(&mut self, handle: ResourceHandle) {
-        self.entries
-            .get_mut(handle.index as usize)
-            .unwrap()
-            .data
-            .take()
-            .unwrap();
+        let index = handle.index as usize;
+        assert_eq!(self.active.get_mut(index).unwrap().replace(false), true);
+        self.entries.get_mut(index).unwrap().data.take().unwrap();
     }
 
     pub(crate) fn get(&self, handle: ResourceHandle) -> Option<&T> {
@@ -87,6 +85,10 @@ impl<T> ResourceArray<T> {
                 None
             }
         })
+    }
+
+    pub(crate) fn active_count(&self) -> usize {
+        self.active.count_ones()
     }
 
     pub(crate) fn get_mut(&mut self, handle: ResourceHandle) -> Option<&mut T> {
