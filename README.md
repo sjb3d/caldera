@@ -1,29 +1,31 @@
 # caldera
 
-## Overview
+## Library Overview
 
-Vulkan and rust experiments, everything is work in progress, in the areas of:
+Vulkan and rust experiments, everything is work in progress.  The `caldera` crate covers the following:
 
-* Iterating on how [spark](https://github.com/sjb3d/spark) manages Vulkan commands and extensions
+* Makes use of [spark](https://github.com/sjb3d/spark) to manage Vulkan commands and extensions
 * A procedural macro for descriptor set layouts
-* Render graph implementation, working but very inoptimal support for:
+* Render graph implementation, working (but inoptimal) support for:
   * Automatic memory allocation of temporary buffers and images
   * Automatic placement of barriers and layout transitions
 * Various helpers to cache Vulkan objects, with live reload of shaders
   * Live reload not yet supported for ray tracing pipeline shaders (shader binding table not updated yet)
 * Asynchronous loading of static buffers and images from the CPU
 
-## Test Apps
+There are a few apps that make use of this crate for higher-level experiments, detailed below.
+
+## Apps Overview
 
 Shaders are currently built using make and [glslangValidator](https://github.com/KhronosGroup/glslang) (using [make for windows](http://gnuwin32.sourceforge.net/packages/make.htm) and the [LunarG Vulkan SDK](https://vulkan.lunarg.com/) on Windows).
 
-Test apps can be run using:
+Apps can be run using:
 
 ```
 make && cargo run --bin <app_name>
 ```
 
-### compute
+### `compute`
 
 ![compute](https://github.com/sjb3d/caldera/blob/main/docs/compute.jpg)
 
@@ -34,7 +36,7 @@ A simple path tracer in a compute shader, also for tinkering with:
 * Wide colour gamut in the [ACEScg](https://en.wikipedia.org/wiki/Academy_Color_Encoding_System) colour space, transformed to sRGB/Rec709 using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
   * There is code to re-derive the colour space conversion matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/apps/compute/src/color_space.rs), but the tonemap curve fit is used as-is
 
-### mesh
+### `mesh`
 
 ![mesh](https://github.com/sjb3d/caldera/blob/main/docs/mesh.jpg)
 
@@ -49,6 +51,10 @@ Has code for:
   * A top level acceleration structure that instances it a few times
 * Simple ray tracing pipeline
   * Binds the index and vertex attribute buffers using a `shaderRecordEXT` block in the shader binding table, to be able to interpolate a vertex normal on hit
+
+### `trace`
+
+_TODO: document_
 
 ## Library Details
 
@@ -75,3 +81,14 @@ This helps to cut down on boilerplate code for descriptor sets that can be decla
 ### Render Graph Details
 
 _TODO: figure out what bits are worth documenting_
+
+* Build a schedule by registering callbacks for _graphics_ or _compute_ work
+** _Graphics_ work is a collection of all the draw calls to the same render pass
+** _Compute_ work is a collection of dispatches/transfers/ray tracing/etc
+* Synchronisation happens between work, each work item must declare all the buffers and images it needs and how it will use them
+** There is no synchronisation between the individual draws/dispatches/etc _within_ a single callback
+* Can declare_ temporary buffers or images while building a schedule
+** Usage is gathered as the schedule is built
+** Memory will be allocated while running the schedule, Vulkan objects are passed to the callback
+* Can _import_ static buffers or images that need synchronisation
+** A swapchain image for example
