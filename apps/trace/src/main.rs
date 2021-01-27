@@ -1,10 +1,11 @@
 mod accel;
 mod scene;
 
+use crate::accel::*;
+use crate::scene::*;
 use caldera::*;
 use imgui::im_str;
 use imgui::Key;
-use scene::create_cornell_box_scene;
 use spark::vk;
 use std::env;
 use std::sync::Arc;
@@ -16,16 +17,20 @@ use winit::{
 
 struct App {
     context: Arc<Context>,
+
+    accel: SceneAccel,
 }
 
 impl App {
     fn new(base: &mut AppBase) -> Self {
         let context = &base.context;
 
-        let _scene = create_cornell_box_scene();
+        let scene = create_cornell_box_scene();
+        let accel = SceneAccel::new(scene, &context, &mut base.systems.resource_loader);
 
         Self {
             context: Arc::clone(&context),
+            accel,
         }
     }
 
@@ -116,7 +121,7 @@ fn main() {
     let event_loop = EventLoop::new();
 
     let window = WindowBuilder::new()
-        .with_title("mesh")
+        .with_title("trace")
         .with_inner_size(Size::Logical(LogicalSize::new(640.0, 480.0)))
         .build(&event_loop)
         .unwrap();

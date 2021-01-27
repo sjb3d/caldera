@@ -5,8 +5,8 @@ pub struct Transform(Isometry3); // TODO: allow scale?
 
 #[derive(Default)]
 pub struct TriangleMesh {
-    positions: Vec<Vec3>,
-    indices: Vec<UVec3>,
+    pub positions: Vec<Vec3>,
+    pub indices: Vec<UVec3>,
 }
 
 impl TriangleMesh {
@@ -26,23 +26,26 @@ pub struct Shader {
     debug_color: Vec3,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TransformIndex(u32);
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GeometryIndex(u32);
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ShaderIndex(u32);
-
 pub struct GeometryInstance {
-    transform: TransformIndex,
-    geometry: GeometryIndex,
-    shader: ShaderIndex,
+    transform: TransformRef,
+    geometry: GeometryRef,
+    shader: ShaderRef,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TransformRef(u32);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GeometryRef(u32);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ShaderRef(u32);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GeometryInstanceRef(u32);
+
 impl GeometryInstance {
-    fn new(transform: TransformIndex, geometry: GeometryIndex, shader: ShaderIndex) -> Self {
+    fn new(transform: TransformRef, geometry: GeometryRef, shader: ShaderRef) -> Self {
         Self {
             transform,
             geometry,
@@ -60,26 +63,36 @@ pub struct Scene {
 }
 
 impl Scene {
-    fn add_transform(&mut self, transform: Transform) -> TransformIndex {
-        let index = self.transforms.len() - 1;
+    fn add_transform(&mut self, transform: Transform) -> TransformRef {
+        let index = self.transforms.len();
         self.transforms.push(transform);
-        TransformIndex(index as u32)
+        TransformRef(index as u32)
     }
 
-    fn add_triangle_mesh(&mut self, mesh: TriangleMesh) -> GeometryIndex {
-        let index = self.geometries.len() - 1;
+    fn add_triangle_mesh(&mut self, mesh: TriangleMesh) -> GeometryRef {
+        let index = self.geometries.len();
         self.geometries.push(mesh);
-        GeometryIndex(index as u32)
+        GeometryRef(index as u32)
     }
 
-    fn add_shader(&mut self, debug_color: Vec3) -> ShaderIndex {
-        let index = self.shaders.len() - 1;
+    fn add_shader(&mut self, debug_color: Vec3) -> ShaderRef {
+        let index = self.shaders.len();
         self.shaders.push(Shader { debug_color });
-        ShaderIndex(index as u32)
+        ShaderRef(index as u32)
     }
 
-    fn add_geometry_instance(&mut self, instance: GeometryInstance) {
+    fn add_geometry_instance(&mut self, instance: GeometryInstance) -> GeometryInstanceRef {
+        let index = self.geometry_instances.len();
         self.geometry_instances.push(instance);
+        GeometryInstanceRef(index as u32)
+    }
+
+    pub fn geometry_ref_iter(&self) -> impl Iterator<Item = GeometryRef> {
+        (0..self.geometries.len()).map(|i| GeometryRef(i as u32))
+    }
+
+    pub fn geometry(&self, r: GeometryRef) -> Option<&TriangleMesh> {
+        self.geometries.get(r.0 as usize)
     }
 }
 
