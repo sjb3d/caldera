@@ -97,7 +97,7 @@ impl AccelLevel {
         let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
         let buffer = schedule.create_buffer(
             &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::ACCELERATION_STRUCTURE_READ,
+            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
             global_allocator,
         );
         let accel = {
@@ -211,7 +211,7 @@ impl AccelLevel {
         let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
         let buffer = schedule.create_buffer(
             &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::ACCELERATION_STRUCTURE_READ,
+            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
             global_allocator,
         );
         let accel = {
@@ -423,7 +423,11 @@ impl AccelInfo {
 
                 let desc = BufferDesc::new(shader_binding_table_size as usize);
                 let mut writer = allocator
-                    .map_buffer(shader_binding_table, &desc, BufferUsage::SHADER_BINDING_TABLE)
+                    .map_buffer(
+                        shader_binding_table,
+                        &desc,
+                        BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE,
+                    )
                     .unwrap();
 
                 assert_eq!(shader_binding_raygen_region.offset, 0);
@@ -536,7 +540,10 @@ impl AccelInfo {
         schedule.add_compute(
             command_name!("trace"),
             |params| {
-                params.add_buffer(self.bottom_level.buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                params.add_buffer(
+                    self.bottom_level.buffer,
+                    BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                );
                 params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
             },
             move |params, cmd| {
