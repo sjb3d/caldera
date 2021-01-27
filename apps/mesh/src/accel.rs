@@ -17,6 +17,8 @@ struct HitRecordData {
     attribute_buffer_address: u64,
 }
 
+unsafe impl AsByteSlice for HitRecordData {}
+
 descriptor_set_layout!(pub TraceDescriptorSetLayout {
     trace: UniformData<TraceData>,
     accel: AccelerationStructure,
@@ -92,7 +94,7 @@ impl AccelLevel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as u32);
+        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
         let buffer = schedule.create_buffer(
             &buffer_desc,
             BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::ACCELERATION_STRUCTURE_READ,
@@ -108,7 +110,7 @@ impl AccelLevel {
             unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
         };
 
-        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as u32));
+        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
         schedule.add_compute(
             command_name!("build"),
@@ -206,7 +208,7 @@ impl AccelLevel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as u32);
+        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
         let buffer = schedule.create_buffer(
             &buffer_desc,
             BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::ACCELERATION_STRUCTURE_READ,
@@ -222,7 +224,7 @@ impl AccelLevel {
             unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
         };
 
-        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as u32));
+        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
         schedule.add_compute(
             command_name!("build"),
@@ -414,26 +416,25 @@ impl AccelInfo {
                 let (miss_group_handle, remain) = remain.split_at(handle_size);
                 let hit_group_handle = remain;
 
-                let desc = BufferDesc::new(shader_binding_table_size);
-                let mut mapping = allocator
-                    .map_buffer::<u8>(shader_binding_table, &desc, BufferUsage::SHADER_BINDING_TABLE)
-                    .unwrap();
-
-                let remain = mapping.get_mut();
-                let (remain, hit_mapping) = remain.split_at_mut(shader_binding_hit_region.offset as usize);
-                let (remain, miss_mapping) = remain.split_at_mut(shader_binding_miss_region.offset as usize);
-                let raygen_mapping = remain;
-
                 let hit_data = HitRecordData {
                     index_buffer_address: index_buffer_device_address,
                     attribute_buffer_address: attribute_buffer_device_address,
                 };
-                let hit_data_bytes: [u8; 16] = unsafe { mem::transmute(hit_data) };
 
-                raygen_mapping[..handle_size].copy_from_slice(raygen_group_handle);
-                miss_mapping[..handle_size].copy_from_slice(miss_group_handle);
-                hit_mapping[..handle_size].copy_from_slice(hit_group_handle);
-                hit_mapping[handle_size..handle_size + 16].copy_from_slice(&hit_data_bytes);
+                let desc = BufferDesc::new(shader_binding_table_size as usize);
+                let mut writer = allocator
+                    .map_buffer(shader_binding_table, &desc, BufferUsage::SHADER_BINDING_TABLE)
+                    .unwrap();
+
+                assert_eq!(shader_binding_raygen_region.offset, 0);
+                writer.write_all(raygen_group_handle);
+
+                writer.write_zeros(shader_binding_miss_region.offset as usize - writer.written());
+                writer.write_all(miss_group_handle);
+
+                writer.write_zeros(shader_binding_hit_region.offset as usize - writer.written());
+                writer.write_all(hit_group_handle);
+                writer.write_all(hit_data.as_byte_slice());
             }
         });
 
@@ -452,19 +453,14 @@ impl AccelInfo {
         resource_loader.async_load({
             let instances = mesh_info.instances;
             move |allocator| {
-                let desc = BufferDesc::new(
-                    (MeshInfo::INSTANCE_COUNT * mem::size_of::<vk::AccelerationStructureInstanceKHR>()) as u32,
-                );
-                let mut mapping = allocator
-                    .map_buffer::<vk::AccelerationStructureInstanceKHR>(
-                        instance_buffer,
-                        &desc,
-                        BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT,
-                    )
+                let desc =
+                    BufferDesc::new(MeshInfo::INSTANCE_COUNT * mem::size_of::<vk::AccelerationStructureInstanceKHR>());
+                let mut writer = allocator
+                    .map_buffer(instance_buffer, &desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
                     .unwrap();
 
-                for (dst, src) in mapping.get_mut().iter_mut().zip(instances.iter()) {
-                    *dst = vk::AccelerationStructureInstanceKHR {
+                for src in instances.iter() {
+                    let instance = vk::AccelerationStructureInstanceKHR {
                         transform: vk::TransformMatrixKHR {
                             matrix: src.into_transposed_transform(),
                         },
@@ -472,6 +468,7 @@ impl AccelInfo {
                         instance_shader_binding_table_record_offset_and_flags: 0,
                         acceleration_structure_reference: bottom_level_device_address,
                     };
+                    writer.write_all(instance.as_byte_slice());
                 }
             }
         });

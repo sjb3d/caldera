@@ -23,11 +23,11 @@ impl FormatExt for vk::Format {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferDesc {
-    pub size: u32,
+    pub size: usize,
 }
 
 impl BufferDesc {
-    pub fn new(size: u32) -> Self {
+    pub fn new(size: usize) -> Self {
         BufferDesc { size }
     }
 }

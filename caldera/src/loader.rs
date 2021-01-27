@@ -137,7 +137,9 @@ impl ResourceLoader {
         let mut resource_cache = ResourceCache::new(context);
 
         let (staging_buffer, staging_mapping) = {
-            let desc = BufferDesc { size: staging_size };
+            let desc = BufferDesc {
+                size: staging_size as usize,
+            };
             let all_usage_flags = vk::BufferUsageFlags::TRANSFER_SRC;
             let memory_property_flags = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
             let info = resource_cache.get_buffer_info(&desc, all_usage_flags);
@@ -423,20 +425,48 @@ impl Drop for ResourceLoader {
     }
 }
 
-pub struct ScopedResourceMapping<'a, T> {
-    shared: Arc<ResourceLoaderShared>,
-    mapping: &'a mut [T],
-    transfer: ResourceStagingTransfer,
-}
-
-impl<'a, T> ScopedResourceMapping<'a, T> {
-    pub fn get_mut(&mut self) -> &mut [T] {
-        self.mapping
+pub unsafe trait AsByteSlice: Sized {
+    fn as_byte_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, mem::size_of::<Self>()) }
     }
 }
 
-impl<'a, T> Drop for ScopedResourceMapping<'a, T> {
+unsafe impl AsByteSlice for vk::AccelerationStructureInstanceKHR {}
+
+pub struct ResourceWriter<'a> {
+    shared: Arc<ResourceLoaderShared>,
+    mapping: &'a mut [u8],
+    next: usize,
+    transfer: ResourceStagingTransfer,
+}
+
+impl<'a> ResourceWriter<'a> {
+    pub fn write_all(&mut self, src: &[u8]) {
+        let start = self.next;
+        let end = start + src.len();
+        self.mapping[start..end].copy_from_slice(src);
+        self.next += src.len();
+    }
+
+    pub fn written(&self) -> usize {
+        self.next
+    }
+
+    pub fn write_zeros(&mut self, len: usize) {
+        let start = self.next;
+        let end = start + len;
+        for dst in self.mapping[start..end].iter_mut() {
+            *dst = 0;
+        }
+        self.next += len;
+    }
+}
+
+impl<'a> Drop for ResourceWriter<'a> {
     fn drop(&mut self) {
+        for dst in self.mapping[self.next..].iter_mut() {
+            *dst = 0;
+        }
         let mut transfers = self.shared.transfers.lock().unwrap();
         transfers.push_back(self.transfer);
     }
@@ -455,29 +485,29 @@ pub struct ResourceAllocator {
 }
 
 impl ResourceAllocator {
-    fn map<T>(&self, size: u32) -> Option<(u32, &mut [T])> {
+    fn map(&self, size: usize) -> Option<(u32, &mut [u8])> {
         let alignment = self
             .shared
             .context
             .physical_device_properties
             .limits
             .min_storage_buffer_offset_alignment as u32;
-        let staging_offset = self.shared.allocate_staging(size, alignment)?;
+        let staging_offset = self.shared.allocate_staging(size as u32, alignment)?;
         let mapping = unsafe {
             slice::from_raw_parts_mut(
-                self.shared.staging_mapping.0.offset(staging_offset as isize) as *mut T,
-                (size as usize) / mem::size_of::<T>(),
+                self.shared.staging_mapping.0.offset(staging_offset as isize),
+                size as usize,
             )
         };
         Some((staging_offset, mapping))
     }
 
-    pub fn map_buffer<T>(
+    pub fn map_buffer(
         &self,
         handle: StaticBufferHandle,
         desc: &BufferDesc,
         all_usage: BufferUsage,
-    ) -> Option<ScopedResourceMapping<'_, T>> {
+    ) -> Option<ResourceWriter<'_>> {
         {
             let mut buffers = self.shared.buffers.lock().unwrap();
             let resource = buffers.get_mut(handle.0).unwrap();
@@ -485,9 +515,10 @@ impl ResourceAllocator {
             *resource = StaticBufferResource::Mapped;
         }
         let (staging_offset, mapping) = self.map(desc.size)?;
-        Some(ScopedResourceMapping {
+        Some(ResourceWriter {
             shared: Arc::clone(&self.shared),
             mapping,
+            next: 0,
             transfer: ResourceStagingTransfer {
                 resource: ResourceStagingTransferResource::Buffer {
                     handle,
@@ -499,22 +530,23 @@ impl ResourceAllocator {
         })
     }
 
-    pub fn map_image<T>(
+    pub fn map_image(
         &self,
         handle: StaticImageHandle,
         desc: &ImageDesc,
         all_usage: ImageUsage,
-    ) -> Option<ScopedResourceMapping<'_, T>> {
+    ) -> Option<ResourceWriter<'_>> {
         {
             let mut images = self.shared.images.lock().unwrap();
             let resource = images.get_mut(handle.0).unwrap();
             assert!(matches!(resource, StaticImageResource::Empty));
             *resource = StaticImageResource::Mapped;
         }
-        let (staging_offset, mapping) = self.map(desc.staging_size() as u32)?;
-        Some(ScopedResourceMapping {
+        let (staging_offset, mapping) = self.map(desc.staging_size())?;
+        Some(ResourceWriter {
             shared: Arc::clone(&self.shared),
             mapping,
+            next: 0,
             transfer: ResourceStagingTransfer {
                 resource: ResourceStagingTransferResource::Image {
                     handle,

@@ -17,6 +17,14 @@ use winit::{
 
 mod color_space;
 
+#[repr(C)]
+struct SamplePixel {
+    x: u16,
+    y: u16,
+}
+
+unsafe impl AsByteSlice for SamplePixel {}
+
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct TraceData {
@@ -102,18 +110,18 @@ impl App {
             )
             .with_layer_count(Self::SAMPLES_PER_SEQUENCE as u32);
 
-            let mut mapping = allocator
-                .map_image::<u16>(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
+            let mut writer = allocator
+                .map_image(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
                 .unwrap();
 
-            let buffer = mapping.get_mut();
-            let mut write_offset = 0;
             for sample_index in 0..Self::SAMPLES_PER_SEQUENCE {
                 for sequence_index in 0..PIXEL_COUNT {
                     let sample = sequences[sequence_index][sample_index as usize];
-                    buffer[write_offset + 0] = sample.x_bits(16) as u16;
-                    buffer[write_offset + 1] = sample.y_bits(16) as u16;
-                    write_offset += 2;
+                    let pixel = SamplePixel {
+                        x: sample.x_bits(16) as u16,
+                        y: sample.y_bits(16) as u16,
+                    };
+                    writer.write_all(pixel.as_byte_slice());
                 }
             }
         });

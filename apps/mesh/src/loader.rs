@@ -58,6 +58,8 @@ pub struct InstanceData {
     matrix: [f32; 12],
 }
 
+unsafe impl AsByteSlice for InstanceData {}
+
 #[derive(Clone, Copy)]
 pub struct MeshInfo {
     pub position_buffer: StaticBufferHandle,
@@ -107,9 +109,9 @@ impl MeshInfo {
             }
         }
 
-        let position_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<PositionData>()) as u32);
-        let mut mapping = allocator
-            .map_buffer::<PositionData>(
+        let position_buffer_desc = BufferDesc::new(vertices.len() * mem::size_of::<PositionData>());
+        let mut writer = allocator
+            .map_buffer(
                 self.position_buffer,
                 &position_buffer_desc,
                 if with_ray_tracing {
@@ -121,17 +123,17 @@ impl MeshInfo {
             .unwrap();
         let mut min = Vec3::broadcast(f32::MAX);
         let mut max = Vec3::broadcast(-f32::MAX);
-        for (dst, src) in mapping.get_mut().iter_mut().zip(vertices.iter()) {
+        for src in vertices.iter() {
             let v = src.pos;
-            dst.pos = *v.as_array();
+            writer.write_all(v.as_byte_slice());
             min = min.min_by_component(v);
             max = max.max_by_component(v);
         }
         self.vertex_count = vertices.len() as u32;
 
-        let index_buffer_desc = BufferDesc::new((faces.len() * 3 * mem::size_of::<u32>()) as u32);
-        let mut mapping = allocator
-            .map_buffer::<u32>(
+        let index_buffer_desc = BufferDesc::new(faces.len() * 3 * mem::size_of::<u32>());
+        let mut writer = allocator
+            .map_buffer(
                 self.index_buffer,
                 &index_buffer_desc,
                 if with_ray_tracing {
@@ -142,10 +144,8 @@ impl MeshInfo {
             )
             .unwrap();
         let mut normals = vec![Vec3::zero(); vertices.len()];
-        for (dst, src) in mapping.get_mut().chunks_mut(3).zip(faces.iter()) {
-            for i in 0..3 {
-                dst[i] = src.indices[i];
-            }
+        for src in faces.iter() {
+            writer.write_all(src.indices.as_byte_slice());
             let v0 = vertices[src.indices[0] as usize].pos;
             let v1 = vertices[src.indices[1] as usize].pos;
             let v2 = vertices[src.indices[2] as usize].pos;
@@ -159,9 +159,9 @@ impl MeshInfo {
         }
         self.triangle_count = faces.len() as u32;
 
-        let attribute_buffer_desc = BufferDesc::new((vertices.len() * mem::size_of::<AttributeData>()) as u32);
-        let mut mapping = allocator
-            .map_buffer::<AttributeData>(
+        let attribute_buffer_desc = BufferDesc::new(vertices.len() * mem::size_of::<AttributeData>());
+        let mut writer = allocator
+            .map_buffer(
                 self.attribute_buffer,
                 &attribute_buffer_desc,
                 if with_ray_tracing {
@@ -171,8 +171,8 @@ impl MeshInfo {
                 },
             )
             .unwrap();
-        for (dst, src) in mapping.get_mut().iter_mut().zip(normals.iter()) {
-            dst.normal = *src.as_array();
+        for src in normals.iter() {
+            writer.write_all(src.as_byte_slice());
         }
 
         let scale = 0.9 / (max - min).component_max();
@@ -186,14 +186,15 @@ impl MeshInfo {
             );
         }
 
-        let instance_buffer_desc = BufferDesc::new((Self::INSTANCE_COUNT * mem::size_of::<InstanceData>()) as u32);
-        let mut mapping = allocator
-            .map_buffer::<InstanceData>(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
+        let instance_buffer_desc = BufferDesc::new(Self::INSTANCE_COUNT * mem::size_of::<InstanceData>());
+        let mut writer = allocator
+            .map_buffer(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
             .unwrap();
-        for (dst, src) in mapping.get_mut().iter_mut().zip(self.instances.iter()) {
-            *dst = InstanceData {
+        for src in self.instances.iter() {
+            let instance_data = InstanceData {
                 matrix: src.into_transposed_transform(),
             };
+            writer.write_all(instance_data.as_byte_slice());
         }
     }
 }
