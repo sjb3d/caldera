@@ -34,7 +34,7 @@ pub struct AccelLevel {
 impl AccelLevel {
     pub fn new_bottom_level<'a>(
         context: &'a Arc<Context>,
-        mesh_info: &'a MeshInfo,
+        mesh_info: &MeshInfo,
         resource_loader: &ResourceLoader,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
@@ -50,7 +50,7 @@ impl AccelLevel {
             vertex_data: vk::DeviceOrHostAddressConstKHR {
                 device_address: vertex_buffer_address,
             },
-            vertex_stride: 12,
+            vertex_stride: mem::size_of::<PositionData>() as vk::DeviceSize,
             max_vertex: mesh_info.vertex_count - 1,
             index_type: vk::IndexType::UINT32,
             index_data: vk::DeviceOrHostAddressConstKHR {
@@ -117,38 +117,42 @@ impl AccelLevel {
             |params| {
                 params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
             },
-            move |params, cmd| {
-                let scratch_buffer = params.get_buffer(scratch_buffer);
+            {
+                let triangle_count = mesh_info.triangle_count;
+                move |params, cmd| {
+                    let scratch_buffer = params.get_buffer(scratch_buffer);
 
-                let scratch_buffer_address = unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
+                    let scratch_buffer_address =
+                        unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
 
-                let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
-                    ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                    flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
-                    mode: vk::BuildAccelerationStructureModeKHR::BUILD,
-                    dst_acceleration_structure: Some(accel),
-                    geometry_count: 1,
-                    p_geometries: &geometry,
-                    scratch_data: vk::DeviceOrHostAddressKHR {
-                        device_address: scratch_buffer_address,
-                    },
-                    ..Default::default()
-                };
+                    let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+                        ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                        flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                        mode: vk::BuildAccelerationStructureModeKHR::BUILD,
+                        dst_acceleration_structure: Some(accel),
+                        geometry_count: 1,
+                        p_geometries: &geometry,
+                        scratch_data: vk::DeviceOrHostAddressKHR {
+                            device_address: scratch_buffer_address,
+                        },
+                        ..Default::default()
+                    };
 
-                let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
-                    primitive_count: mesh_info.triangle_count,
-                    primitive_offset: 0,
-                    first_vertex: 0,
-                    transform_offset: 0,
-                };
+                    let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
+                        primitive_count: triangle_count,
+                        primitive_offset: 0,
+                        first_vertex: 0,
+                        transform_offset: 0,
+                    };
 
-                unsafe {
-                    context.device.cmd_build_acceleration_structures_khr(
-                        cmd,
-                        slice::from_ref(&build_info),
-                        &[&build_range_info],
-                    )
-                };
+                    unsafe {
+                        context.device.cmd_build_acceleration_structures_khr(
+                            cmd,
+                            slice::from_ref(&build_info),
+                            &[&build_range_info],
+                        )
+                    };
+                }
             },
         );
 
