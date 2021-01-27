@@ -1,15 +1,15 @@
 use caldera::*;
 
 #[derive(Default)]
-pub struct Transform(Isometry3); // TODO: allow scale?
+pub struct Transform(pub Isometry3); // TODO: allow scale?
 
 #[derive(Default)]
-pub struct TriangleMesh {
+pub struct Geometry {
     pub positions: Vec<Vec3>,
     pub indices: Vec<UVec3>,
 }
 
-impl TriangleMesh {
+impl Geometry {
     fn with_quad(mut self, v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3) -> Self {
         let base = UVec3::broadcast(self.positions.len() as u32);
         self.positions.push(v0);
@@ -23,43 +23,43 @@ impl TriangleMesh {
 }
 
 pub struct Shader {
-    debug_color: Vec3,
+    pub debug_color: Vec3,
 }
 
-pub struct GeometryInstance {
-    transform: TransformRef,
-    geometry: GeometryRef,
-    shader: ShaderRef,
+pub struct Instance {
+    pub transform_ref: TransformRef,
+    pub geometry_ref: GeometryRef,
+    pub shader_ref: ShaderRef,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TransformRef(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TransformRef(pub u32);
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GeometryRef(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GeometryRef(pub u32);
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ShaderRef(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ShaderRef(pub u32);
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GeometryInstanceRef(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InstanceRef(pub u32);
 
-impl GeometryInstance {
-    fn new(transform: TransformRef, geometry: GeometryRef, shader: ShaderRef) -> Self {
+impl Instance {
+    fn new(transform_ref: TransformRef, geometry_ref: GeometryRef, shader_ref: ShaderRef) -> Self {
         Self {
-            transform,
-            geometry,
-            shader,
+            transform_ref,
+            geometry_ref,
+            shader_ref,
         }
     }
 }
 
 #[derive(Default)]
 pub struct Scene {
-    transforms: Vec<Transform>,
-    geometries: Vec<TriangleMesh>,
-    shaders: Vec<Shader>,
-    geometry_instances: Vec<GeometryInstance>,
+    pub transforms: Vec<Transform>,
+    pub geometries: Vec<Geometry>,
+    pub shaders: Vec<Shader>,
+    pub instances: Vec<Instance>,
 }
 
 impl Scene {
@@ -69,7 +69,7 @@ impl Scene {
         TransformRef(index as u32)
     }
 
-    fn add_triangle_mesh(&mut self, mesh: TriangleMesh) -> GeometryRef {
+    fn add_geometry(&mut self, mesh: Geometry) -> GeometryRef {
         let index = self.geometries.len();
         self.geometries.push(mesh);
         GeometryRef(index as u32)
@@ -81,56 +81,72 @@ impl Scene {
         ShaderRef(index as u32)
     }
 
-    fn add_geometry_instance(&mut self, instance: GeometryInstance) -> GeometryInstanceRef {
-        let index = self.geometry_instances.len();
-        self.geometry_instances.push(instance);
-        GeometryInstanceRef(index as u32)
+    fn add_instance(&mut self, instance: Instance) -> InstanceRef {
+        let index = self.instances.len();
+        self.instances.push(instance);
+        InstanceRef(index as u32)
+    }
+
+    pub fn transform_ref_iter(&self) -> impl Iterator<Item = TransformRef> {
+        (0..self.transforms.len()).map(|i| TransformRef(i as u32))
     }
 
     pub fn geometry_ref_iter(&self) -> impl Iterator<Item = GeometryRef> {
         (0..self.geometries.len()).map(|i| GeometryRef(i as u32))
     }
 
-    pub fn geometry(&self, r: GeometryRef) -> Option<&TriangleMesh> {
+    pub fn instance_ref_iter(&self) -> impl Iterator<Item = InstanceRef> {
+        (0..self.instances.len()).map(|i| InstanceRef(i as u32))
+    }
+
+    pub fn transform(&self, r: TransformRef) -> Option<&Transform> {
+        self.transforms.get(r.0 as usize)
+    }
+
+    pub fn geometry(&self, r: GeometryRef) -> Option<&Geometry> {
         self.geometries.get(r.0 as usize)
+    }
+
+    pub fn instance(&self, r: InstanceRef) -> Option<&Instance> {
+        self.instances.get(r.0 as usize)
     }
 }
 
 pub fn create_cornell_box_scene() -> Scene {
     let mut scene = Scene::default();
 
-    let floor = scene.add_triangle_mesh(TriangleMesh::default().with_quad(
+    let floor = scene.add_geometry(Geometry::default().with_quad(
         Vec3::new(0.5528, 0.0, 0.0),
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(0.0, 0.0, 0.5592),
         Vec3::new(0.5496, 0.0, 0.5592),
     ));
-    let ceiling = scene.add_triangle_mesh(TriangleMesh::default().with_quad(
+    let ceiling = scene.add_geometry(Geometry::default().with_quad(
         Vec3::new(0.556, 0.5488, 0.0),
         Vec3::new(0.556, 0.5488, 0.5592),
         Vec3::new(0.0, 0.5488, 0.5592),
         Vec3::new(0.0, 0.5488, 0.0),
     ));
-    let grey_wall = scene.add_triangle_mesh(TriangleMesh::default().with_quad(
+    let grey_wall = scene.add_geometry(Geometry::default().with_quad(
         Vec3::new(0.5496, 0.0, 0.5592),
         Vec3::new(0.0, 0.0, 0.5592),
         Vec3::new(0.0, 0.5488, 0.5592),
         Vec3::new(0.556, 0.5488, 0.5592),
     ));
-    let red_wall = scene.add_triangle_mesh(TriangleMesh::default().with_quad(
+    let red_wall = scene.add_geometry(Geometry::default().with_quad(
         Vec3::new(0.5528, 0.0, 0.0),
         Vec3::new(0.5496, 0.0, 0.5592),
         Vec3::new(0.556, 0.5488, 0.5592),
         Vec3::new(0.556, 0.5488, 0.0),
     ));
-    let green_wall = scene.add_triangle_mesh(TriangleMesh::default().with_quad(
+    let green_wall = scene.add_geometry(Geometry::default().with_quad(
         Vec3::new(0.0, 0.0, 0.5592),
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(0.0, 0.548, 0.0),
         Vec3::new(0.0, 0.548, 0.5592),
     ));
-    let short_block = scene.add_triangle_mesh(
-        TriangleMesh::default()
+    let short_block = scene.add_geometry(
+        Geometry::default()
             .with_quad(
                 Vec3::new(0.130, 0.165, 0.065),
                 Vec3::new(0.082, 0.165, 0.225),
@@ -162,8 +178,8 @@ pub fn create_cornell_box_scene() -> Scene {
                 Vec3::new(0.082, 0.0, 0.225),
             ),
     );
-    let tall_block = scene.add_triangle_mesh(
-        TriangleMesh::default()
+    let tall_block = scene.add_geometry(
+        Geometry::default()
             .with_quad(
                 Vec3::new(0.423, 0.330, 0.247),
                 Vec3::new(0.265, 0.330, 0.296),
@@ -202,13 +218,16 @@ pub fn create_cornell_box_scene() -> Scene {
 
     let identity = scene.add_transform(Transform::default());
 
-    scene.add_geometry_instance(GeometryInstance::new(identity, floor, grey_shader));
-    scene.add_geometry_instance(GeometryInstance::new(identity, ceiling, grey_shader));
-    scene.add_geometry_instance(GeometryInstance::new(identity, grey_wall, grey_shader));
-    scene.add_geometry_instance(GeometryInstance::new(identity, red_wall, red_shader));
-    scene.add_geometry_instance(GeometryInstance::new(identity, green_wall, green_shader));
-    scene.add_geometry_instance(GeometryInstance::new(identity, short_block, grey_shader));
-    scene.add_geometry_instance(GeometryInstance::new(identity, tall_block, grey_shader));
+    scene.add_instance(Instance::new(identity, floor, grey_shader));
+    scene.add_instance(Instance::new(identity, ceiling, grey_shader));
+    scene.add_instance(Instance::new(identity, grey_wall, grey_shader));
+    scene.add_instance(Instance::new(identity, red_wall, red_shader));
+    scene.add_instance(Instance::new(identity, green_wall, green_shader));
+    scene.add_instance(Instance::new(identity, short_block, grey_shader));
+    scene.add_instance(Instance::new(identity, tall_block, grey_shader));
+
+    let extra = scene.add_transform(Transform(Isometry3::new(Vec3::new(0.1, 0.0, 0.0), Rotor3::identity())));
+    scene.add_instance(Instance::new(extra, short_block, grey_shader));
 
     scene
 }

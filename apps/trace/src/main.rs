@@ -57,6 +57,13 @@ impl App {
 
         let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
 
+        self.accel.update(
+            &base.context,
+            &base.systems.resource_loader,
+            &mut base.systems.global_allocator,
+            &mut schedule,
+        );
+
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
         let swap_extent = base.display.swapchain.get_extent();
         let swap_format = base.display.swapchain.get_format();
