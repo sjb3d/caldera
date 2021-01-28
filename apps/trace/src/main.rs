@@ -4,6 +4,7 @@ mod scene;
 use crate::accel::*;
 use crate::scene::*;
 use caldera::*;
+use caldera_macro::descriptor_set_layout;
 use imgui::im_str;
 use imgui::Key;
 use spark::vk;
@@ -15,8 +16,13 @@ use winit::{
     window::WindowBuilder,
 };
 
+descriptor_set_layout!(CopyDescriptorSetLayout { ids: StorageImage });
+
 struct App {
     context: Arc<Context>,
+
+    copy_descriptor_set_layout: CopyDescriptorSetLayout,
+    copy_pipeline_layout: vk::PipelineLayout,
 
     accel: SceneAccel,
 }
@@ -24,12 +30,24 @@ struct App {
 impl App {
     fn new(base: &mut AppBase) -> Self {
         let context = &base.context;
+        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
+
+        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
 
         let scene = create_cornell_box_scene();
-        let accel = SceneAccel::new(scene, &context, &mut base.systems.resource_loader);
+        let accel = SceneAccel::new(
+            scene,
+            &context,
+            &mut base.systems.descriptor_set_layout_cache,
+            &base.systems.pipeline_cache,
+            &mut base.systems.resource_loader,
+        );
 
         Self {
             context: Arc::clone(&context),
+            copy_descriptor_set_layout,
+            copy_pipeline_layout,
             accel,
         }
     }
@@ -79,25 +97,89 @@ impl App {
             ImageUsage::empty(),
         );
 
+        let trace_image = {
+            let scene = self.accel.scene();
+            let camera = &scene.cameras[0];
+            let world_from_view = scene.transform(camera.transform_ref).unwrap().0;
+
+            let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
+
+            let xy_from_st =
+                Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * camera.fov_y).tan(), Vec2::zero());
+            let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
+            let coord_from_uv = Scale2Offset2::new(
+                UVec2::new(swap_extent.width, swap_extent.height).as_float(),
+                Vec2::broadcast(-0.5), // coord is pixel centre
+            );
+            let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
+
+            let ray_origin = world_from_view.translation;
+            let ray_vec_from_coord = world_from_view.rotation.into_matrix()
+                * Mat3::from_scale(-1.0)
+                * xy_from_coord.into_homogeneous_matrix();
+
+            self.accel.trace(
+                &base.context,
+                &base.systems.resource_loader,
+                &mut schedule,
+                &base.systems.descriptor_pool,
+                &swap_extent,
+                ray_origin,
+                ray_vec_from_coord,
+            )
+        };
+
         let main_sample_count = vk::SampleCountFlags::N1;
-        let main_render_state = RenderState::new(swap_image, &[0f32, 0f32, 0.1f32, 0f32]);
+        let main_render_state = RenderState::new(swap_image, &[0f32, 0f32, 0f32, 0f32]);
 
-        schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
-            let context = &base.context;
-            let pipeline_cache = &base.systems.pipeline_cache;
-            let window = &base.window;
-            let ui_platform = &mut base.ui_platform;
-            let ui_renderer = &mut base.ui_renderer;
-            move |_params, cmd, render_pass| {
-                set_viewport_helper(&context.device, cmd, swap_extent);
+        schedule.add_graphics(
+            command_name!("main"),
+            main_render_state,
+            |params| {
+                if let Some(trace_image) = trace_image {
+                    params.add_image(trace_image, ImageUsage::FRAGMENT_STORAGE_READ);
+                }
+            },
+            {
+                let context = &base.context;
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
+                let copy_pipeline_layout = self.copy_pipeline_layout;
+                let window = &base.window;
+                let ui_platform = &mut base.ui_platform;
+                let ui_renderer = &mut base.ui_renderer;
+                move |params, cmd, render_pass| {
+                    set_viewport_helper(&context.device, cmd, swap_extent);
 
-                // draw imgui
-                ui_platform.prepare_render(&ui, window);
+                    if let Some(trace_image) = trace_image {
+                        let trace_image_view = params.get_image_view(trace_image);
 
-                let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
-                ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
-            }
-        });
+                        let copy_descriptor_set = copy_descriptor_set_layout.write(&descriptor_pool, trace_image_view);
+
+                        let state = GraphicsPipelineState::new(render_pass, main_sample_count);
+
+                        draw_helper(
+                            &context.device,
+                            pipeline_cache,
+                            cmd,
+                            copy_pipeline_layout,
+                            &state,
+                            "trace/copy.vert.spv",
+                            "trace/copy.frag.spv",
+                            copy_descriptor_set,
+                            3,
+                        );
+                    }
+
+                    // draw imgui
+                    ui_platform.prepare_render(&ui, window);
+
+                    let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
+                    ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                }
+            },
+        );
 
         schedule.run(
             &base.context,

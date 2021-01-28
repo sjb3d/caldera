@@ -54,14 +54,15 @@ impl<T> ResourceVec<T> {
     }
 
     pub(crate) fn allocate(&mut self, data: T) -> ResourceHandle {
-        let index = self.active.count_ones();
-        if index < self.active.len() {
-            self.active.set(index, true);
+        let index = if let Some(index) = self.active.iter_zeros().next() {
+            assert_eq!(self.active.get_mut(index).unwrap().replace(true), false);
+            index
         } else {
-            assert_eq!(index, self.active.len());
+            let index = self.active.len();
             self.active.push(true);
             self.entries.push(ResourceEntry::default());
-        }
+            index
+        };
         let entry = self.entries.get_mut(index).unwrap();
         entry.generation.advance();
         entry.data = Some(data);

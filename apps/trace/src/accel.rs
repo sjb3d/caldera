@@ -1,5 +1,6 @@
 use crate::scene::*;
 use caldera::*;
+use caldera_macro::descriptor_set_layout;
 use spark::{vk, Builder};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -10,6 +11,18 @@ struct PositionData([f32; 3]);
 
 #[repr(C)]
 struct IndexData([u32; 3]);
+
+#[repr(C)]
+pub struct CameraData {
+    ray_origin: [f32; 3],
+    ray_vec_from_coord: [f32; 9],
+}
+
+descriptor_set_layout!(pub DebugDescriptorSetLayout {
+    camera: UniformData<CameraData>,
+    accel: AccelerationStructure,
+    output: StorageImage,
+});
 
 #[derive(Clone, Copy)]
 struct TriangleMeshData {
@@ -46,8 +59,33 @@ impl SceneShared {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ShaderBindingRegion {
+    offset: u32,
+    stride: u32,
+    size: u32,
+}
+
+impl ShaderBindingRegion {
+    fn into_device_address_region(&self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
+        vk::StridedDeviceAddressRegionKHR {
+            device_address: base_device_address + self.offset as vk::DeviceSize,
+            stride: self.stride as vk::DeviceSize,
+            size: self.size as vk::DeviceSize,
+        }
+    }
+}
+
 pub struct SceneAccel {
     shared: Arc<SceneShared>,
+    context: Arc<Context>,
+    debug_descriptor_set_layout: DebugDescriptorSetLayout,
+    debug_pipeline_layout: vk::PipelineLayout,
+    debug_pipeline: vk::Pipeline,
+    shader_binding_table: StaticBufferHandle,
+    shader_binding_raygen_region: ShaderBindingRegion,
+    shader_binding_miss_region: ShaderBindingRegion,
+    shader_binding_hit_region: ShaderBindingRegion,
     geometry_data: Vec<TriangleMeshData>,
     bottom_level_accel: Vec<BottomLevelAccel>,
     instance_buffer: Option<StaticBufferHandle>,
@@ -100,11 +138,122 @@ impl SceneAccel {
         merged
     }
 
-    pub fn new(scene: Scene, context: &Arc<Context>, resource_loader: &mut ResourceLoader) -> Self {
+    pub fn new(
+        scene: Scene,
+        context: &Arc<Context>,
+        descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
+        pipeline_cache: &PipelineCache,
+        resource_loader: &mut ResourceLoader,
+    ) -> Self {
         let clusters = Self::make_clusters(&scene);
         let shared = Arc::new(SceneShared { scene, clusters });
 
-        // TODO: make pipeline
+        // make pipeline
+        let debug_descriptor_set_layout = DebugDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let debug_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(debug_descriptor_set_layout.0);
+
+        let debug_pipeline = pipeline_cache.get_ray_tracing(
+            "trace/debug.rgen.spv",
+            "trace/debug.rchit.spv",
+            "trace/debug.rmiss.spv",
+            debug_pipeline_layout,
+        );
+
+        // make shader binding table layout
+        let (
+            shader_binding_raygen_region,
+            shader_binding_miss_region,
+            shader_binding_hit_region,
+            shader_binding_table_size,
+        ) = {
+            let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+
+            let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
+
+            let mut next_offset = 0;
+
+            let raygen_record_size = 0;
+            let raygen_stride = align_up(
+                rtpp.shader_group_handle_size + raygen_record_size,
+                rtpp.shader_group_handle_alignment,
+            );
+            let raygen_region = ShaderBindingRegion {
+                offset: next_offset,
+                stride: raygen_stride,
+                size: raygen_stride,
+            };
+            next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
+
+            let miss_record_size = 0;
+            let miss_stride = align_up(
+                rtpp.shader_group_handle_size + miss_record_size,
+                rtpp.shader_group_handle_alignment,
+            );
+            let miss_region = ShaderBindingRegion {
+                offset: next_offset,
+                stride: miss_stride,
+                size: miss_stride,
+            };
+            next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
+
+            let hit_record_size = 0;
+            let hit_stride = align_up(
+                rtpp.shader_group_handle_size + hit_record_size,
+                rtpp.shader_group_handle_alignment,
+            );
+            let hit_region = ShaderBindingRegion {
+                offset: next_offset,
+                stride: hit_stride,
+                size: hit_stride,
+            };
+            next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
+
+            (raygen_region, miss_region, hit_region, next_offset)
+        };
+
+        // write the table
+        let shader_binding_table = resource_loader.create_buffer();
+        resource_loader.async_load({
+            let context = Arc::clone(context);
+            move |allocator| {
+                let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+                let shader_group_count = 3;
+                let handle_size = rtpp.shader_group_handle_size as usize;
+                let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
+                unsafe {
+                    context.device.get_ray_tracing_shader_group_handles_khr(
+                        debug_pipeline,
+                        0,
+                        shader_group_count,
+                        &mut handle_data,
+                    )
+                }
+                .unwrap();
+
+                let remain = handle_data.as_slice();
+                let (raygen_group_handle, remain) = remain.split_at(handle_size);
+                let (miss_group_handle, remain) = remain.split_at(handle_size);
+                let hit_group_handle = remain;
+
+                let desc = BufferDesc::new(shader_binding_table_size as usize);
+                let mut writer = allocator
+                    .map_buffer(
+                        shader_binding_table,
+                        &desc,
+                        BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE,
+                    )
+                    .unwrap();
+
+                assert_eq!(shader_binding_raygen_region.offset, 0);
+                writer.write_all(raygen_group_handle);
+
+                writer.write_zeros(shader_binding_miss_region.offset as usize - writer.written());
+                writer.write_all(miss_group_handle);
+
+                writer.write_zeros(shader_binding_hit_region.offset as usize - writer.written());
+                writer.write_all(hit_group_handle);
+            }
+        });
 
         // make vertex/index buffers for each geometry
         let geometry_data = shared
@@ -151,6 +300,14 @@ impl SceneAccel {
 
         Self {
             shared,
+            context: Arc::clone(&context),
+            debug_descriptor_set_layout,
+            debug_pipeline_layout,
+            debug_pipeline,
+            shader_binding_table,
+            shader_binding_raygen_region,
+            shader_binding_miss_region,
+            shader_binding_hit_region,
             geometry_data,
             bottom_level_accel: Vec::new(),
             instance_buffer: None,
@@ -161,7 +318,7 @@ impl SceneAccel {
     fn create_bottom_level_accel<'a>(
         &self,
         cluster: &Cluster,
-        context: &'a Arc<Context>,
+        context: &'a Context,
         resource_loader: &ResourceLoader,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
@@ -234,7 +391,9 @@ impl SceneAccel {
         let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
         let buffer = schedule.create_buffer(
             &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+            BufferUsage::ACCELERATION_STRUCTURE_WRITE
+                | BufferUsage::ACCELERATION_STRUCTURE_READ
+                | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
             global_allocator,
         );
         let accel = {
@@ -263,6 +422,7 @@ impl SceneAccel {
         schedule.add_compute(
             command_name!("build"),
             |params| {
+                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
                 params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
             },
             {
@@ -314,12 +474,13 @@ impl SceneAccel {
                 for cluster in shared.clusters.iter() {
                     let acceleration_structure_reference = cluster.accel_device_address.load(Ordering::SeqCst);
                     for transform_ref in cluster.transform_refs.iter().cloned() {
+                        let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
                         let transform = shared.scene.transform(transform_ref).unwrap();
                         let instance = vk::AccelerationStructureInstanceKHR {
                             transform: vk::TransformMatrixKHR {
                                 matrix: transform.0.into_transposed_transform(),
                             },
-                            instance_custom_index_and_mask: 0xff_00_00_00,
+                            instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
                             instance_shader_binding_table_record_offset_and_flags: 0, // TODO
                             acceleration_structure_reference,
                         };
@@ -333,9 +494,8 @@ impl SceneAccel {
 
     fn create_top_level_accel<'a>(
         &self,
-        context: &'a Arc<Context>,
+        context: &'a Context,
         instance_buffer: vk::Buffer,
-        resource_loader: &ResourceLoader,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> TopLevelAccel {
@@ -398,6 +558,10 @@ impl SceneAccel {
         schedule.add_compute(
             command_name!("build"),
             |params| {
+                for bottom_level_accel in self.bottom_level_accel.iter() {
+                    params.add_buffer(bottom_level_accel.buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                }
+                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
                 params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
             },
             move |params, cmd| {
@@ -437,7 +601,7 @@ impl SceneAccel {
 
     pub fn update<'a>(
         &mut self,
-        context: &'a Arc<Context>,
+        context: &'a Context,
         resource_loader: &mut ResourceLoader,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
@@ -468,14 +632,121 @@ impl SceneAccel {
                 .instance_buffer
                 .and_then(|handle| resource_loader.get_buffer(handle))
             {
-                self.top_level_accel = Some(self.create_top_level_accel(
-                    context,
-                    instance_buffer,
-                    resource_loader,
-                    global_allocator,
-                    schedule,
-                ));
+                self.top_level_accel =
+                    Some(self.create_top_level_accel(context, instance_buffer, global_allocator, schedule));
             }
+        }
+    }
+
+    pub fn scene(&self) -> &Scene {
+        &self.shared.scene
+    }
+
+    pub fn trace<'a>(
+        &'a self,
+        context: &'a Context,
+        resource_loader: &ResourceLoader,
+        schedule: &mut RenderSchedule<'a>,
+        descriptor_pool: &'a DescriptorPool,
+        swap_extent: &'a vk::Extent2D,
+        ray_origin: Vec3,
+        ray_vec_from_coord: Mat3,
+    ) -> Option<ImageHandle> {
+        let top_level_accel = self.top_level_accel.as_ref()?;
+        let shader_binding_table_buffer = resource_loader.get_buffer(self.shader_binding_table)?;
+
+        let shader_binding_table_address = unsafe {
+            context
+                .device
+                .get_buffer_device_address_helper(shader_binding_table_buffer)
+        };
+
+        let output_desc = ImageDesc::new_2d(
+            swap_extent.width,
+            swap_extent.height,
+            vk::Format::R32_UINT,
+            vk::ImageAspectFlags::COLOR,
+        );
+        let output_image = schedule.describe_image(&output_desc);
+
+        schedule.add_compute(
+            command_name!("trace"),
+            |params| {
+                for bottom_level_accel in self.bottom_level_accel.iter() {
+                    params.add_buffer(
+                        bottom_level_accel.buffer,
+                        BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                    );
+                }
+                params.add_buffer(top_level_accel.buffer, BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE);
+                params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+            },
+            move |params, cmd| {
+                let output_image_view = params.get_image_view(output_image);
+
+                let debug_descriptor_set = self.debug_descriptor_set_layout.write(
+                    &descriptor_pool,
+                    &|buf: &mut CameraData| {
+                        *buf = CameraData {
+                            ray_origin: ray_origin.into(),
+                            ray_vec_from_coord: *ray_vec_from_coord.as_array(),
+                        }
+                    },
+                    top_level_accel.accel,
+                    output_image_view,
+                );
+
+                unsafe {
+                    context
+                        .device
+                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::RAY_TRACING_KHR, self.debug_pipeline);
+                    context.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::RAY_TRACING_KHR,
+                        self.debug_pipeline_layout,
+                        0,
+                        slice::from_ref(&debug_descriptor_set),
+                        &[],
+                    );
+                }
+
+                let raygen_shader_binding_table = self
+                    .shader_binding_raygen_region
+                    .into_device_address_region(shader_binding_table_address);
+                let miss_shader_binding_table = self
+                    .shader_binding_miss_region
+                    .into_device_address_region(shader_binding_table_address);
+                let hit_shader_binding_table = self
+                    .shader_binding_hit_region
+                    .into_device_address_region(shader_binding_table_address);
+                let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
+                unsafe {
+                    context.device.cmd_trace_rays_khr(
+                        cmd,
+                        &raygen_shader_binding_table,
+                        &miss_shader_binding_table,
+                        &hit_shader_binding_table,
+                        &callable_shader_binding_table,
+                        swap_extent.width,
+                        swap_extent.height,
+                        1,
+                    );
+                }
+            },
+        );
+
+        Some(output_image)
+    }
+}
+
+impl Drop for SceneAccel {
+    fn drop(&mut self) {
+        let device = &self.context.device;
+        for bottom_level_accel in self.bottom_level_accel.iter() {
+            unsafe { device.destroy_acceleration_structure_khr(Some(bottom_level_accel.accel), None) };
+        }
+        if let Some(top_level_accel) = self.top_level_accel.as_ref() {
+            unsafe { device.destroy_acceleration_structure_khr(Some(top_level_accel.accel), None) };
         }
     }
 }

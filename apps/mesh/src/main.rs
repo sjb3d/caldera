@@ -191,8 +191,8 @@ impl App {
         {
             self.accel_info = Some(AccelInfo::new(
                 &base.context,
-                &base.systems.pipeline_cache,
                 &mut base.systems.descriptor_set_layout_cache,
+                &base.systems.pipeline_cache,
                 &mut base.systems.resource_loader,
                 &mesh_info,
                 &mut base.systems.global_allocator,

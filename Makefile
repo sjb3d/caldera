@@ -19,9 +19,15 @@ SRC=\
 	mesh/raster.frag.glsl \
 	mesh/trace.rchit.glsl \
 	mesh/trace.rgen.glsl \
-	mesh/trace.rmiss.glsl
+	mesh/trace.rmiss.glsl \
+	trace/copy.frag.glsl \
+	trace/copy.vert.glsl \
+	trace/debug.rchit.glsl \
+	trace/debug.rgen.glsl \
+	trace/debug.rmiss.glsl
 
-APPS=compute mesh
+APPS=compute mesh trace
+
 SRC_DIR=shaders
 BIN_DIR=spv/bin
 LISTING_DIR=spv/disasm

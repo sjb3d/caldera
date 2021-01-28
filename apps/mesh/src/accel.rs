@@ -97,7 +97,9 @@ impl AccelLevel {
         let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
         let buffer = schedule.create_buffer(
             &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+            BufferUsage::ACCELERATION_STRUCTURE_WRITE
+                | BufferUsage::ACCELERATION_STRUCTURE_READ
+                | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
             global_allocator,
         );
         let accel = {
@@ -115,6 +117,7 @@ impl AccelLevel {
         schedule.add_compute(
             command_name!("build"),
             |params| {
+                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
                 params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
             },
             {
@@ -165,6 +168,7 @@ impl AccelLevel {
 
     pub fn new_top_level<'a>(
         context: &'a Arc<Context>,
+        bottom_level_buffer: BufferHandle,
         instance_buffer: vk::Buffer,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
@@ -233,6 +237,8 @@ impl AccelLevel {
         schedule.add_compute(
             command_name!("build"),
             |params| {
+                params.add_buffer(bottom_level_buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
                 params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
             },
             move |params, cmd| {
@@ -286,17 +292,14 @@ impl Drop for AccelLevel {
 }
 
 #[derive(Clone, Copy)]
-pub struct ShaderBindingRegion {
-    pub offset: u32,
-    pub stride: u32,
-    pub size: u32,
+struct ShaderBindingRegion {
+    offset: u32,
+    stride: u32,
+    size: u32,
 }
 
 impl ShaderBindingRegion {
-    pub fn into_device_address_region(
-        &self,
-        base_device_address: vk::DeviceAddress,
-    ) -> vk::StridedDeviceAddressRegionKHR {
+    fn into_device_address_region(&self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
         vk::StridedDeviceAddressRegionKHR {
             device_address: base_device_address + self.offset as vk::DeviceSize,
             stride: self.stride as vk::DeviceSize,
@@ -306,23 +309,23 @@ impl ShaderBindingRegion {
 }
 
 pub struct AccelInfo {
-    pub trace_descriptor_set_layout: TraceDescriptorSetLayout,
-    pub trace_pipeline_layout: vk::PipelineLayout,
-    pub trace_pipeline: vk::Pipeline,
-    pub shader_binding_table: StaticBufferHandle,
-    pub shader_binding_raygen_region: ShaderBindingRegion,
-    pub shader_binding_miss_region: ShaderBindingRegion,
-    pub shader_binding_hit_region: ShaderBindingRegion,
-    pub bottom_level: AccelLevel,
-    pub instance_buffer: StaticBufferHandle,
-    pub top_level: Option<AccelLevel>,
+    trace_descriptor_set_layout: TraceDescriptorSetLayout,
+    trace_pipeline_layout: vk::PipelineLayout,
+    trace_pipeline: vk::Pipeline,
+    shader_binding_table: StaticBufferHandle,
+    shader_binding_raygen_region: ShaderBindingRegion,
+    shader_binding_miss_region: ShaderBindingRegion,
+    shader_binding_hit_region: ShaderBindingRegion,
+    bottom_level: AccelLevel,
+    instance_buffer: StaticBufferHandle,
+    top_level: Option<AccelLevel>,
 }
 
 impl AccelInfo {
     pub fn new<'a>(
         context: &'a Arc<Context>,
-        pipeline_cache: &PipelineCache,
         descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
+        pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
         mesh_info: &'a MeshInfo,
         global_allocator: &mut Allocator,
@@ -506,6 +509,7 @@ impl AccelInfo {
             if let Some(instance_buffer) = resource_loader.get_buffer(self.instance_buffer) {
                 self.top_level = Some(AccelLevel::new_top_level(
                     context,
+                    self.bottom_level.buffer,
                     instance_buffer,
                     global_allocator,
                     schedule,
@@ -516,7 +520,7 @@ impl AccelInfo {
 
     pub fn dispatch<'a>(
         &'a self,
-        context: &'a Arc<Context>,
+        context: &'a Context,
         resource_loader: &ResourceLoader,
         schedule: &mut RenderSchedule<'a>,
         descriptor_pool: &'a DescriptorPool,
@@ -548,6 +552,7 @@ impl AccelInfo {
                     self.bottom_level.buffer,
                     BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
                 );
+                params.add_buffer(top_level.buffer, BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE);
                 params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
             },
             move |params, cmd| {

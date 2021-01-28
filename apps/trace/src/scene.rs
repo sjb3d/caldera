@@ -32,6 +32,11 @@ pub struct Instance {
     pub shader_ref: ShaderRef,
 }
 
+pub struct Camera {
+    pub transform_ref: TransformRef,
+    pub fov_y: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TransformRef(pub u32);
 
@@ -43,6 +48,9 @@ pub struct ShaderRef(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceRef(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CameraRef(pub u32);
 
 impl Instance {
     fn new(transform_ref: TransformRef, geometry_ref: GeometryRef, shader_ref: ShaderRef) -> Self {
@@ -60,6 +68,7 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub shaders: Vec<Shader>,
     pub instances: Vec<Instance>,
+    pub cameras: Vec<Camera>,
 }
 
 impl Scene {
@@ -87,6 +96,12 @@ impl Scene {
         InstanceRef(index as u32)
     }
 
+    fn add_camera(&mut self, camera: Camera) -> CameraRef {
+        let index = self.cameras.len();
+        self.cameras.push(camera);
+        CameraRef(index as u32)
+    }
+
     pub fn transform_ref_iter(&self) -> impl Iterator<Item = TransformRef> {
         (0..self.transforms.len()).map(|i| TransformRef(i as u32))
     }
@@ -109,6 +124,10 @@ impl Scene {
 
     pub fn instance(&self, r: InstanceRef) -> Option<&Instance> {
         self.instances.get(r.0 as usize)
+    }
+
+    pub fn camera(&self, r: CameraRef) -> Option<&Camera> {
+        self.cameras.get(r.0 as usize)
     }
 }
 
@@ -225,6 +244,15 @@ pub fn create_cornell_box_scene() -> Scene {
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
     scene.add_instance(Instance::new(identity, short_block, grey_shader));
     scene.add_instance(Instance::new(identity, tall_block, grey_shader));
+
+    let camera_transform = scene.add_transform(Transform(Isometry3::new(
+        Vec3::new(0.278, 0.273, -0.8),
+        Rotor3::from_rotation_xz(PI),
+    )));
+    scene.add_camera(Camera {
+        transform_ref: camera_transform,
+        fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
+    });
 
     let extra = scene.add_transform(Transform(Isometry3::new(Vec3::new(0.1, 0.0, 0.0), Rotor3::identity())));
     scene.add_instance(Instance::new(extra, short_block, grey_shader));

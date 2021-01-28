@@ -324,8 +324,8 @@ impl Context {
             let mut pipeline_creation_cache_control_features =
                 vk::PhysicalDevicePipelineCreationCacheControlFeaturesEXT::builder()
                     .pipeline_creation_cache_control(enable_pipeline_creation_cache_control);
-            let mut buffer_device_address_features =
-                vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder().buffer_device_address(enable_buffer_device_addresses);
+            let mut buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder()
+                .buffer_device_address(enable_buffer_device_addresses);
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
                 .acceleration_structure(enable_ray_tracing);
             let mut ray_tracing_pipeline_features =

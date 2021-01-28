@@ -29,10 +29,11 @@ impl BufferUsage {
     pub const INDEX_BUFFER: BufferUsage = BufferUsage(0x8);
     pub const ACCELERATION_STRUCTURE_BUILD_INPUT: BufferUsage = BufferUsage(0x10);
     pub const ACCELERATION_STRUCTURE_BUILD_SCRATCH: BufferUsage = BufferUsage(0x20);
-    pub const ACCELERATION_STRUCTURE_WRITE: BufferUsage = BufferUsage(0x40);
-    pub const RAY_TRACING_ACCELERATION_STRUCTURE: BufferUsage = BufferUsage(0x80);
-    pub const RAY_TRACING_SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x100);
-    pub const RAY_TRACING_STORAGE_READ: BufferUsage = BufferUsage(0x200);
+    pub const ACCELERATION_STRUCTURE_READ: BufferUsage = BufferUsage(0x40);
+    pub const ACCELERATION_STRUCTURE_WRITE: BufferUsage = BufferUsage(0x80);
+    pub const RAY_TRACING_ACCELERATION_STRUCTURE: BufferUsage = BufferUsage(0x100);
+    pub const RAY_TRACING_SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x200);
+    pub const RAY_TRACING_STORAGE_READ: BufferUsage = BufferUsage(0x400);
 
     pub fn empty() -> Self {
         Self(0)
@@ -69,6 +70,7 @@ impl BufferUsage {
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
                 }
                 Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH
+                | Self::ACCELERATION_STRUCTURE_READ
                 | Self::ACCELERATION_STRUCTURE_WRITE
                 | Self::RAY_TRACING_ACCELERATION_STRUCTURE => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
@@ -94,6 +96,7 @@ impl BufferUsage {
                 Self::INDEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
                 Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
                 Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                Self::ACCELERATION_STRUCTURE_READ => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
                 Self::ACCELERATION_STRUCTURE_WRITE => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
                 Self::RAY_TRACING_ACCELERATION_STRUCTURE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 Self::RAY_TRACING_SHADER_BINDING_TABLE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
@@ -114,6 +117,7 @@ impl BufferUsage {
                 Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
                     vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR | vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR
                 }
+                Self::ACCELERATION_STRUCTURE_READ => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
                 Self::ACCELERATION_STRUCTURE_WRITE => vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
                 Self::RAY_TRACING_ACCELERATION_STRUCTURE => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
                 Self::RAY_TRACING_SHADER_BINDING_TABLE => vk::AccessFlags::SHADER_READ,
