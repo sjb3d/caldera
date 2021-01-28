@@ -42,6 +42,14 @@ pub trait IntoTransposedTransform {
     fn into_transposed_transform(&self) -> [f32; 12];
 }
 
+impl IntoTransposedTransform for Isometry3 {
+    fn into_transposed_transform(&self) -> [f32; 12] {
+        self.into_homogeneous_matrix().transposed().as_slice()[..12]
+            .try_into()
+            .unwrap()
+    }
+}
+
 impl IntoTransposedTransform for Similarity3 {
     fn into_transposed_transform(&self) -> [f32; 12] {
         self.into_homogeneous_matrix().transposed().as_slice()[..12]

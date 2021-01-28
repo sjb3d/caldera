@@ -59,7 +59,7 @@ impl App {
 
         self.accel.update(
             &base.context,
-            &base.systems.resource_loader,
+            &mut base.systems.resource_loader,
             &mut base.systems.global_allocator,
             &mut schedule,
         );
