@@ -211,7 +211,7 @@ fn main() {
 
     let window = WindowBuilder::new()
         .with_title("trace")
-        .with_inner_size(Size::Logical(LogicalSize::new(640.0, 480.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(640.0, 640.0)))
         .build(&event_loop)
         .unwrap();
 

@@ -254,8 +254,21 @@ pub fn create_cornell_box_scene() -> Scene {
         fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
     });
 
-    let extra = scene.add_transform(Transform(Isometry3::new(Vec3::new(0.1, 0.0, 0.0), Rotor3::identity())));
-    scene.add_instance(Instance::new(extra, short_block, grey_shader));
+    let add_extra_blocks = true;
+    if add_extra_blocks {
+        for i in 1..10 {
+            let f = i as f32;
+            let extra = scene.add_transform(Transform(Isometry3::new(
+                Vec3::new(-0.01 * f, 0.02 * f, 0.0),
+                Rotor3::identity(),
+            )));
+            scene.add_instance(Instance::new(
+                extra,
+                short_block,
+                if (i % 1) != 0 { red_shader } else { grey_shader },
+            ));
+        }
+    }
 
     scene
 }

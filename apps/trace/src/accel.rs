@@ -111,6 +111,9 @@ impl SceneAccel {
             cluster.instance_refs.push(instance_ref);
         }
 
+        // remove geometry that is not instanced
+        clusters.retain(|cluster| !cluster.transform_refs.is_empty());
+
         // sort the transform sets for each cluster so they can be compared
         for cluster in clusters.iter_mut() {
             cluster.transform_refs.sort_unstable();
@@ -385,6 +388,11 @@ impl SceneAccel {
             sizes
         };
 
+        println!(
+            "geometry count: {} (to be instanced {} times)",
+            cluster.geometry_refs.len(),
+            cluster.transform_refs.len()
+        );
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
@@ -464,7 +472,6 @@ impl SceneAccel {
             let shared = Arc::clone(&self.shared);
             move |allocator| {
                 let count = shared.cluster_instance_count();
-                println!("instance count: {}", count);
 
                 let desc = BufferDesc::new(count * mem::size_of::<vk::AccelerationStructureInstanceKHR>());
                 let mut writer = allocator
@@ -534,6 +541,7 @@ impl SceneAccel {
             sizes
         };
 
+        println!("instance count: {}", instance_count);
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
