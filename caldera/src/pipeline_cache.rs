@@ -208,8 +208,14 @@ impl PipelineCache {
     pub fn new<P: AsRef<Path>>(context: &Arc<Context>, path: P) -> Self {
         let pipeline_cache = {
             // TODO: load from file
-            // TODO: set EXTERNALLY_SYNCHRONIZED_EXT
-            let create_info = vk::PipelineCacheCreateInfo { ..Default::default() };
+            let create_info = vk::PipelineCacheCreateInfo {
+                flags: if context.device.extensions.supports_ext_pipeline_creation_cache_control() {
+                    vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED_EXT
+                } else {
+                    vk::PipelineCacheCreateFlags::empty()
+                },
+                ..Default::default()
+            };
             unsafe { context.device.create_pipeline_cache(&create_info, None) }.unwrap()
         };
         Self {

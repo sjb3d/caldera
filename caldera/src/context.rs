@@ -262,7 +262,7 @@ impl Context {
                 .unwrap()
         };
 
-        let mut enable_ray_tracing = false;
+        let mut enable_buffer_device_addresses = false;
         let device = {
             println!(
                 "loading device version {} ({} supported)",
@@ -291,21 +291,28 @@ impl Context {
                 DeviceExtensions::from_properties(params.version, &extension_properties)
             };
 
+            assert!(available_extensions.supports_ext_scalar_block_layout());
+            let enable_inline_uniform_block =
+                params.allow_inline_uniform_block && available_extensions.supports_ext_inline_uniform_block();
+            let enable_pipeline_creation_cache_control =
+                available_extensions.supports_ext_pipeline_creation_cache_control();
+            let enable_ray_tracing = params.allow_ray_tracing
+                && available_extensions.supports_khr_acceleration_structure()
+                && available_extensions.supports_khr_ray_tracing_pipeline();
+
             let mut extensions = DeviceExtensions::new(params.version);
             extensions.enable_khr_swapchain();
             extensions.enable_ext_scalar_block_layout();
-            if params.allow_inline_uniform_block && available_extensions.supports_ext_inline_uniform_block() {
+            if enable_pipeline_creation_cache_control {
+                extensions.enable_ext_pipeline_creation_cache_control();
+            }
+            if enable_inline_uniform_block {
                 extensions.enable_ext_inline_uniform_block();
             }
-            if params.allow_ray_tracing
-                && available_extensions.supports_khr_acceleration_structure()
-                && available_extensions.supports_khr_ray_tracing_pipeline()
-                && available_extensions.supports_khr_ray_query()
-            {
+            if enable_ray_tracing {
                 extensions.enable_khr_acceleration_structure();
                 extensions.enable_khr_ray_tracing_pipeline();
-                extensions.enable_khr_ray_query();
-                enable_ray_tracing = true;
+                enable_buffer_device_addresses = true;
             }
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
@@ -314,8 +321,11 @@ impl Context {
 
             let mut scalar_block_layout_features =
                 vk::PhysicalDeviceScalarBlockLayoutFeaturesEXT::builder().scalar_block_layout(true);
+            let mut pipeline_creation_cache_control_features =
+                vk::PhysicalDevicePipelineCreationCacheControlFeaturesEXT::builder()
+                    .pipeline_creation_cache_control(enable_pipeline_creation_cache_control);
             let mut buffer_device_address_features =
-                vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder().buffer_device_address(enable_ray_tracing);
+                vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder().buffer_device_address(enable_buffer_device_addresses);
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
                 .acceleration_structure(enable_ray_tracing);
             let mut ray_tracing_pipeline_features =
@@ -327,6 +337,7 @@ impl Context {
                 .pp_enabled_extension_names(&extension_name_ptrs)
                 .p_enabled_features(Some(&enabled_features))
                 .insert_next(&mut scalar_block_layout_features)
+                .insert_next(&mut pipeline_creation_cache_control_features)
                 .insert_next(&mut buffer_device_address_features)
                 .insert_next(&mut acceleration_structure_features)
                 .insert_next(&mut ray_tracing_pipeline_features);
@@ -344,7 +355,7 @@ impl Context {
             physical_device_properties,
             physical_device_memory_properties,
             ray_tracing_pipeline_properties,
-            enable_buffer_device_addresses: enable_ray_tracing,
+            enable_buffer_device_addresses,
             queue_family_index,
             queue_family_properties,
             queue,
