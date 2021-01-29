@@ -6,7 +6,7 @@ use crate::scene::*;
 use caldera::*;
 use caldera_macro::descriptor_set_layout;
 use imgui::im_str;
-use imgui::Key;
+use imgui::{Key, MouseButton};
 use spark::vk;
 use std::env;
 use std::sync::Arc;
@@ -18,6 +18,39 @@ use winit::{
 
 descriptor_set_layout!(CopyDescriptorSetLayout { ids: StorageImage });
 
+struct ViewDrag {
+    pub rotation: Rotor3,
+    drag_start: Option<(Rotor3, Vec3)>,
+}
+
+impl ViewDrag {
+    fn new(rotation: Rotor3) -> Self {
+        Self {
+            rotation,
+            drag_start: None,
+        }
+    }
+
+    fn update(&mut self, io: &imgui::Io, dir_from_coord: impl FnOnce(Vec2) -> Vec3) {
+        if io.want_capture_mouse {
+            self.drag_start = None;
+        } else {
+            let dir_now = dir_from_coord(Vec2::from(io.mouse_pos));
+            if io[MouseButton::Left] {
+                if let Some((rotation_start, dir_start)) = self.drag_start {
+                    self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
+                } else {
+                    self.drag_start = Some((self.rotation, dir_now));
+                }
+            } else {
+                if let Some((rotation_start, dir_start)) = self.drag_start.take() {
+                    self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
+                }
+            }
+        }
+    }
+}
+
 struct App {
     context: Arc<Context>,
 
@@ -25,6 +58,8 @@ struct App {
     copy_pipeline_layout: vk::PipelineLayout,
 
     accel: SceneAccel,
+    camera_ref: CameraRef,
+    view_drag: ViewDrag,
 }
 
 impl App {
@@ -44,15 +79,46 @@ impl App {
             &mut base.systems.resource_loader,
         );
 
+        let camera_ref = CameraRef(0);
+        let camera = accel.scene().camera(camera_ref);
+        let rotation = accel.scene().transform(camera.transform_ref).0.rotation;
+
         Self {
             context: Arc::clone(&context),
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             accel,
+            camera_ref,
+            view_drag: ViewDrag::new(rotation),
         }
     }
 
     fn render(&mut self, base: &mut AppBase) {
+        let io = base.ui_context.io();
+        let scene = self.accel.scene();
+        let camera = &scene.cameras[0];
+
+        let display_size: Vec2 = io.display_size.into();
+        let aspect_ratio = (display_size.x as f32) / (display_size.y as f32);
+
+        let xy_from_st = Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * camera.fov_y).tan(), Vec2::zero());
+        let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, -2.0), Vec2::new(1.0, 1.0));
+        let coord_from_uv = Scale2Offset2::new(display_size, Vec2::zero());
+        let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
+
+        self.view_drag.update(base.ui_context.io(), |p: Vec2| {
+            let v = xy_from_coord * p;
+            v.into_homogeneous_point().normalized()
+        });
+
+        let world_from_view = Isometry3::new(
+            scene.transform(camera.transform_ref).0.translation,
+            self.view_drag.rotation,
+        );
+        let ray_origin = world_from_view.translation;
+        let ray_vec_from_coord = world_from_view.rotation.into_matrix() * xy_from_coord.into_homogeneous_matrix();
+
+        // start render
         let ui = base.ui_context.frame();
         if ui.is_key_pressed(ui.key_index(Key::Escape)) {
             base.exit_requested = true;
@@ -62,8 +128,17 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
                 let ui = &ui;
+                let accel = &self.accel;
+                let selected_camera_ref = &mut self.camera_ref;
+                let view_drag = &mut self.view_drag;
                 move || {
-                    ui.text("Hello, World!");
+                    for camera_ref in accel.scene().camera_ref_iter() {
+                        if ui.radio_button(&im_str!("Camera {}", camera_ref.0), selected_camera_ref, camera_ref) {
+                            let rotation = accel.scene().transform(camera.transform_ref).0.rotation;
+                            *selected_camera_ref = camera_ref;
+                            *view_drag = ViewDrag::new(rotation);
+                        }
+                    }
                 }
             });
 
@@ -97,37 +172,15 @@ impl App {
             ImageUsage::empty(),
         );
 
-        let trace_image = {
-            let scene = self.accel.scene();
-            let camera = &scene.cameras[0];
-            let world_from_view = scene.transform(camera.transform_ref).unwrap().0;
-
-            let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
-
-            let xy_from_st =
-                Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * camera.fov_y).tan(), Vec2::zero());
-            let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
-            let coord_from_uv = Scale2Offset2::new(
-                UVec2::new(swap_extent.width, swap_extent.height).as_float(),
-                Vec2::broadcast(-0.5), // coord is pixel centre
-            );
-            let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
-
-            let ray_origin = world_from_view.translation;
-            let ray_vec_from_coord = world_from_view.rotation.into_matrix()
-                * Mat3::from_scale(-1.0)
-                * xy_from_coord.into_homogeneous_matrix();
-
-            self.accel.trace(
-                &base.context,
-                &base.systems.resource_loader,
-                &mut schedule,
-                &base.systems.descriptor_pool,
-                &swap_extent,
-                ray_origin,
-                ray_vec_from_coord,
-            )
-        };
+        let trace_image = self.accel.trace(
+            &base.context,
+            &base.systems.resource_loader,
+            &mut schedule,
+            &base.systems.descriptor_pool,
+            &swap_extent,
+            ray_origin,
+            ray_vec_from_coord,
+        );
 
         let main_sample_count = vk::SampleCountFlags::N1;
         let main_render_state = RenderState::new(swap_image, &[0f32, 0f32, 0f32, 0f32]);

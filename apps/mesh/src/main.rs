@@ -219,7 +219,7 @@ impl App {
             let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
             let coord_from_uv = Scale2Offset2::new(
                 UVec2::new(swap_extent.width, swap_extent.height).as_float(),
-                Vec2::broadcast(-0.5), // coord is pixel centre
+                Vec2::zero(),
             );
             let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
 

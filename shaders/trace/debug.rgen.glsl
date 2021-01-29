@@ -17,7 +17,7 @@ EXTEND_PAYLOAD_READ(g_extend);
 
 void main()
 {
-    const vec3 ray_vec = g_camera.ray_vec_from_coord * vec3(gl_LaunchIDEXT.xy, 1.f);
+    const vec3 ray_vec = g_camera.ray_vec_from_coord * vec3(gl_LaunchIDEXT.xy + .5f, 1.f);
     const vec3 ray_dir = normalize(ray_vec);
 
     traceRayEXT(

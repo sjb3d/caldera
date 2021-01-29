@@ -127,24 +127,28 @@ impl Scene {
         (0..self.instances.len()).map(|i| InstanceRef(i as u32))
     }
 
-    pub fn transform(&self, r: TransformRef) -> Option<&Transform> {
-        self.transforms.get(r.0 as usize)
+    pub fn camera_ref_iter(&self) -> impl Iterator<Item = CameraRef> {
+        (0..self.cameras.len()).map(|i| CameraRef(i as u32))
     }
 
-    pub fn geometry(&self, r: GeometryRef) -> Option<&Geometry> {
-        self.geometries.get(r.0 as usize)
+    pub fn transform(&self, r: TransformRef) -> &Transform {
+        self.transforms.get(r.0 as usize).unwrap()
     }
 
-    pub fn shader(&self, r: ShaderRef) -> Option<&Shader> {
-        self.shaders.get(r.0 as usize)
+    pub fn geometry(&self, r: GeometryRef) -> &Geometry {
+        self.geometries.get(r.0 as usize).unwrap()
     }
 
-    pub fn instance(&self, r: InstanceRef) -> Option<&Instance> {
-        self.instances.get(r.0 as usize)
+    pub fn shader(&self, r: ShaderRef) -> &Shader {
+        self.shaders.get(r.0 as usize).unwrap()
     }
 
-    pub fn camera(&self, r: CameraRef) -> Option<&Camera> {
-        self.cameras.get(r.0 as usize)
+    pub fn instance(&self, r: InstanceRef) -> &Instance {
+        self.instances.get(r.0 as usize).unwrap()
+    }
+
+    pub fn camera(&self, r: CameraRef) -> &Camera {
+        self.cameras.get(r.0 as usize).unwrap()
     }
 }
 
@@ -279,7 +283,7 @@ pub fn create_cornell_box_scene() -> Scene {
 
     let camera_transform = scene.add_transform(Transform(Isometry3::new(
         Vec3::new(0.278, 0.273, -0.8),
-        Rotor3::from_rotation_xz(PI),
+        Rotor3::identity(),
     )));
     scene.add_camera(Camera {
         transform_ref: camera_transform,

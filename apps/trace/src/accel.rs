@@ -119,7 +119,7 @@ impl SceneAccel {
         // gather a vector of instances per geometry
         let mut instance_refs_per_geometry = vec![Vec::new(); scene.geometries.len()];
         for instance_ref in scene.instance_ref_iter() {
-            let instance = scene.instance(instance_ref).unwrap();
+            let instance = scene.instance(instance_ref);
             instance_refs_per_geometry
                 .get_mut(instance.geometry_ref.0 as usize)
                 .unwrap()
@@ -134,7 +134,7 @@ impl SceneAccel {
             .map(|(geometry_ref, instance_refs)| {
                 let mut pairs: Vec<_> = instance_refs
                     .iter()
-                    .map(|&instance_ref| (scene.instance(instance_ref).unwrap().transform_ref, instance_ref))
+                    .map(|&instance_ref| (scene.instance(instance_ref).transform_ref, instance_ref))
                     .collect();
                 pairs.sort_unstable();
                 let (transform_refs, instance_refs): (Vec<_>, Vec<_>) = pairs.drain(..).unzip();
@@ -202,7 +202,7 @@ impl SceneAccel {
                 let shared = Arc::clone(&shared);
                 move |allocator| {
                     let mut quad_mesh = TriangleMesh::default();
-                    let mesh = match shared.scene.geometry(geometry_ref).unwrap() {
+                    let mesh = match shared.scene.geometry(geometry_ref) {
                         Geometry::TriangleMesh(mesh) => mesh,
                         Geometry::Quad(quad) => {
                             let half_size = 0.5 * quad.size;
@@ -387,16 +387,11 @@ impl SceneAccel {
 
                 for cluster in shared.clusters.iter() {
                     for instance_ref in cluster.instance_refs_grouped_by_transform_iter().cloned() {
-                        let instance = shared.scene.instance(instance_ref).unwrap();
+                        let instance = shared.scene.instance(instance_ref);
                         let hit_record = HitRecordData {
                             triangle_normal_buffer_address: geometry_record[instance.geometry_ref.0 as usize],
                             packed_shader: 0x01_00_00_00
-                                | shared
-                                    .scene
-                                    .shader(instance.shader_ref)
-                                    .unwrap()
-                                    .debug_color
-                                    .into_packed_unorm(),
+                                | shared.scene.shader(instance.shader_ref).debug_color.into_packed_unorm(),
                         };
 
                         let end_offset = writer.written() + hit_region.stride as usize;
@@ -427,7 +422,7 @@ impl SceneAccel {
         let mut max_primitive_counts = Vec::new();
         let mut build_range_info = Vec::new();
         for geometry_ref in cluster.elements.iter().map(|element| element.geometry_ref) {
-            let geometry = self.shared.scene.geometry(geometry_ref).unwrap();
+            let geometry = self.shared.scene.geometry(geometry_ref);
             let geometry_data = self.geometry_data[geometry_ref.0 as usize].as_ref().unwrap();
 
             let position_buffer = resource_loader.get_buffer(geometry_data.position_buffer)?;
@@ -586,7 +581,7 @@ impl SceneAccel {
                 {
                     for transform_ref in cluster.transform_refs.iter().cloned() {
                         let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
-                        let transform = shared.scene.transform(transform_ref).unwrap();
+                        let transform = shared.scene.transform(transform_ref);
                         let instance = vk::AccelerationStructureInstanceKHR {
                             transform: vk::TransformMatrixKHR {
                                 matrix: transform.0.into_transposed_transform(),
