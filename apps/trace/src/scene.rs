@@ -4,13 +4,13 @@ use caldera::*;
 pub struct Transform(pub Isometry3); // TODO: allow scale?
 
 #[derive(Default)]
-pub struct Geometry {
+pub struct TriangleMesh {
     pub positions: Vec<Vec3>,
     pub indices: Vec<UVec3>,
 }
 
-impl Geometry {
-    fn with_quad(mut self, v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3) -> Self {
+impl TriangleMesh {
+    pub fn with_quad(mut self, v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3) -> Self {
         let base = UVec3::broadcast(self.positions.len() as u32);
         self.positions.push(v0);
         self.positions.push(v1);
@@ -20,6 +20,15 @@ impl Geometry {
         self.indices.push(base + UVec3::new(2, 3, 0));
         self
     }
+}
+
+pub struct Quad {
+    pub size: Vec2,
+}
+
+pub enum Geometry {
+    TriangleMesh(TriangleMesh),
+    Quad(Quad),
 }
 
 pub struct Shader {
@@ -78,10 +87,14 @@ impl Scene {
         TransformRef(index as u32)
     }
 
-    fn add_geometry(&mut self, mesh: Geometry) -> GeometryRef {
+    fn add_geometry(&mut self, geometry: Geometry) -> GeometryRef {
         let index = self.geometries.len();
-        self.geometries.push(mesh);
+        self.geometries.push(geometry);
         GeometryRef(index as u32)
+    }
+
+    fn add_triangle_mesh_geometry(&mut self, mesh: TriangleMesh) -> GeometryRef {
+        self.add_geometry(Geometry::TriangleMesh(mesh))
     }
 
     fn add_shader(&mut self, debug_color: Vec3) -> ShaderRef {
@@ -138,38 +151,38 @@ impl Scene {
 pub fn create_cornell_box_scene() -> Scene {
     let mut scene = Scene::default();
 
-    let floor = scene.add_geometry(Geometry::default().with_quad(
+    let floor = scene.add_triangle_mesh_geometry(TriangleMesh::default().with_quad(
         Vec3::new(0.5528, 0.0, 0.0),
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(0.0, 0.0, 0.5592),
         Vec3::new(0.5496, 0.0, 0.5592),
     ));
-    let ceiling = scene.add_geometry(Geometry::default().with_quad(
+    let ceiling = scene.add_triangle_mesh_geometry(TriangleMesh::default().with_quad(
         Vec3::new(0.556, 0.5488, 0.0),
         Vec3::new(0.556, 0.5488, 0.5592),
         Vec3::new(0.0, 0.5488, 0.5592),
         Vec3::new(0.0, 0.5488, 0.0),
     ));
-    let grey_wall = scene.add_geometry(Geometry::default().with_quad(
+    let grey_wall = scene.add_triangle_mesh_geometry(TriangleMesh::default().with_quad(
         Vec3::new(0.5496, 0.0, 0.5592),
         Vec3::new(0.0, 0.0, 0.5592),
         Vec3::new(0.0, 0.5488, 0.5592),
         Vec3::new(0.556, 0.5488, 0.5592),
     ));
-    let red_wall = scene.add_geometry(Geometry::default().with_quad(
+    let red_wall = scene.add_triangle_mesh_geometry(TriangleMesh::default().with_quad(
         Vec3::new(0.5528, 0.0, 0.0),
         Vec3::new(0.5496, 0.0, 0.5592),
         Vec3::new(0.556, 0.5488, 0.5592),
         Vec3::new(0.556, 0.5488, 0.0),
     ));
-    let green_wall = scene.add_geometry(Geometry::default().with_quad(
+    let green_wall = scene.add_triangle_mesh_geometry(TriangleMesh::default().with_quad(
         Vec3::new(0.0, 0.0, 0.5592),
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(0.0, 0.548, 0.0),
         Vec3::new(0.0, 0.548, 0.5592),
     ));
-    let short_block = scene.add_geometry(
-        Geometry::default()
+    let short_block = scene.add_triangle_mesh_geometry(
+        TriangleMesh::default()
             .with_quad(
                 Vec3::new(0.130, 0.165, 0.065),
                 Vec3::new(0.082, 0.165, 0.225),
@@ -201,8 +214,8 @@ pub fn create_cornell_box_scene() -> Scene {
                 Vec3::new(0.082, 0.0, 0.225),
             ),
     );
-    let tall_block = scene.add_geometry(
-        Geometry::default()
+    let tall_block = scene.add_triangle_mesh_geometry(
+        TriangleMesh::default()
             .with_quad(
                 Vec3::new(0.423, 0.330, 0.247),
                 Vec3::new(0.265, 0.330, 0.296),
@@ -248,6 +261,21 @@ pub fn create_cornell_box_scene() -> Scene {
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
     scene.add_instance(Instance::new(identity, short_block, grey_shader));
     scene.add_instance(Instance::new(identity, tall_block, grey_shader));
+
+    let light_x0 = 0.213;
+    let light_x1 = 0.343;
+    let light_z0 = 0.227;
+    let light_z1 = 0.332;
+    let light_y = 0.5488 - 0.0001;
+    let light_transform = scene.add_transform(Transform(Isometry3::new(
+        Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
+        Rotor3::from_rotation_yz(0.5 * PI),
+    )));
+    let light_geometry = scene.add_geometry(Geometry::Quad(Quad {
+        size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
+    }));
+    let light_shader = scene.add_shader(Vec3::broadcast(1.0));
+    scene.add_instance(Instance::new(light_transform, light_geometry, light_shader));
 
     let camera_transform = scene.add_transform(Transform(Isometry3::new(
         Vec3::new(0.278, 0.273, -0.8),

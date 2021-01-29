@@ -31,25 +31,33 @@ descriptor_set_layout!(DebugDescriptorSetLayout {
     output: StorageImage,
 });
 
-#[derive(Clone, Copy)]
 struct TriangleMeshData {
     position_buffer: StaticBufferHandle,
     index_buffer: StaticBufferHandle,
     triangle_normal_buffer: StaticBufferHandle,
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct ClusterElement {
+    geometry_ref: GeometryRef,
+    instance_refs: Vec<InstanceRef>, // stored in transform order (matches parent transform_refs)
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Cluster {
     transform_refs: Vec<TransformRef>,
-    geometry_refs: Vec<GeometryRef>,
-    instance_ref_arrays: Vec<Vec<InstanceRef>>, // gathered as an array of transforms per geometry
+    elements: Vec<ClusterElement>,
 }
 
 impl Cluster {
-    // iterate as an array of geometries per transform
-    fn instance_ref_iter(&self) -> impl Iterator<Item = &InstanceRef> {
+    fn instance_refs_grouped_by_transform_iter(&self) -> impl Iterator<Item = &InstanceRef> {
         (0..self.transform_refs.len()).flat_map({
-            let instance_ref_arrays = &self.instance_ref_arrays;
-            move |t| instance_ref_arrays.iter().map(move |a| a.get(t).unwrap())
+            let elements = &self.elements;
+            move |transform_index| {
+                elements
+                    .iter()
+                    .map(move |element| element.instance_refs.get(transform_index).unwrap())
+            }
         })
     }
 }
@@ -99,47 +107,49 @@ pub struct SceneAccel {
     debug_descriptor_set_layout: DebugDescriptorSetLayout,
     debug_pipeline_layout: vk::PipelineLayout,
     debug_pipeline: vk::Pipeline,
-    geometry_data: Vec<TriangleMeshData>,
+    geometry_data: Vec<Option<TriangleMeshData>>,
     shader_binding_table: Option<ShaderBindingTable>,
-    bottom_level_accel: Vec<BottomLevelAccel>,
+    cluster_accel: Vec<BottomLevelAccel>,
     instance_buffer: Option<StaticBufferHandle>,
     top_level_accel: Option<TopLevelAccel>,
 }
 
 impl SceneAccel {
     fn make_clusters(scene: &Scene) -> Vec<Cluster> {
-        // start with one cluster per geometry
-        let mut clusters: Vec<_> = scene
-            .geometry_ref_iter()
-            .map(|g| Cluster {
-                transform_refs: Vec::new(),
-                geometry_refs: vec![g],
-                instance_ref_arrays: vec![Vec::new()],
-            })
-            .collect();
+        // gather a vector of instances per geometry
+        let mut instance_refs_per_geometry = vec![Vec::new(); scene.geometries.len()];
         for instance_ref in scene.instance_ref_iter() {
             let instance = scene.instance(instance_ref).unwrap();
-            let cluster = clusters.get_mut(instance.geometry_ref.0 as usize).unwrap();
-            cluster.instance_ref_arrays[0].push(instance_ref);
+            instance_refs_per_geometry
+                .get_mut(instance.geometry_ref.0 as usize)
+                .unwrap()
+                .push(instance_ref);
         }
 
-        // remove geometry that is not instanced
-        clusters.retain(|cluster| !cluster.instance_ref_arrays[0].is_empty());
-
-        // sort the instances by transform so that we can compare transform sets
-        for cluster in clusters.iter_mut() {
-            let transform_from_instance = |r: &InstanceRef| scene.instance(*r).unwrap().transform_ref;
-            cluster.instance_ref_arrays[0].sort_unstable_by_key(transform_from_instance);
-            cluster
-                .transform_refs
-                .extend(cluster.instance_ref_arrays[0].iter().map(transform_from_instance));
-        }
+        // convert to single-geometry clusters, with instances sorted by transform reference
+        let mut clusters: Vec<_> = scene
+            .geometry_ref_iter()
+            .zip(instance_refs_per_geometry.drain(..))
+            .filter(|(_, instance_refs)| !instance_refs.is_empty())
+            .map(|(geometry_ref, instance_refs)| {
+                let mut pairs: Vec<_> = instance_refs
+                    .iter()
+                    .map(|&instance_ref| (scene.instance(instance_ref).unwrap().transform_ref, instance_ref))
+                    .collect();
+                pairs.sort_unstable();
+                let (transform_refs, instance_refs): (Vec<_>, Vec<_>) = pairs.drain(..).unzip();
+                Cluster {
+                    transform_refs,
+                    elements: vec![ClusterElement {
+                        geometry_ref,
+                        instance_refs,
+                    }],
+                }
+            })
+            .collect();
 
         // sort the clusters by transform set so that we can merge in a single pass
-        clusters.sort_unstable_by(|a, b| {
-            (a.transform_refs.as_slice(), a.geometry_refs.first())
-                .cmp(&(b.transform_refs.as_slice(), b.geometry_refs.first()))
-        });
+        clusters.sort_unstable();
 
         // merge clusters that are used with the same set of transforms
         let mut merged = Vec::<Cluster>::new();
@@ -148,11 +158,7 @@ impl SceneAccel {
                 .last_mut()
                 .filter(|prev| prev.transform_refs == cluster.transform_refs)
             {
-                assert_eq!(cluster.geometry_refs.len(), 1);
-                assert_eq!(cluster.instance_ref_arrays.len(), 1);
-                prev.geometry_refs.push(cluster.geometry_refs.pop().unwrap());
-                prev.instance_ref_arrays
-                    .push(cluster.instance_ref_arrays.pop().unwrap());
+                prev.elements.append(&mut cluster.elements);
             } else {
                 merged.push(cluster);
             }
@@ -182,67 +188,82 @@ impl SceneAccel {
             debug_pipeline_layout,
         );
 
-        // make vertex/index buffers for each geometry
-        let geometry_data = shared
-            .scene
-            .geometry_ref_iter()
-            .map(|geometry_ref| {
-                let data = TriangleMeshData {
-                    position_buffer: resource_loader.create_buffer(),
-                    index_buffer: resource_loader.create_buffer(),
-                    triangle_normal_buffer: resource_loader.create_buffer(),
-                };
-                resource_loader.async_load({
-                    let shared = Arc::clone(&shared);
-                    move |allocator| {
-                        let geometry = shared.scene.geometry(geometry_ref).unwrap();
-                        let position_buffer_desc =
-                            BufferDesc::new(geometry.positions.len() * mem::size_of::<PositionData>());
-                        let mut writer = allocator
-                            .map_buffer(
-                                data.position_buffer,
-                                &position_buffer_desc,
-                                BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
-                            )
-                            .unwrap();
-                        for pos in geometry.positions.iter() {
-                            writer.write_all(pos.as_byte_slice());
+        // make vertex/index buffers for each referenced geometry
+        let mut geometry_data: Vec<_> = shared.scene.geometries.iter().map(|_| None).collect();
+        for geometry_ref in shared
+            .clusters
+            .iter()
+            .flat_map(|cluster| cluster.elements.iter().map(|element| element.geometry_ref))
+        {
+            let position_buffer = resource_loader.create_buffer();
+            let index_buffer = resource_loader.create_buffer();
+            let triangle_normal_buffer = resource_loader.create_buffer();
+            resource_loader.async_load({
+                let shared = Arc::clone(&shared);
+                move |allocator| {
+                    let mut quad_mesh = TriangleMesh::default();
+                    let mesh = match shared.scene.geometry(geometry_ref).unwrap() {
+                        Geometry::TriangleMesh(mesh) => mesh,
+                        Geometry::Quad(quad) => {
+                            let half_size = 0.5 * quad.size;
+                            quad_mesh = quad_mesh.with_quad(
+                                Vec3::new(-half_size.x, -half_size.y, 0.0),
+                                Vec3::new(half_size.x, -half_size.y, 0.0),
+                                Vec3::new(half_size.x, half_size.y, 0.0),
+                                Vec3::new(-half_size.x, half_size.y, 0.0),
+                            );
+                            &quad_mesh
                         }
+                    };
 
-                        let index_buffer_desc = BufferDesc::new(geometry.indices.len() * mem::size_of::<IndexData>());
-                        let mut writer = allocator
-                            .map_buffer(
-                                data.index_buffer,
-                                &index_buffer_desc,
-                                BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
-                            )
-                            .unwrap();
-                        for face in geometry.indices.iter() {
-                            writer.write_all(face.as_byte_slice());
-                        }
-
-                        let triangle_normal_buffer_desc =
-                            BufferDesc::new(geometry.indices.len() * mem::size_of::<Vec3>());
-                        let mut writer = allocator
-                            .map_buffer(
-                                data.triangle_normal_buffer,
-                                &triangle_normal_buffer_desc,
-                                BufferUsage::RAY_TRACING_STORAGE_READ,
-                            )
-                            .unwrap();
-                        for face in geometry.indices.iter() {
-                            let p0 = geometry.positions[face.x as usize];
-                            let p1 = geometry.positions[face.y as usize];
-                            let p2 = geometry.positions[face.z as usize];
-                            let normal = (p1 - p0).cross(p2 - p0).normalized();
-                            let packed_normal: u32 = normal.into_oct().into_packed_snorm();
-                            writer.write_all(packed_normal.as_byte_slice());
-                        }
+                    let position_buffer_desc = BufferDesc::new(mesh.positions.len() * mem::size_of::<PositionData>());
+                    let mut writer = allocator
+                        .map_buffer(
+                            position_buffer,
+                            &position_buffer_desc,
+                            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
+                        )
+                        .unwrap();
+                    for pos in mesh.positions.iter() {
+                        writer.write_all(pos.as_byte_slice());
                     }
-                });
-                data
-            })
-            .collect();
+
+                    let index_buffer_desc = BufferDesc::new(mesh.indices.len() * mem::size_of::<IndexData>());
+                    let mut writer = allocator
+                        .map_buffer(
+                            index_buffer,
+                            &index_buffer_desc,
+                            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
+                        )
+                        .unwrap();
+                    for face in mesh.indices.iter() {
+                        writer.write_all(face.as_byte_slice());
+                    }
+
+                    let triangle_normal_buffer_desc = BufferDesc::new(mesh.indices.len() * mem::size_of::<Vec3>());
+                    let mut writer = allocator
+                        .map_buffer(
+                            triangle_normal_buffer,
+                            &triangle_normal_buffer_desc,
+                            BufferUsage::RAY_TRACING_STORAGE_READ,
+                        )
+                        .unwrap();
+                    for face in mesh.indices.iter() {
+                        let p0 = mesh.positions[face.x as usize];
+                        let p1 = mesh.positions[face.y as usize];
+                        let p2 = mesh.positions[face.z as usize];
+                        let normal = (p1 - p0).cross(p2 - p0).normalized();
+                        let packed_normal: u32 = normal.into_oct().into_packed_snorm();
+                        writer.write_all(packed_normal.as_byte_slice());
+                    }
+                }
+            });
+            *geometry_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(TriangleMeshData {
+                position_buffer,
+                index_buffer,
+                triangle_normal_buffer,
+            });
+        }
 
         Self {
             shared,
@@ -252,7 +273,7 @@ impl SceneAccel {
             debug_pipeline,
             geometry_data,
             shader_binding_table: None,
-            bottom_level_accel: Vec::new(),
+            cluster_accel: Vec::new(),
             instance_buffer: None,
             top_level_accel: None,
         }
@@ -265,9 +286,9 @@ impl SceneAccel {
             .shared
             .clusters
             .iter()
-            .flat_map(|cluster| cluster.geometry_refs.iter())
+            .flat_map(|cluster| cluster.elements.iter().map(|element| element.geometry_ref))
         {
-            let geometry_data = self.geometry_data[geometry_ref.0 as usize];
+            let geometry_data = self.geometry_data[geometry_ref.0 as usize].as_ref().unwrap();
             let triangle_normal_buffer = resource_loader.get_buffer(geometry_data.triangle_normal_buffer)?;
             geometry_record[geometry_ref.0 as usize] = unsafe {
                 self.context
@@ -365,7 +386,7 @@ impl SceneAccel {
                 writer.write_zeros(hit_region.offset as usize - writer.written());
 
                 for cluster in shared.clusters.iter() {
-                    for instance_ref in cluster.instance_ref_iter().cloned() {
+                    for instance_ref in cluster.instance_refs_grouped_by_transform_iter().cloned() {
                         let instance = shared.scene.instance(instance_ref).unwrap();
                         let hit_record = HitRecordData {
                             triangle_normal_buffer_address: geometry_record[instance.geometry_ref.0 as usize],
@@ -405,15 +426,20 @@ impl SceneAccel {
         let mut accel_geometry = Vec::new();
         let mut max_primitive_counts = Vec::new();
         let mut build_range_info = Vec::new();
-        for geometry_ref in cluster.geometry_refs.iter().cloned() {
+        for geometry_ref in cluster.elements.iter().map(|element| element.geometry_ref) {
             let geometry = self.shared.scene.geometry(geometry_ref).unwrap();
-            let geometry_data = self.geometry_data.get(geometry_ref.0 as usize).unwrap();
+            let geometry_data = self.geometry_data[geometry_ref.0 as usize].as_ref().unwrap();
 
             let position_buffer = resource_loader.get_buffer(geometry_data.position_buffer)?;
             let index_buffer = resource_loader.get_buffer(geometry_data.index_buffer)?;
 
             let position_buffer_address = unsafe { context.device.get_buffer_device_address_helper(position_buffer) };
             let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
+
+            let (vertex_count, triangle_count) = match geometry {
+                Geometry::TriangleMesh(mesh) => (mesh.positions.len() as u32, mesh.indices.len() as u32),
+                Geometry::Quad(..) => (4, 2),
+            };
 
             accel_geometry.push(vk::AccelerationStructureGeometryKHR {
                 geometry_type: vk::GeometryTypeKHR::TRIANGLES,
@@ -424,7 +450,7 @@ impl SceneAccel {
                             device_address: position_buffer_address,
                         },
                         vertex_stride: mem::size_of::<PositionData>() as vk::DeviceSize,
-                        max_vertex: geometry.positions.len() as u32,
+                        max_vertex: vertex_count,
                         index_type: vk::IndexType::UINT32,
                         index_data: vk::DeviceOrHostAddressConstKHR {
                             device_address: index_buffer_address,
@@ -435,7 +461,6 @@ impl SceneAccel {
                 flags: vk::GeometryFlagsKHR::OPAQUE,
                 ..Default::default()
             });
-            let triangle_count = geometry.indices.len() as u32;
             max_primitive_counts.push(triangle_count);
             build_range_info.push(vk::AccelerationStructureBuildRangeInfoKHR {
                 primitive_count: triangle_count,
@@ -466,7 +491,7 @@ impl SceneAccel {
 
         println!(
             "geometry count: {} (to be instanced {} times)",
-            cluster.geometry_refs.len(),
+            cluster.elements.len(),
             cluster.transform_refs.len()
         );
         println!("build scratch size: {}", sizes.build_scratch_size);
@@ -533,7 +558,7 @@ impl SceneAccel {
 
     pub fn create_instance_buffer(&self, resource_loader: &mut ResourceLoader) -> StaticBufferHandle {
         let accel_device_addresses: Vec<_> = self
-            .bottom_level_accel
+            .cluster_accel
             .iter()
             .map(|bottom_level_accel| {
                 let info = vk::AccelerationStructureDeviceAddressInfoKHR {
@@ -571,7 +596,7 @@ impl SceneAccel {
                             acceleration_structure_reference,
                         };
                         writer.write_all(instance.as_byte_slice());
-                        record_offset += cluster.geometry_refs.len() as u32;
+                        record_offset += cluster.elements.len() as u32;
                     }
                 }
             }
@@ -646,7 +671,7 @@ impl SceneAccel {
         schedule.add_compute(
             command_name!("build"),
             |params| {
-                for bottom_level_accel in self.bottom_level_accel.iter() {
+                for bottom_level_accel in self.cluster_accel.iter() {
                     params.add_buffer(bottom_level_accel.buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
                 }
                 params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
@@ -695,15 +720,15 @@ impl SceneAccel {
         schedule: &mut RenderSchedule<'a>,
     ) {
         // make all bottom level acceleration structures
-        while self.bottom_level_accel.len() < self.shared.clusters.len() {
-            if let Some(accel) = self.create_bottom_level_accel(
-                self.shared.clusters.get(self.bottom_level_accel.len()).unwrap(),
+        while self.cluster_accel.len() < self.shared.clusters.len() {
+            if let Some(bottom_level_accel) = self.create_bottom_level_accel(
+                self.shared.clusters.get(self.cluster_accel.len()).unwrap(),
                 context,
                 resource_loader,
                 global_allocator,
                 schedule,
             ) {
-                self.bottom_level_accel.push(accel);
+                self.cluster_accel.push(bottom_level_accel);
             } else {
                 break;
             }
@@ -715,7 +740,7 @@ impl SceneAccel {
         }
 
         // make instance buffer from transforms
-        if self.instance_buffer.is_none() && self.bottom_level_accel.len() == self.shared.clusters.len() {
+        if self.instance_buffer.is_none() && self.cluster_accel.len() == self.shared.clusters.len() {
             self.instance_buffer = Some(self.create_instance_buffer(resource_loader));
         }
 
@@ -766,7 +791,7 @@ impl SceneAccel {
         schedule.add_compute(
             command_name!("trace"),
             |params| {
-                for bottom_level_accel in self.bottom_level_accel.iter() {
+                for bottom_level_accel in self.cluster_accel.iter() {
                     params.add_buffer(
                         bottom_level_accel.buffer,
                         BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
@@ -836,7 +861,7 @@ impl SceneAccel {
 impl Drop for SceneAccel {
     fn drop(&mut self) {
         let device = &self.context.device;
-        for bottom_level_accel in self.bottom_level_accel.iter() {
+        for bottom_level_accel in self.cluster_accel.iter() {
             unsafe { device.destroy_acceleration_structure_khr(Some(bottom_level_accel.accel), None) };
         }
         if let Some(top_level_accel) = self.top_level_accel.as_ref() {
