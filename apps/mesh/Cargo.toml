@@ -9,6 +9,6 @@ publish = false
 caldera-macro = { path = "../../caldera-macro" }
 caldera = { path = "../../caldera" }
 spark = { path = "../../../spark/spark" }
-winit = "0.23"
-imgui = "0.6"
+winit = "0.24"
+imgui = "0.6.1"
 ply-rs = "0.1.3"

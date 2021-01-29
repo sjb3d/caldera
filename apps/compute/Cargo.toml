@@ -9,8 +9,8 @@ publish = false
 caldera-macro = { path = "../../caldera-macro" }
 caldera = { path = "../../caldera" }
 spark = { path = "../../../spark/spark" }
-winit = "0.23"
-imgui = "0.6"
+winit = "0.24"
+imgui = "0.6.1"
 pmj = { path = "../../../pmj/pmj" }
 rand = { version = "0.7", features = ["small_rng"] }
 rayon = "1.3"
