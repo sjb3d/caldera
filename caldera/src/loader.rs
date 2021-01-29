@@ -431,6 +431,8 @@ pub unsafe trait AsByteSlice: Sized {
     }
 }
 
+unsafe impl AsByteSlice for u16 {}
+unsafe impl AsByteSlice for u32 {}
 unsafe impl AsByteSlice for vk::AccelerationStructureInstanceKHR {}
 
 pub struct ResourceWriter<'a> {

@@ -83,12 +83,12 @@ This helps to cut down on boilerplate code for descriptor sets that can be decla
 _TODO: figure out what bits are worth documenting_
 
 * Build a schedule by registering callbacks for _graphics_ or _compute_ work
-** _Graphics_ work is a collection of all the draw calls to the same render pass
-** _Compute_ work is a collection of dispatches/transfers/ray tracing/etc
+  * _Graphics_ work is a collection of all the draw calls to the same render pass
+  * _Compute_ work is a collection of dispatches/transfers/ray tracing/etc
 * Synchronisation happens between work, each work item must declare all the buffers and images it needs and how it will use them
-** There is no synchronisation between the individual draws/dispatches/etc _within_ a single callback
-* Can declare_ temporary buffers or images while building a schedule
-** Usage is gathered as the schedule is built
-** Memory will be allocated while running the schedule, Vulkan objects are passed to the callback
+  * There is no synchronisation between the individual draws/dispatches/etc _within_ a single callback
+* Can _declare_ temporary buffers or images while building a schedule
+  * Usage is gathered as the schedule is built
+  * Memory will be allocated while running the schedule, Vulkan objects are passed to the callback
 * Can _import_ static buffers or images that need synchronisation
-** A swapchain image for example
+  * A swapchain image for example

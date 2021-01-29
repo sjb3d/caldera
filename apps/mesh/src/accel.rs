@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::{mem, slice};
 
 #[repr(C)]
-pub struct TraceData {
+struct TraceData {
     ray_origin: [f32; 3],
     ray_vec_from_coord: [f32; 9],
 }
@@ -19,13 +19,13 @@ struct HitRecordData {
 
 unsafe impl AsByteSlice for HitRecordData {}
 
-descriptor_set_layout!(pub TraceDescriptorSetLayout {
+descriptor_set_layout!(TraceDescriptorSetLayout {
     trace: UniformData<TraceData>,
     accel: AccelerationStructure,
     output: StorageImage,
 });
 
-pub struct AccelLevel {
+struct AccelLevel {
     pub context: Arc<Context>,
     pub accel: vk::AccelerationStructureKHR,
     pub buffer: BufferHandle,

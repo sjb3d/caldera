@@ -2,7 +2,6 @@ use crate::scene::*;
 use caldera::*;
 use caldera_macro::descriptor_set_layout;
 use spark::{vk, Builder};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{mem, slice};
 
@@ -13,12 +12,20 @@ struct PositionData([f32; 3]);
 struct IndexData([u32; 3]);
 
 #[repr(C)]
-pub struct CameraData {
+struct CameraData {
     ray_origin: [f32; 3],
     ray_vec_from_coord: [f32; 9],
 }
 
-descriptor_set_layout!(pub DebugDescriptorSetLayout {
+#[repr(C)]
+struct HitRecordData {
+    triangle_normal_buffer_address: u64,
+    packed_shader: u32,
+}
+
+unsafe impl AsByteSlice for HitRecordData {}
+
+descriptor_set_layout!(DebugDescriptorSetLayout {
     camera: UniformData<CameraData>,
     accel: AccelerationStructure,
     output: StorageImage,
@@ -28,14 +35,23 @@ descriptor_set_layout!(pub DebugDescriptorSetLayout {
 struct TriangleMeshData {
     position_buffer: StaticBufferHandle,
     index_buffer: StaticBufferHandle,
+    triangle_normal_buffer: StaticBufferHandle,
 }
 
-#[derive(Debug)]
 struct Cluster {
     transform_refs: Vec<TransformRef>,
     geometry_refs: Vec<GeometryRef>,
-    instance_refs: Vec<InstanceRef>,
-    accel_device_address: AtomicU64,
+    instance_ref_arrays: Vec<Vec<InstanceRef>>, // gathered as an array of transforms per geometry
+}
+
+impl Cluster {
+    // iterate as an array of geometries per transform
+    fn instance_ref_iter(&self) -> impl Iterator<Item = &InstanceRef> {
+        (0..self.transform_refs.len()).flat_map({
+            let instance_ref_arrays = &self.instance_ref_arrays;
+            move |t| instance_ref_arrays.iter().map(move |a| a.get(t).unwrap())
+        })
+    }
 }
 
 struct BottomLevelAccel {
@@ -51,12 +67,6 @@ struct TopLevelAccel {
 struct SceneShared {
     scene: Scene,
     clusters: Vec<Cluster>,
-}
-
-impl SceneShared {
-    fn cluster_instance_count(&self) -> usize {
-        self.clusters.iter().map(|cluster| cluster.transform_refs.len()).sum()
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -76,17 +86,21 @@ impl ShaderBindingRegion {
     }
 }
 
+struct ShaderBindingTable {
+    raygen_region: ShaderBindingRegion,
+    miss_region: ShaderBindingRegion,
+    hit_region: ShaderBindingRegion,
+    buffer: StaticBufferHandle,
+}
+
 pub struct SceneAccel {
     shared: Arc<SceneShared>,
     context: Arc<Context>,
     debug_descriptor_set_layout: DebugDescriptorSetLayout,
     debug_pipeline_layout: vk::PipelineLayout,
     debug_pipeline: vk::Pipeline,
-    shader_binding_table: StaticBufferHandle,
-    shader_binding_raygen_region: ShaderBindingRegion,
-    shader_binding_miss_region: ShaderBindingRegion,
-    shader_binding_hit_region: ShaderBindingRegion,
     geometry_data: Vec<TriangleMeshData>,
+    shader_binding_table: Option<ShaderBindingTable>,
     bottom_level_accel: Vec<BottomLevelAccel>,
     instance_buffer: Option<StaticBufferHandle>,
     top_level_accel: Option<TopLevelAccel>,
@@ -100,23 +114,25 @@ impl SceneAccel {
             .map(|g| Cluster {
                 transform_refs: Vec::new(),
                 geometry_refs: vec![g],
-                instance_refs: Vec::new(),
-                accel_device_address: AtomicU64::new(0),
+                instance_ref_arrays: vec![Vec::new()],
             })
             .collect();
         for instance_ref in scene.instance_ref_iter() {
             let instance = scene.instance(instance_ref).unwrap();
             let cluster = clusters.get_mut(instance.geometry_ref.0 as usize).unwrap();
-            cluster.transform_refs.push(instance.transform_ref);
-            cluster.instance_refs.push(instance_ref);
+            cluster.instance_ref_arrays[0].push(instance_ref);
         }
 
         // remove geometry that is not instanced
-        clusters.retain(|cluster| !cluster.transform_refs.is_empty());
+        clusters.retain(|cluster| !cluster.instance_ref_arrays[0].is_empty());
 
-        // sort the transform sets for each cluster so they can be compared
+        // sort the instances by transform so that we can compare transform sets
         for cluster in clusters.iter_mut() {
-            cluster.transform_refs.sort_unstable();
+            let transform_from_instance = |r: &InstanceRef| scene.instance(*r).unwrap().transform_ref;
+            cluster.instance_ref_arrays[0].sort_unstable_by_key(transform_from_instance);
+            cluster
+                .transform_refs
+                .extend(cluster.instance_ref_arrays[0].iter().map(transform_from_instance));
         }
 
         // sort the clusters by transform set so that we can merge in a single pass
@@ -127,17 +143,21 @@ impl SceneAccel {
 
         // merge clusters that are used with the same set of transforms
         let mut merged = Vec::<Cluster>::new();
-        for cluster in clusters.drain(..) {
+        for mut cluster in clusters.drain(..) {
             if let Some(prev) = merged
                 .last_mut()
                 .filter(|prev| prev.transform_refs == cluster.transform_refs)
             {
-                prev.geometry_refs.extend_from_slice(&cluster.geometry_refs);
-                prev.instance_refs.extend_from_slice(&cluster.instance_refs);
+                assert_eq!(cluster.geometry_refs.len(), 1);
+                assert_eq!(cluster.instance_ref_arrays.len(), 1);
+                prev.geometry_refs.push(cluster.geometry_refs.pop().unwrap());
+                prev.instance_ref_arrays
+                    .push(cluster.instance_ref_arrays.pop().unwrap());
             } else {
                 merged.push(cluster);
             }
         }
+
         merged
     }
 
@@ -162,102 +182,6 @@ impl SceneAccel {
             debug_pipeline_layout,
         );
 
-        // make shader binding table layout
-        let (
-            shader_binding_raygen_region,
-            shader_binding_miss_region,
-            shader_binding_hit_region,
-            shader_binding_table_size,
-        ) = {
-            let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
-
-            let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
-
-            let mut next_offset = 0;
-
-            let raygen_record_size = 0;
-            let raygen_stride = align_up(
-                rtpp.shader_group_handle_size + raygen_record_size,
-                rtpp.shader_group_handle_alignment,
-            );
-            let raygen_region = ShaderBindingRegion {
-                offset: next_offset,
-                stride: raygen_stride,
-                size: raygen_stride,
-            };
-            next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
-
-            let miss_record_size = 0;
-            let miss_stride = align_up(
-                rtpp.shader_group_handle_size + miss_record_size,
-                rtpp.shader_group_handle_alignment,
-            );
-            let miss_region = ShaderBindingRegion {
-                offset: next_offset,
-                stride: miss_stride,
-                size: miss_stride,
-            };
-            next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
-
-            let hit_record_size = 0;
-            let hit_stride = align_up(
-                rtpp.shader_group_handle_size + hit_record_size,
-                rtpp.shader_group_handle_alignment,
-            );
-            let hit_region = ShaderBindingRegion {
-                offset: next_offset,
-                stride: hit_stride,
-                size: hit_stride,
-            };
-            next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
-
-            (raygen_region, miss_region, hit_region, next_offset)
-        };
-
-        // write the table
-        let shader_binding_table = resource_loader.create_buffer();
-        resource_loader.async_load({
-            let context = Arc::clone(context);
-            move |allocator| {
-                let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
-                let shader_group_count = 3;
-                let handle_size = rtpp.shader_group_handle_size as usize;
-                let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
-                unsafe {
-                    context.device.get_ray_tracing_shader_group_handles_khr(
-                        debug_pipeline,
-                        0,
-                        shader_group_count,
-                        &mut handle_data,
-                    )
-                }
-                .unwrap();
-
-                let remain = handle_data.as_slice();
-                let (raygen_group_handle, remain) = remain.split_at(handle_size);
-                let (miss_group_handle, remain) = remain.split_at(handle_size);
-                let hit_group_handle = remain;
-
-                let desc = BufferDesc::new(shader_binding_table_size as usize);
-                let mut writer = allocator
-                    .map_buffer(
-                        shader_binding_table,
-                        &desc,
-                        BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE,
-                    )
-                    .unwrap();
-
-                assert_eq!(shader_binding_raygen_region.offset, 0);
-                writer.write_all(raygen_group_handle);
-
-                writer.write_zeros(shader_binding_miss_region.offset as usize - writer.written());
-                writer.write_all(miss_group_handle);
-
-                writer.write_zeros(shader_binding_hit_region.offset as usize - writer.written());
-                writer.write_all(hit_group_handle);
-            }
-        });
-
         // make vertex/index buffers for each geometry
         let geometry_data = shared
             .scene
@@ -266,6 +190,7 @@ impl SceneAccel {
                 let data = TriangleMeshData {
                     position_buffer: resource_loader.create_buffer(),
                     index_buffer: resource_loader.create_buffer(),
+                    triangle_normal_buffer: resource_loader.create_buffer(),
                 };
                 resource_loader.async_load({
                     let shared = Arc::clone(&shared);
@@ -295,6 +220,24 @@ impl SceneAccel {
                         for face in geometry.indices.iter() {
                             writer.write_all(face.as_byte_slice());
                         }
+
+                        let triangle_normal_buffer_desc =
+                            BufferDesc::new(geometry.indices.len() * mem::size_of::<Vec3>());
+                        let mut writer = allocator
+                            .map_buffer(
+                                data.triangle_normal_buffer,
+                                &triangle_normal_buffer_desc,
+                                BufferUsage::RAY_TRACING_STORAGE_READ,
+                            )
+                            .unwrap();
+                        for face in geometry.indices.iter() {
+                            let p0 = geometry.positions[face.x as usize];
+                            let p1 = geometry.positions[face.y as usize];
+                            let p2 = geometry.positions[face.z as usize];
+                            let normal = (p1 - p0).cross(p2 - p0).normalized();
+                            let packed_normal: u32 = normal.into_oct().into_packed_snorm();
+                            writer.write_all(packed_normal.as_byte_slice());
+                        }
                     }
                 });
                 data
@@ -307,15 +250,148 @@ impl SceneAccel {
             debug_descriptor_set_layout,
             debug_pipeline_layout,
             debug_pipeline,
-            shader_binding_table,
-            shader_binding_raygen_region,
-            shader_binding_miss_region,
-            shader_binding_hit_region,
             geometry_data,
+            shader_binding_table: None,
             bottom_level_accel: Vec::new(),
             instance_buffer: None,
             top_level_accel: None,
         }
+    }
+
+    fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingTable> {
+        // gather the data we need for records
+        let mut geometry_record = vec![0u64; self.shared.scene.geometries.len()];
+        for geometry_ref in self
+            .shared
+            .clusters
+            .iter()
+            .flat_map(|cluster| cluster.geometry_refs.iter())
+        {
+            let geometry_data = self.geometry_data[geometry_ref.0 as usize];
+            let triangle_normal_buffer = resource_loader.get_buffer(geometry_data.triangle_normal_buffer)?;
+            geometry_record[geometry_ref.0 as usize] = unsafe {
+                self.context
+                    .device
+                    .get_buffer_device_address_helper(triangle_normal_buffer)
+            };
+        }
+
+        // figure out the layout
+        let rtpp = self.context.ray_tracing_pipeline_properties.as_ref().unwrap();
+
+        let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
+        let mut next_offset = 0;
+
+        let raygen_record_size = 0;
+        let raygen_stride = align_up(
+            rtpp.shader_group_handle_size + raygen_record_size,
+            rtpp.shader_group_handle_alignment,
+        );
+        let raygen_region = ShaderBindingRegion {
+            offset: next_offset,
+            stride: raygen_stride,
+            size: raygen_stride,
+        };
+        next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
+
+        let miss_record_size = 0;
+        let miss_stride = align_up(
+            rtpp.shader_group_handle_size + miss_record_size,
+            rtpp.shader_group_handle_alignment,
+        );
+        let miss_region = ShaderBindingRegion {
+            offset: next_offset,
+            stride: miss_stride,
+            size: miss_stride,
+        };
+        next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
+
+        let hit_record_size = mem::size_of::<HitRecordData>() as u32;
+        let hit_stride = align_up(
+            rtpp.shader_group_handle_size + hit_record_size,
+            rtpp.shader_group_handle_alignment,
+        );
+        let hit_entry_count = self.shared.scene.instances.len() as u32;
+        let hit_region = ShaderBindingRegion {
+            offset: next_offset,
+            stride: hit_stride,
+            size: hit_stride * hit_entry_count,
+        };
+        next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
+
+        let total_size = next_offset;
+
+        // write the table
+        let shader_binding_table = resource_loader.create_buffer();
+        resource_loader.async_load({
+            let debug_pipeline = self.debug_pipeline;
+            let context = Arc::clone(&self.context);
+            let shared = Arc::clone(&self.shared);
+            move |allocator| {
+                let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+                let shader_group_count = 3;
+                let handle_size = rtpp.shader_group_handle_size as usize;
+                let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
+                unsafe {
+                    context.device.get_ray_tracing_shader_group_handles_khr(
+                        debug_pipeline,
+                        0,
+                        shader_group_count,
+                        &mut handle_data,
+                    )
+                }
+                .unwrap();
+
+                let remain = handle_data.as_slice();
+                let (raygen_group_handle, remain) = remain.split_at(handle_size);
+                let (miss_group_handle, remain) = remain.split_at(handle_size);
+                let hit_group_handle = remain;
+
+                let desc = BufferDesc::new(total_size as usize);
+                let mut writer = allocator
+                    .map_buffer(
+                        shader_binding_table,
+                        &desc,
+                        BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE,
+                    )
+                    .unwrap();
+
+                assert_eq!(raygen_region.offset, 0);
+                writer.write_all(raygen_group_handle);
+
+                writer.write_zeros(miss_region.offset as usize - writer.written());
+                writer.write_all(miss_group_handle);
+
+                writer.write_zeros(hit_region.offset as usize - writer.written());
+
+                for cluster in shared.clusters.iter() {
+                    for instance_ref in cluster.instance_ref_iter().cloned() {
+                        let instance = shared.scene.instance(instance_ref).unwrap();
+                        let hit_record = HitRecordData {
+                            triangle_normal_buffer_address: geometry_record[instance.geometry_ref.0 as usize],
+                            packed_shader: 0x01_00_00_00
+                                | shared
+                                    .scene
+                                    .shader(instance.shader_ref)
+                                    .unwrap()
+                                    .debug_color
+                                    .into_packed_unorm(),
+                        };
+
+                        let end_offset = writer.written() + hit_region.stride as usize;
+                        writer.write_all(hit_group_handle);
+                        writer.write_all(hit_record.as_byte_slice());
+                        writer.write_zeros(end_offset - writer.written());
+                    }
+                }
+            }
+        });
+        Some(ShaderBindingTable {
+            raygen_region,
+            miss_region,
+            hit_region,
+            buffer: shader_binding_table,
+        })
     }
 
     fn create_bottom_level_accel<'a>(
@@ -414,17 +490,6 @@ impl SceneAccel {
             unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
         };
 
-        let accel_device_address = {
-            let info = vk::AccelerationStructureDeviceAddressInfoKHR {
-                acceleration_structure: Some(accel),
-                ..Default::default()
-            };
-            unsafe { context.device.get_acceleration_structure_device_address_khr(&info) }
-        };
-        cluster
-            .accel_device_address
-            .store(accel_device_address, Ordering::SeqCst);
-
         let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
         schedule.add_compute(
@@ -466,20 +531,34 @@ impl SceneAccel {
         Some(BottomLevelAccel { accel, buffer })
     }
 
-    pub fn create_instance_buffer<'a>(&self, resource_loader: &mut ResourceLoader) -> StaticBufferHandle {
+    pub fn create_instance_buffer(&self, resource_loader: &mut ResourceLoader) -> StaticBufferHandle {
+        let accel_device_addresses: Vec<_> = self
+            .bottom_level_accel
+            .iter()
+            .map(|bottom_level_accel| {
+                let info = vk::AccelerationStructureDeviceAddressInfoKHR {
+                    acceleration_structure: Some(bottom_level_accel.accel),
+                    ..Default::default()
+                };
+                unsafe { self.context.device.get_acceleration_structure_device_address_khr(&info) }
+            })
+            .collect();
+
         let instance_buffer = resource_loader.create_buffer();
         resource_loader.async_load({
             let shared = Arc::clone(&self.shared);
             move |allocator| {
-                let count = shared.cluster_instance_count();
+                let count = shared.scene.instances.len();
 
                 let desc = BufferDesc::new(count * mem::size_of::<vk::AccelerationStructureInstanceKHR>());
                 let mut writer = allocator
                     .map_buffer(instance_buffer, &desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
                     .unwrap();
 
-                for cluster in shared.clusters.iter() {
-                    let acceleration_structure_reference = cluster.accel_device_address.load(Ordering::SeqCst);
+                let mut record_offset = 0;
+                for (cluster, acceleration_structure_reference) in
+                    shared.clusters.iter().zip(accel_device_addresses.iter().cloned())
+                {
                     for transform_ref in cluster.transform_refs.iter().cloned() {
                         let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
                         let transform = shared.scene.transform(transform_ref).unwrap();
@@ -488,10 +567,11 @@ impl SceneAccel {
                                 matrix: transform.0.into_transposed_transform(),
                             },
                             instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
-                            instance_shader_binding_table_record_offset_and_flags: 0, // TODO
+                            instance_shader_binding_table_record_offset_and_flags: record_offset,
                             acceleration_structure_reference,
                         };
                         writer.write_all(instance.as_byte_slice());
+                        record_offset += cluster.geometry_refs.len() as u32;
                     }
                 }
             }
@@ -527,7 +607,7 @@ impl SceneAccel {
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
             .p_geometries(slice::from_ref(&accel_geometry));
 
-        let instance_count = self.shared.cluster_instance_count() as u32;
+        let instance_count = self.shared.scene.instances.len() as u32;
         let sizes = {
             let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
             unsafe {
@@ -629,6 +709,11 @@ impl SceneAccel {
             }
         }
 
+        // make shader binding table
+        if self.shader_binding_table.is_none() {
+            self.shader_binding_table = self.create_shader_binding_table(resource_loader);
+        }
+
         // make instance buffer from transforms
         if self.instance_buffer.is_none() && self.bottom_level_accel.len() == self.shared.clusters.len() {
             self.instance_buffer = Some(self.create_instance_buffer(resource_loader));
@@ -661,7 +746,8 @@ impl SceneAccel {
         ray_vec_from_coord: Mat3,
     ) -> Option<ImageHandle> {
         let top_level_accel = self.top_level_accel.as_ref()?;
-        let shader_binding_table_buffer = resource_loader.get_buffer(self.shader_binding_table)?;
+        let shader_binding_table = self.shader_binding_table.as_ref()?;
+        let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_table.buffer)?;
 
         let shader_binding_table_address = unsafe {
             context
@@ -718,14 +804,14 @@ impl SceneAccel {
                     );
                 }
 
-                let raygen_shader_binding_table = self
-                    .shader_binding_raygen_region
+                let raygen_shader_binding_table = shader_binding_table
+                    .raygen_region
                     .into_device_address_region(shader_binding_table_address);
-                let miss_shader_binding_table = self
-                    .shader_binding_miss_region
+                let miss_shader_binding_table = shader_binding_table
+                    .miss_region
                     .into_device_address_region(shader_binding_table_address);
-                let hit_shader_binding_table = self
-                    .shader_binding_hit_region
+                let hit_shader_binding_table = shader_binding_table
+                    .hit_region
                     .into_device_address_region(shader_binding_table_address);
                 let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
                 unsafe {

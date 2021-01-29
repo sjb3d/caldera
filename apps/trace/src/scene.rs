@@ -122,6 +122,10 @@ impl Scene {
         self.geometries.get(r.0 as usize)
     }
 
+    pub fn shader(&self, r: ShaderRef) -> Option<&Shader> {
+        self.shaders.get(r.0 as usize)
+    }
+
     pub fn instance(&self, r: InstanceRef) -> Option<&Instance> {
         self.instances.get(r.0 as usize)
     }
@@ -254,18 +258,30 @@ pub fn create_cornell_box_scene() -> Scene {
         fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
     });
 
-    let add_extra_blocks = true;
+    let add_extra_blocks = false;
     if add_extra_blocks {
-        for i in 1..10 {
-            let f = i as f32;
-            let extra = scene.add_transform(Transform(Isometry3::new(
-                Vec3::new(-0.01 * f, 0.02 * f, 0.0),
-                Rotor3::identity(),
-            )));
+        let extra_transforms: Vec<_> = (1..10)
+            .map(|i| {
+                let f = i as f32;
+                scene.add_transform(Transform(Isometry3::new(
+                    Vec3::new(-0.01 * f, 0.02 * f, 0.0),
+                    Rotor3::from_rotation_xz(0.05 * f),
+                )))
+            })
+            .collect();
+
+        for (i, extra) in extra_transforms.iter().cloned().enumerate() {
+            scene.add_instance(Instance::new(
+                extra,
+                tall_block,
+                if (i % 2) != 0 { green_shader } else { grey_shader },
+            ));
+        }
+        for (i, extra) in extra_transforms.iter().rev().cloned().enumerate() {
             scene.add_instance(Instance::new(
                 extra,
                 short_block,
-                if (i % 1) != 0 { red_shader } else { grey_shader },
+                if (i % 2) != 0 { red_shader } else { grey_shader },
             ));
         }
     }
