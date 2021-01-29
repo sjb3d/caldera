@@ -34,8 +34,8 @@ void main()
           n0*(1.f - g_bary_coord.x - g_bary_coord.y)
         + n1*g_bary_coord.x
         + n2*g_bary_coord.y);
-    const uint packed_normal = oct32_from_vec(normal);
+    const uint normal_oct32 = oct32_from_vec(normal);
 
     // avoid zero since we want that to mean "miss"
-    g_payload = (packed_normal == 0) ? 1 : packed_normal;
+    g_payload = (normal_oct32 == 0) ? 1 : normal_oct32;
 }

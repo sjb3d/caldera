@@ -32,7 +32,26 @@ pub enum Geometry {
 }
 
 pub struct Shader {
-    pub debug_color: Vec3,
+    pub reflectance: Vec3,
+    pub emission: Vec3,
+}
+
+impl Shader {
+    pub fn new_lambertian(reflectance: Vec3) -> Self {
+        Self {
+            reflectance,
+            emission: Vec3::zero(),
+        }
+    }
+
+    pub fn with_emission(mut self, emission: Vec3) -> Self {
+        self.emission = emission;
+        self
+    }
+
+    pub fn is_emissive(&self) -> bool {
+        self.emission.as_slice().iter().any(|&c| c > 0.0)
+    }
 }
 
 pub struct Instance {
@@ -97,9 +116,9 @@ impl Scene {
         self.add_geometry(Geometry::TriangleMesh(mesh))
     }
 
-    fn add_shader(&mut self, debug_color: Vec3) -> ShaderRef {
+    fn add_shader(&mut self, shader: Shader) -> ShaderRef {
         let index = self.shaders.len();
-        self.shaders.push(Shader { debug_color });
+        self.shaders.push(shader);
         ShaderRef(index as u32)
     }
 
@@ -248,9 +267,9 @@ pub fn create_cornell_box_scene() -> Scene {
             ),
     );
 
-    let grey_shader = scene.add_shader(Vec3::new(0.730, 0.735, 0.729));
-    let red_shader = scene.add_shader(Vec3::new(0.611, 0.058, 0.062));
-    let green_shader = scene.add_shader(Vec3::new(0.117, 0.449, 0.115));
+    let grey_shader = scene.add_shader(Shader::new_lambertian(Vec3::new(0.730, 0.735, 0.729)));
+    let red_shader = scene.add_shader(Shader::new_lambertian(Vec3::new(0.611, 0.058, 0.062)));
+    let green_shader = scene.add_shader(Shader::new_lambertian(Vec3::new(0.117, 0.449, 0.115)));
 
     let identity = scene.add_transform(Transform::default());
 
@@ -274,7 +293,8 @@ pub fn create_cornell_box_scene() -> Scene {
     let light_geometry = scene.add_geometry(Geometry::Quad(Quad {
         size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
     }));
-    let light_shader = scene.add_shader(Vec3::broadcast(1.0));
+    let light_shader =
+        scene.add_shader(Shader::new_lambertian(Vec3::broadcast(0.78)).with_emission(Vec3::new(17.0, 11.8, 4.0)));
     scene.add_instance(Instance::new(light_transform, light_geometry, light_shader));
 
     let camera_transform = scene.add_transform(Transform(Isometry3::new(

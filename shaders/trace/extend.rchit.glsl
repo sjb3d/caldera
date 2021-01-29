@@ -7,27 +7,48 @@
 #include "payload.glsl"
 #include "normal_pack.glsl"
 
-layout(buffer_reference, scalar) buffer TriangleNormalBuffer {
-    uint packed_normals[];
+layout(buffer_reference, scalar) buffer IndexBuffer {
+    uvec3 tri[];
+};
+
+layout(buffer_reference, scalar) buffer PositionBuffer {
+    vec3 pos[];
 };
 
 layout(shaderRecordEXT, scalar) buffer ShaderRecordData {
-    TriangleNormalBuffer triangle_normal_buffer;
-    uint packed_shader;
+    IndexBuffer index_buffer;
+    PositionBuffer position_buffer;
+    uvec3 reflectance_and_emission;
 } g_record;
+
+hitAttributeEXT vec2 g_bary_coord;
 
 EXTEND_PAYLOAD_WRITE(g_extend);
 
 void main()
 {   
+    const uvec3 tri = g_record.index_buffer.tri[gl_PrimitiveID];
+    const vec3 p0 = g_record.position_buffer.pos[tri[0]];
+    const vec3 p1 = g_record.position_buffer.pos[tri[1]];
+    const vec3 p2 = g_record.position_buffer.pos[tri[2]];
+
+    const vec3 face_normal_vec_ls = cross(p1 - p0, p2 - p0);
+    const vec3 hit_pos_ls
+        = p0*(1.f - g_bary_coord.x - g_bary_coord.y)
+        + p1*g_bary_coord.x
+        + p2*g_bary_coord.y
+        ;
+
     // transform normal vector to world space
-    const vec3 face_normal_vec_ls = vec_from_oct32(g_record.triangle_normal_buffer.packed_normals[gl_PrimitiveID]);
     const vec3 hit_normal_vec_ls
         = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT)
         ? face_normal_vec_ls
         : -face_normal_vec_ls;
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
+    const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
-    g_extend.packed_normal = oct32_from_vec(hit_normal_vec_ws);
-    g_extend.packed_shader = g_record.packed_shader;
+    g_extend.position = hit_pos_ws;
+    g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
+    g_extend.reflectance_and_emission = g_record.reflectance_and_emission;
+    g_extend.is_valid = 1;
 }

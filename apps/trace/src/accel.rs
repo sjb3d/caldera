@@ -1,6 +1,7 @@
 use crate::scene::*;
 use caldera::*;
 use caldera_macro::descriptor_set_layout;
+use half::f16;
 use spark::{vk, Builder};
 use std::sync::Arc;
 use std::{mem, slice};
@@ -15,15 +16,24 @@ struct IndexData([u32; 3]);
 struct PathTraceData {
     ray_origin: [f32; 3],
     ray_vec_from_coord: [f32; 9],
+    world_from_light: [f32; 12],
+    light_size_ws: [f32; 2],
 }
 
 #[repr(C)]
 struct HitRecordData {
-    triangle_normal_buffer_address: u64,
-    packed_shader: u32,
+    index_buffer_address: u64,
+    position_buffer_address: u64,
+    reflectance_and_emission: [u16; 6],
 }
 
 unsafe impl AsByteSlice for HitRecordData {}
+
+pub struct QuadLight {
+    pub transform: Isometry3,
+    pub size: Vec2,
+    pub emission: Vec3,
+}
 
 descriptor_set_layout!(DebugDescriptorSetLayout {
     data: UniformData<PathTraceData>,
@@ -32,9 +42,8 @@ descriptor_set_layout!(DebugDescriptorSetLayout {
 });
 
 struct TriangleMeshData {
-    position_buffer: StaticBufferHandle,
     index_buffer: StaticBufferHandle,
-    triangle_normal_buffer: StaticBufferHandle,
+    position_buffer: StaticBufferHandle,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -179,7 +188,8 @@ impl SceneAccel {
 
         // make pipeline
         let path_trace_descriptor_set_layout = DebugDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
+        let path_trace_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
 
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(
             "trace/path_trace.rgen.spv",
@@ -195,9 +205,8 @@ impl SceneAccel {
             .iter()
             .flat_map(|cluster| cluster.elements.iter().map(|element| element.geometry_ref))
         {
-            let position_buffer = resource_loader.create_buffer();
             let index_buffer = resource_loader.create_buffer();
-            let triangle_normal_buffer = resource_loader.create_buffer();
+            let position_buffer = resource_loader.create_buffer();
             resource_loader.async_load({
                 let shared = Arc::clone(&shared);
                 move |allocator| {
@@ -216,18 +225,6 @@ impl SceneAccel {
                         }
                     };
 
-                    let position_buffer_desc = BufferDesc::new(mesh.positions.len() * mem::size_of::<PositionData>());
-                    let mut writer = allocator
-                        .map_buffer(
-                            position_buffer,
-                            &position_buffer_desc,
-                            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
-                        )
-                        .unwrap();
-                    for pos in mesh.positions.iter() {
-                        writer.write_all(pos.as_byte_slice());
-                    }
-
                     let index_buffer_desc = BufferDesc::new(mesh.indices.len() * mem::size_of::<IndexData>());
                     let mut writer = allocator
                         .map_buffer(
@@ -240,28 +237,22 @@ impl SceneAccel {
                         writer.write_all(face.as_byte_slice());
                     }
 
-                    let triangle_normal_buffer_desc = BufferDesc::new(mesh.indices.len() * mem::size_of::<Vec3>());
+                    let position_buffer_desc = BufferDesc::new(mesh.positions.len() * mem::size_of::<PositionData>());
                     let mut writer = allocator
                         .map_buffer(
-                            triangle_normal_buffer,
-                            &triangle_normal_buffer_desc,
-                            BufferUsage::RAY_TRACING_STORAGE_READ,
+                            position_buffer,
+                            &position_buffer_desc,
+                            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
                         )
                         .unwrap();
-                    for face in mesh.indices.iter() {
-                        let p0 = mesh.positions[face.x as usize];
-                        let p1 = mesh.positions[face.y as usize];
-                        let p2 = mesh.positions[face.z as usize];
-                        let normal = (p1 - p0).cross(p2 - p0).normalized();
-                        let packed_normal: u32 = normal.into_oct().into_packed_snorm();
-                        writer.write_all(packed_normal.as_byte_slice());
+                    for pos in mesh.positions.iter() {
+                        writer.write_all(pos.as_byte_slice());
                     }
                 }
             });
             *geometry_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(TriangleMeshData {
                 position_buffer,
                 index_buffer,
-                triangle_normal_buffer,
             });
         }
 
@@ -281,7 +272,7 @@ impl SceneAccel {
 
     fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingTable> {
         // gather the data we need for records
-        let mut geometry_record = vec![0u64; self.shared.scene.geometries.len()];
+        let mut geometry_record = vec![(0u64, 0u64); self.shared.scene.geometries.len()];
         for geometry_ref in self
             .shared
             .clusters
@@ -289,12 +280,12 @@ impl SceneAccel {
             .flat_map(|cluster| cluster.elements.iter().map(|element| element.geometry_ref))
         {
             let geometry_data = self.geometry_data[geometry_ref.0 as usize].as_ref().unwrap();
-            let triangle_normal_buffer = resource_loader.get_buffer(geometry_data.triangle_normal_buffer)?;
-            geometry_record[geometry_ref.0 as usize] = unsafe {
-                self.context
-                    .device
-                    .get_buffer_device_address_helper(triangle_normal_buffer)
-            };
+            let index_buffer = resource_loader.get_buffer(geometry_data.index_buffer)?;
+            let position_buffer = resource_loader.get_buffer(geometry_data.position_buffer)?;
+            geometry_record[geometry_ref.0 as usize] = (
+                unsafe { self.context.device.get_buffer_device_address_helper(index_buffer) },
+                unsafe { self.context.device.get_buffer_device_address_helper(position_buffer) },
+            );
         }
 
         // figure out the layout
@@ -388,10 +379,22 @@ impl SceneAccel {
                 for cluster in shared.clusters.iter() {
                     for instance_ref in cluster.instance_refs_grouped_by_transform_iter().cloned() {
                         let instance = shared.scene.instance(instance_ref);
+                        let (index_buffer_address, position_buffer_address) =
+                            geometry_record[instance.geometry_ref.0 as usize];
+                        let shader = shared.scene.shader(instance.shader_ref);
+                        let to_f16_bits = |x| f16::from_f32(x).to_bits();
+
                         let hit_record = HitRecordData {
-                            triangle_normal_buffer_address: geometry_record[instance.geometry_ref.0 as usize],
-                            packed_shader: 0x01_00_00_00
-                                | shared.scene.shader(instance.shader_ref).debug_color.into_packed_unorm(),
+                            index_buffer_address,
+                            position_buffer_address,
+                            reflectance_and_emission: [
+                                to_f16_bits(shader.reflectance.x),
+                                to_f16_bits(shader.reflectance.y),
+                                to_f16_bits(shader.reflectance.z),
+                                to_f16_bits(shader.emission.x),
+                                to_f16_bits(shader.emission.y),
+                                to_f16_bits(shader.emission.z),
+                            ],
                         };
 
                         let end_offset = writer.written() + hit_region.stride as usize;
@@ -584,7 +587,11 @@ impl SceneAccel {
                         let transform = shared.scene.transform(transform_ref);
                         let instance = vk::AccelerationStructureInstanceKHR {
                             transform: vk::TransformMatrixKHR {
-                                matrix: transform.0.into_transposed_transform(),
+                                matrix: transform
+                                    .0
+                                    .into_homogeneous_matrix()
+                                    .into_transposed_transform()
+                                    .as_array(),
                             },
                             instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
                             instance_shader_binding_table_record_offset_and_flags: record_offset,
@@ -764,6 +771,7 @@ impl SceneAccel {
         swap_extent: &'a vk::Extent2D,
         ray_origin: Vec3,
         ray_vec_from_coord: Mat3,
+        light: Option<&'a QuadLight>,
     ) -> Option<ImageHandle> {
         let top_level_accel = self.top_level_accel.as_ref()?;
         let shader_binding_table = self.shader_binding_table.as_ref()?;
@@ -804,6 +812,13 @@ impl SceneAccel {
                         *buf = PathTraceData {
                             ray_origin: ray_origin.into(),
                             ray_vec_from_coord: *ray_vec_from_coord.as_array(),
+                            world_from_light: light
+                                .map(|light| light.transform)
+                                .unwrap_or(Isometry3::identity())
+                                .into_homogeneous_matrix()
+                                .into_transform()
+                                .as_array(),
+                            light_size_ws: light.map(|light| light.size).unwrap_or(Vec2::broadcast(1.0)).into(),
                         }
                     },
                     top_level_accel.accel,
@@ -811,9 +826,11 @@ impl SceneAccel {
                 );
 
                 unsafe {
-                    context
-                        .device
-                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::RAY_TRACING_KHR, self.path_trace_pipeline);
+                    context.device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::RAY_TRACING_KHR,
+                        self.path_trace_pipeline,
+                    );
                     context.device.cmd_bind_descriptor_sets(
                         cmd,
                         vk::PipelineBindPoint::RAY_TRACING_KHR,

@@ -11,3 +11,4 @@ caldera = { path = "../../caldera" }
 spark = { path = "../../../spark/spark" }
 winit = "0.24"
 imgui = "0.6.1"
+half = "1.7.1"

@@ -473,7 +473,7 @@ impl AccelInfo {
                 for src in instances.iter() {
                     let instance = vk::AccelerationStructureInstanceKHR {
                         transform: vk::TransformMatrixKHR {
-                            matrix: src.into_transposed_transform(),
+                            matrix: src.into_homogeneous_matrix().into_transposed_transform().as_array(),
                         },
                         instance_custom_index_and_mask: 0xff_00_00_00,
                         instance_shader_binding_table_record_offset_and_flags: 0,

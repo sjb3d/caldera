@@ -60,6 +60,8 @@ struct App {
     accel: SceneAccel,
     camera_ref: CameraRef,
     view_drag: ViewDrag,
+
+    light: Option<QuadLight>,
 }
 
 impl App {
@@ -79,9 +81,23 @@ impl App {
             &mut base.systems.resource_loader,
         );
 
+        let scene = accel.scene();
         let camera_ref = CameraRef(0);
-        let camera = accel.scene().camera(camera_ref);
-        let rotation = accel.scene().transform(camera.transform_ref).0.rotation;
+        let rotation = scene.transform(scene.camera(camera_ref).transform_ref).0.rotation;
+
+        let light = scene
+            .instances
+            .iter()
+            .filter(|instance| scene.shader(instance.shader_ref).is_emissive())
+            .filter_map(|instance| match scene.geometry(instance.geometry_ref) {
+                Geometry::TriangleMesh(..) => None,
+                Geometry::Quad(quad) => Some(QuadLight {
+                    transform: scene.transform(instance.transform_ref).0,
+                    size: quad.size,
+                    emission: scene.shader(instance.shader_ref).emission,
+                }),
+            })
+            .next();
 
         Self {
             context: Arc::clone(&context),
@@ -90,6 +106,7 @@ impl App {
             accel,
             camera_ref,
             view_drag: ViewDrag::new(rotation),
+            light,
         }
     }
 
@@ -132,6 +149,7 @@ impl App {
                 let accel = &self.accel;
                 let selected_camera_ref = &mut self.camera_ref;
                 let view_drag = &mut self.view_drag;
+                let light = self.light.as_ref();
                 move || {
                     for camera_ref in accel.scene().camera_ref_iter() {
                         if ui.radio_button(&im_str!("Camera {}", camera_ref.0), selected_camera_ref, camera_ref) {
@@ -140,6 +158,7 @@ impl App {
                             *view_drag = ViewDrag::new(rotation);
                         }
                     }
+                    ui.text(format!("Lights: {}", light.map_or(0, |_| 1)));
                 }
             });
 
@@ -181,6 +200,7 @@ impl App {
             &swap_extent,
             ray_origin,
             ray_vec_from_coord,
+            self.light.as_ref(),
         );
 
         let main_sample_count = vk::SampleCountFlags::N1;

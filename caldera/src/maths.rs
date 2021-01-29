@@ -38,23 +38,69 @@ impl DivRoundUp for UVec2 {
     }
 }
 
-pub trait IntoTransposedTransform {
-    fn into_transposed_transform(&self) -> [f32; 12];
+pub struct Transform3 {
+    pub cols: [Vec3; 4],
 }
 
-impl IntoTransposedTransform for Isometry3 {
-    fn into_transposed_transform(&self) -> [f32; 12] {
-        self.into_homogeneous_matrix().transposed().as_slice()[..12]
-            .try_into()
-            .unwrap()
+impl Transform3 {
+    fn new(col0: Vec3, col1: Vec3, col2: Vec3, col3: Vec3) -> Self {
+        Self {
+            cols: [col0, col1, col2, col3],
+        }
+    }
+
+    pub fn as_slice(&self) -> &[f32] {
+        unsafe { std::slice::from_raw_parts(self as *const Self as *const f32, 12) }
+    }
+
+    pub fn as_array(&self) -> [f32; 12] {
+        self.as_slice().try_into().unwrap()
     }
 }
 
-impl IntoTransposedTransform for Similarity3 {
-    fn into_transposed_transform(&self) -> [f32; 12] {
-        self.into_homogeneous_matrix().transposed().as_slice()[..12]
-            .try_into()
-            .unwrap()
+pub trait IntoTransform {
+    fn into_transform(&self) -> Transform3;
+}
+
+impl IntoTransform for Mat4 {
+    fn into_transform(&self) -> Transform3 {
+        Transform3::new(
+            self.cols[0].truncated(),
+            self.cols[1].truncated(),
+            self.cols[2].truncated(),
+            self.cols[3].truncated(),
+        )
+    }
+}
+
+pub struct TransposedTransform3 {
+    pub cols: [Vec4; 3],
+}
+
+impl TransposedTransform3 {
+    fn new(col0: Vec4, col1: Vec4, col2: Vec4) -> Self {
+        Self {
+            cols: [col0, col1, col2],
+        }
+    }
+
+    pub fn as_slice(&self) -> &[f32] {
+        unsafe { std::slice::from_raw_parts(self as *const Self as *const f32, 12) }
+    }
+
+    pub fn as_array(&self) -> [f32; 12] {
+        self.as_slice().try_into().unwrap()
+    }
+}
+
+pub trait IntoTransposedTransform {
+    fn into_transposed_transform(&self) -> TransposedTransform3;
+}
+
+impl IntoTransposedTransform for Mat4 {
+    fn into_transposed_transform(&self) -> TransposedTransform3 {
+        let transposed = self.transposed();
+        TransposedTransform3::new(transposed.cols[0], transposed.cols[1], transposed.cols[2])
     }
 }
 

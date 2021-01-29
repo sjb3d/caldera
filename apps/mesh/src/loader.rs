@@ -192,7 +192,7 @@ impl MeshInfo {
             .unwrap();
         for src in self.instances.iter() {
             let instance_data = InstanceData {
-                matrix: src.into_transposed_transform(),
+                matrix: src.into_homogeneous_matrix().into_transposed_transform().as_array(),
             };
             writer.write_all(instance_data.as_byte_slice());
         }

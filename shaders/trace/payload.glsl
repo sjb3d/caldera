@@ -1,7 +1,9 @@
 
 struct ExtendPayload {
-    uint packed_normal; // oct format
-    uint packed_shader; // BSDF + parameters
+    vec3 position;
+    uint normal_oct32;
+    uvec3 reflectance_and_emission; // half3 and half3
+    uint is_valid;
 };
 
 #define EXTEND_PAYLOAD_READ(NAME)   layout(location = 0) rayPayloadEXT ExtendPayload NAME
