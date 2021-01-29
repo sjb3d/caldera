@@ -94,6 +94,7 @@ impl App {
     }
 
     fn render(&mut self, base: &mut AppBase) {
+        // TODO: move to an update function
         let io = base.ui_context.io();
         let scene = self.accel.scene();
         let camera = &scene.cameras[0];

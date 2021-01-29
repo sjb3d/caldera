@@ -115,10 +115,6 @@ impl Scene {
         CameraRef(index as u32)
     }
 
-    pub fn transform_ref_iter(&self) -> impl Iterator<Item = TransformRef> {
-        (0..self.transforms.len()).map(|i| TransformRef(i as u32))
-    }
-
     pub fn geometry_ref_iter(&self) -> impl Iterator<Item = GeometryRef> {
         (0..self.geometries.len()).map(|i| GeometryRef(i as u32))
     }
