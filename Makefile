@@ -23,9 +23,9 @@ SRC=\
 	mesh/trace.rmiss.glsl \
 	trace/copy.frag.glsl \
 	trace/copy.vert.glsl \
-	trace/debug.rchit.glsl \
-	trace/debug.rgen.glsl \
-	trace/debug.rmiss.glsl
+	trace/extend.rchit.glsl \
+	trace/extend.rmiss.glsl \
+	trace/path_trace.rgen.glsl
 
 APPS=compute mesh trace
 

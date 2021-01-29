@@ -12,7 +12,7 @@ struct PositionData([f32; 3]);
 struct IndexData([u32; 3]);
 
 #[repr(C)]
-struct CameraData {
+struct PathTraceData {
     ray_origin: [f32; 3],
     ray_vec_from_coord: [f32; 9],
 }
@@ -26,7 +26,7 @@ struct HitRecordData {
 unsafe impl AsByteSlice for HitRecordData {}
 
 descriptor_set_layout!(DebugDescriptorSetLayout {
-    camera: UniformData<CameraData>,
+    data: UniformData<PathTraceData>,
     accel: AccelerationStructure,
     output: StorageImage,
 });
@@ -104,9 +104,9 @@ struct ShaderBindingTable {
 pub struct SceneAccel {
     shared: Arc<SceneShared>,
     context: Arc<Context>,
-    debug_descriptor_set_layout: DebugDescriptorSetLayout,
-    debug_pipeline_layout: vk::PipelineLayout,
-    debug_pipeline: vk::Pipeline,
+    path_trace_descriptor_set_layout: DebugDescriptorSetLayout,
+    path_trace_pipeline_layout: vk::PipelineLayout,
+    path_trace_pipeline: vk::Pipeline,
     geometry_data: Vec<Option<TriangleMeshData>>,
     shader_binding_table: Option<ShaderBindingTable>,
     cluster_accel: Vec<BottomLevelAccel>,
@@ -178,14 +178,14 @@ impl SceneAccel {
         let shared = Arc::new(SceneShared { scene, clusters });
 
         // make pipeline
-        let debug_descriptor_set_layout = DebugDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let debug_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(debug_descriptor_set_layout.0);
+        let path_trace_descriptor_set_layout = DebugDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
 
-        let debug_pipeline = pipeline_cache.get_ray_tracing(
-            "trace/debug.rgen.spv",
-            "trace/debug.rchit.spv",
-            "trace/debug.rmiss.spv",
-            debug_pipeline_layout,
+        let path_trace_pipeline = pipeline_cache.get_ray_tracing(
+            "trace/path_trace.rgen.spv",
+            "trace/extend.rchit.spv",
+            "trace/extend.rmiss.spv",
+            path_trace_pipeline_layout,
         );
 
         // make vertex/index buffers for each referenced geometry
@@ -268,9 +268,9 @@ impl SceneAccel {
         Self {
             shared,
             context: Arc::clone(&context),
-            debug_descriptor_set_layout,
-            debug_pipeline_layout,
-            debug_pipeline,
+            path_trace_descriptor_set_layout,
+            path_trace_pipeline_layout,
+            path_trace_pipeline,
             geometry_data,
             shader_binding_table: None,
             cluster_accel: Vec::new(),
@@ -345,7 +345,7 @@ impl SceneAccel {
         // write the table
         let shader_binding_table = resource_loader.create_buffer();
         resource_loader.async_load({
-            let debug_pipeline = self.debug_pipeline;
+            let path_trace_pipeline = self.path_trace_pipeline;
             let context = Arc::clone(&self.context);
             let shared = Arc::clone(&self.shared);
             move |allocator| {
@@ -355,7 +355,7 @@ impl SceneAccel {
                 let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
                 unsafe {
                     context.device.get_ray_tracing_shader_group_handles_khr(
-                        debug_pipeline,
+                        path_trace_pipeline,
                         0,
                         shader_group_count,
                         &mut handle_data,
@@ -798,10 +798,10 @@ impl SceneAccel {
             move |params, cmd| {
                 let output_image_view = params.get_image_view(output_image);
 
-                let debug_descriptor_set = self.debug_descriptor_set_layout.write(
+                let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
                     &descriptor_pool,
-                    &|buf: &mut CameraData| {
-                        *buf = CameraData {
+                    &|buf: &mut PathTraceData| {
+                        *buf = PathTraceData {
                             ray_origin: ray_origin.into(),
                             ray_vec_from_coord: *ray_vec_from_coord.as_array(),
                         }
@@ -813,13 +813,13 @@ impl SceneAccel {
                 unsafe {
                     context
                         .device
-                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::RAY_TRACING_KHR, self.debug_pipeline);
+                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::RAY_TRACING_KHR, self.path_trace_pipeline);
                     context.device.cmd_bind_descriptor_sets(
                         cmd,
                         vk::PipelineBindPoint::RAY_TRACING_KHR,
-                        self.debug_pipeline_layout,
+                        self.path_trace_pipeline_layout,
                         0,
-                        slice::from_ref(&debug_descriptor_set),
+                        slice::from_ref(&path_trace_descriptor_set),
                         &[],
                     );
                 }

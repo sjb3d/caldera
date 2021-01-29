@@ -6,10 +6,10 @@
 #include "payload.glsl"
 #include "normal_pack.glsl"
 
-layout(scalar, set = 0, binding = 0) uniform CameraData {
+layout(scalar, set = 0, binding = 0) uniform PathTraceData {
     vec3 ray_origin;
     mat3x3 ray_vec_from_coord;
-} g_camera;
+} g_data;
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, r32ui) uniform writeonly uimage2D g_output;
 
@@ -17,7 +17,7 @@ EXTEND_PAYLOAD_READ(g_extend);
 
 void main()
 {
-    const vec3 ray_vec = g_camera.ray_vec_from_coord * vec3(gl_LaunchIDEXT.xy + .5f, 1.f);
+    const vec3 ray_vec = g_data.ray_vec_from_coord * vec3(gl_LaunchIDEXT.xy + .5f, 1.f);
     const vec3 ray_dir = normalize(ray_vec);
 
     traceRayEXT(
@@ -27,7 +27,7 @@ void main()
         0,
         1,
         0,
-        g_camera.ray_origin,
+        g_data.ray_origin,
         0.0,
         ray_dir,
         1000.f,
