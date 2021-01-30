@@ -69,8 +69,10 @@ impl BufferUsage {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
                 }
-                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH
-                | Self::ACCELERATION_STRUCTURE_READ
+                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
+                    vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::STORAGE_BUFFER
+                }
+                Self::ACCELERATION_STRUCTURE_READ
                 | Self::ACCELERATION_STRUCTURE_WRITE
                 | Self::RAY_TRACING_ACCELERATION_STRUCTURE => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
