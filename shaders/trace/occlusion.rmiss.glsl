@@ -4,9 +4,9 @@
 #extension GL_GOOGLE_include_directive : require
 #include "payload.glsl"
 
-EXTEND_PAYLOAD_WRITE(g_extend);
+OCCLUSION_PAYLOAD_WRITE(g_occlusion);
 
 void main()
 {
-    g_extend.flags_packed = 0;
+    g_occlusion.is_occluded = 0;
 }

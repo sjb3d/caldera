@@ -89,11 +89,11 @@ impl App {
             .instances
             .iter()
             .filter(|instance| scene.shader(instance.shader_ref).is_emissive())
-            .filter_map(|instance| match scene.geometry(instance.geometry_ref) {
-                Geometry::TriangleMesh(..) => None,
-                Geometry::Quad(quad) => Some(QuadLight {
-                    transform: scene.transform(instance.transform_ref).0,
-                    size: quad.size,
+            .filter_map(|instance| match *scene.geometry(instance.geometry_ref) {
+                Geometry::TriangleMesh { .. } => None,
+                Geometry::Quad { size, transform } => Some(QuadLight {
+                    transform: scene.transform(instance.transform_ref).0 * transform,
+                    size,
                     emission: scene.shader(instance.shader_ref).emission,
                 }),
             })

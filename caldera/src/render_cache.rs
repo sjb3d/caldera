@@ -384,7 +384,7 @@ impl RenderCache {
             .or_insert_with(|| {
                 let render_pass = {
                     let is_msaa = samples != vk::SampleCountFlags::N1;
-                    let mut attachments: ArrayVec<[_; Self::MAX_ATTACHMENTS]> = ArrayVec::new();
+                    let mut attachments = ArrayVec::<[_; Self::MAX_ATTACHMENTS]>::new();
                     let subpass_color_attachment = {
                         let index = attachments.len() as u32;
                         attachments.push(vk::AttachmentDescription {
@@ -482,7 +482,7 @@ impl RenderCache {
                 depth_temp_image_view,
             })
             .or_insert_with(|| {
-                let mut attachments: ArrayVec<[_; Self::MAX_ATTACHMENTS]> = ArrayVec::new();
+                let mut attachments = ArrayVec::<[_; Self::MAX_ATTACHMENTS]>::new();
                 if let Some(color_temp_image_view) = color_temp_image_view {
                     attachments.push(color_temp_image_view.0);
                 }

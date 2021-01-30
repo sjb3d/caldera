@@ -5,7 +5,7 @@ layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in mat3x4 a_world_from_local_transpose;
 
-layout(scalar, set = 0, binding = 0) uniform RasterData {
+layout(set = 0, binding = 0, scalar) uniform RasterData {
     mat4 proj_from_world;
 } g_raster;
 

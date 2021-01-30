@@ -6,7 +6,7 @@
 
 layout(location = 0) out vec4 o_col;
 
-layout(scalar, set = 0, binding = 0) uniform CopyData {
+layout(set = 0, binding = 0, scalar) uniform CopyData {
     ivec2 offset;
     uvec2 trace_dims;
     float trace_scale;

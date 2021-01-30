@@ -124,6 +124,9 @@ pub struct SceneAccel {
 }
 
 impl SceneAccel {
+    const HIT_GROUP_COUNT_PER_INSTANCE: u32 = 2;
+    const MISS_GROUP_COUNT: u32 = 2;
+
     fn make_clusters(scene: &Scene) -> Vec<Cluster> {
         // gather a vector of instances per geometry
         let mut instance_refs_per_geometry = vec![Vec::new(); scene.geometries.len()];
@@ -192,9 +195,17 @@ impl SceneAccel {
             descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
 
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(
-            "trace/path_trace.rgen.spv",
-            "trace/extend.rchit.spv",
-            "trace/extend.rmiss.spv",
+            &[
+                RayTracingShaderGroupDesc::Raygen("trace/path_trace.rgen.spv"),
+                RayTracingShaderGroupDesc::Miss("trace/extend.rmiss.spv"),
+                RayTracingShaderGroupDesc::TrianglesHit {
+                    closest_hit: "trace/extend.rchit.spv",
+                },
+                RayTracingShaderGroupDesc::Miss("trace/occlusion.rmiss.spv"),
+                RayTracingShaderGroupDesc::TrianglesHit {
+                    closest_hit: "trace/occlusion.rchit.spv",
+                },
+            ],
             path_trace_pipeline_layout,
         );
 
@@ -210,22 +221,22 @@ impl SceneAccel {
             resource_loader.async_load({
                 let shared = Arc::clone(&shared);
                 move |allocator| {
-                    let mut quad_mesh = TriangleMesh::default();
-                    let mesh = match shared.scene.geometry(geometry_ref) {
-                        Geometry::TriangleMesh(mesh) => mesh,
-                        Geometry::Quad(quad) => {
-                            let half_size = 0.5 * quad.size;
-                            quad_mesh = quad_mesh.with_quad(
-                                Vec3::new(-half_size.x, -half_size.y, 0.0),
-                                Vec3::new(half_size.x, -half_size.y, 0.0),
-                                Vec3::new(half_size.x, half_size.y, 0.0),
-                                Vec3::new(-half_size.x, half_size.y, 0.0),
+                    let mut mesh_builder = TriangleMeshBuilder::new();
+                    let (positions, indices) = match *shared.scene.geometry(geometry_ref) {
+                        Geometry::TriangleMesh { ref positions, ref indices } => (positions.as_slice(), indices.as_slice()),
+                        Geometry::Quad { transform, size } => {
+                            let half_size = 0.5 * size;
+                            mesh_builder = mesh_builder.with_quad(
+                                transform * Vec3::new(-half_size.x, -half_size.y, 0.0),
+                                transform * Vec3::new(half_size.x, -half_size.y, 0.0),
+                                transform * Vec3::new(half_size.x, half_size.y, 0.0),
+                                transform * Vec3::new(-half_size.x, half_size.y, 0.0),
                             );
-                            &quad_mesh
+                            (mesh_builder.positions.as_slice(), mesh_builder.indices.as_slice())
                         }
                     };
 
-                    let index_buffer_desc = BufferDesc::new(mesh.indices.len() * mem::size_of::<IndexData>());
+                    let index_buffer_desc = BufferDesc::new(indices.len() * mem::size_of::<IndexData>());
                     let mut writer = allocator
                         .map_buffer(
                             index_buffer,
@@ -233,11 +244,11 @@ impl SceneAccel {
                             BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
                         )
                         .unwrap();
-                    for face in mesh.indices.iter() {
+                    for face in indices.iter() {
                         writer.write_all(face.as_byte_slice());
                     }
 
-                    let position_buffer_desc = BufferDesc::new(mesh.positions.len() * mem::size_of::<PositionData>());
+                    let position_buffer_desc = BufferDesc::new(positions.len() * mem::size_of::<PositionData>());
                     let mut writer = allocator
                         .map_buffer(
                             position_buffer,
@@ -245,7 +256,7 @@ impl SceneAccel {
                             BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
                         )
                         .unwrap();
-                    for pos in mesh.positions.iter() {
+                    for pos in positions.iter() {
                         writer.write_all(pos.as_byte_slice());
                     }
                 }
@@ -311,10 +322,11 @@ impl SceneAccel {
             rtpp.shader_group_handle_size + miss_record_size,
             rtpp.shader_group_handle_alignment,
         );
+        let miss_entry_count = Self::MISS_GROUP_COUNT;
         let miss_region = ShaderBindingRegion {
             offset: next_offset,
             stride: miss_stride,
-            size: miss_stride,
+            size: miss_stride * miss_entry_count,
         };
         next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
 
@@ -323,7 +335,7 @@ impl SceneAccel {
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
         );
-        let hit_entry_count = self.shared.scene.instances.len() as u32;
+        let hit_entry_count = (self.shared.scene.instances.len() as u32) * Self::HIT_GROUP_COUNT_PER_INSTANCE;
         let hit_region = ShaderBindingRegion {
             offset: next_offset,
             stride: hit_stride,
@@ -341,7 +353,7 @@ impl SceneAccel {
             let shared = Arc::clone(&self.shared);
             move |allocator| {
                 let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
-                let shader_group_count = 3;
+                let shader_group_count = 1 + Self::MISS_GROUP_COUNT + Self::HIT_GROUP_COUNT_PER_INSTANCE;
                 let handle_size = rtpp.shader_group_handle_size as usize;
                 let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
                 unsafe {
@@ -356,8 +368,10 @@ impl SceneAccel {
 
                 let remain = handle_data.as_slice();
                 let (raygen_group_handle, remain) = remain.split_at(handle_size);
-                let (miss_group_handle, remain) = remain.split_at(handle_size);
-                let hit_group_handle = remain;
+                let (extend_miss_group_handle, remain) = remain.split_at(handle_size);
+                let (extend_hit_group_handle, remain) = remain.split_at(handle_size);
+                let (occlusion_miss_group_handle, remain) = remain.split_at(handle_size);
+                let (occlusion_hit_group_handle, _remain) = remain.split_at(handle_size);
 
                 let desc = BufferDesc::new(total_size as usize);
                 let mut writer = allocator
@@ -372,10 +386,17 @@ impl SceneAccel {
                 writer.write_all(raygen_group_handle);
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
-                writer.write_all(miss_group_handle);
+                {
+                    let end_offset = writer.written() + miss_region.stride as usize;
+                    writer.write_all(extend_miss_group_handle);
+                    writer.write_zeros(end_offset - writer.written());
+
+                    let end_offset = writer.written() + miss_region.stride as usize;
+                    writer.write_all(occlusion_miss_group_handle);
+                    writer.write_zeros(end_offset - writer.written());
+                }
 
                 writer.write_zeros(hit_region.offset as usize - writer.written());
-
                 for cluster in shared.clusters.iter() {
                     for instance_ref in cluster.instance_refs_grouped_by_transform_iter().cloned() {
                         let instance = shared.scene.instance(instance_ref);
@@ -384,7 +405,7 @@ impl SceneAccel {
                         let shader = shared.scene.shader(instance.shader_ref);
                         let to_f16_bits = |x| f16::from_f32(x).to_bits();
 
-                        let hit_record = HitRecordData {
+                        let extend_hit_record = HitRecordData {
                             index_buffer_address,
                             position_buffer_address,
                             reflectance_and_emission: [
@@ -398,8 +419,12 @@ impl SceneAccel {
                         };
 
                         let end_offset = writer.written() + hit_region.stride as usize;
-                        writer.write_all(hit_group_handle);
-                        writer.write_all(hit_record.as_byte_slice());
+                        writer.write_all(extend_hit_group_handle);
+                        writer.write_all(extend_hit_record.as_byte_slice());
+                        writer.write_zeros(end_offset - writer.written());
+
+                        let end_offset = writer.written() + hit_region.stride as usize;
+                        writer.write_all(occlusion_hit_group_handle);
                         writer.write_zeros(end_offset - writer.written());
                     }
                 }
@@ -435,8 +460,8 @@ impl SceneAccel {
             let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
 
             let (vertex_count, triangle_count) = match geometry {
-                Geometry::TriangleMesh(mesh) => (mesh.positions.len() as u32, mesh.indices.len() as u32),
-                Geometry::Quad(..) => (4, 2),
+                Geometry::TriangleMesh { positions, indices } => (positions.len() as u32, indices.len() as u32),
+                Geometry::Quad { .. } => (4, 2),
             };
 
             accel_geometry.push(vk::AccelerationStructureGeometryKHR {
@@ -598,7 +623,7 @@ impl SceneAccel {
                             acceleration_structure_reference,
                         };
                         writer.write_all(instance.as_byte_slice());
-                        record_offset += cluster.elements.len() as u32;
+                        record_offset += (cluster.elements.len() as u32) * Self::HIT_GROUP_COUNT_PER_INSTANCE;
                     }
                 }
             }

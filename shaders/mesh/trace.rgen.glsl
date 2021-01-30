@@ -2,7 +2,7 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
 
-layout(scalar, set = 0, binding = 0) uniform TraceData {
+layout(set = 0, binding = 0, scalar) uniform TraceData {
     vec3 ray_origin;
     mat3x3 ray_vec_from_coord;
 } g_trace;
@@ -24,7 +24,7 @@ void main()
         0,
         0,
         g_trace.ray_origin,
-        0.0,
+        0.f,
         ray_dir,
         1000.f,
         0);

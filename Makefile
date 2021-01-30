@@ -6,6 +6,7 @@ DISASM=spirv-dis
 
 INC=\
 	common/color_space.glsl \
+	common/maths.glsl \
 	common/normal_pack.glsl \
 	common/sampler.glsl \
 	trace/payload.glsl
@@ -25,6 +26,8 @@ SRC=\
 	trace/copy.vert.glsl \
 	trace/extend.rchit.glsl \
 	trace/extend.rmiss.glsl \
+	trace/occlusion.rchit.glsl \
+	trace/occlusion.rmiss.glsl \
 	trace/path_trace.rgen.glsl
 
 APPS=compute mesh trace

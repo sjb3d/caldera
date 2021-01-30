@@ -172,6 +172,27 @@ impl GraphicsPipelineState {
     }
 }
 
+pub enum RayTracingShaderGroupDesc<'a> {
+    Raygen(&'a str),
+    Miss(&'a str),
+    TrianglesHit {
+        closest_hit: &'a str,
+        //pub any_hit: Option<&'a str>,
+        //pub intersection: Option<&'a str>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum RayTracingShaderGroup {
+    Raygen(vk::ShaderModule),
+    Miss(vk::ShaderModule),
+    TrianglesHit {
+        closest_hit: vk::ShaderModule,
+        //any_hit: vk::ShaderModule,
+        //intersection: vk::ShaderModule,
+    },
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum PipelineCacheKey {
     Compute {
@@ -190,9 +211,7 @@ enum PipelineCacheKey {
     },
     RayTracing {
         pipeline_layout: vk::PipelineLayout,
-        raygen_shader: vk::ShaderModule,
-        closest_hit_shader: vk::ShaderModule,
-        miss_shader: vk::ShaderModule,
+        shader_groups: ArrayVec<[RayTracingShaderGroup; PipelineCache::RAY_TRACING_MAX_SHADER_GROUPS]>,
     },
 }
 
@@ -205,6 +224,9 @@ pub struct PipelineCache {
 }
 
 impl PipelineCache {
+    const RAY_TRACING_MAX_MODULES: usize = 8;
+    const RAY_TRACING_MAX_SHADER_GROUPS: usize = 5;
+
     pub fn new<P: AsRef<Path>>(context: &Arc<Context>, path: P) -> Self {
         let pipeline_cache = {
             // TODO: load from file
@@ -389,72 +411,85 @@ impl PipelineCache {
 
     pub fn get_ray_tracing(
         &self,
-        raygen_shader_name: &str,
-        closest_hit_shader_name: &str,
-        miss_shader_name: &str,
+        group_desc: &[RayTracingShaderGroupDesc],
         pipeline_layout: vk::PipelineLayout,
     ) -> vk::Pipeline {
-        let raygen_shader = self.shader_loader.get_shader(raygen_shader_name).unwrap();
-        let closest_hit_shader = self.shader_loader.get_shader(closest_hit_shader_name).unwrap();
-        let miss_shader = self.shader_loader.get_shader(miss_shader_name).unwrap();
+        assert!(group_desc.len() <= Self::RAY_TRACING_MAX_SHADER_GROUPS);
+        let shader_groups: ArrayVec<[_; Self::RAY_TRACING_MAX_SHADER_GROUPS]> = group_desc
+            .iter()
+            .map(|desc| match desc {
+                RayTracingShaderGroupDesc::Raygen(raygen) => {
+                    RayTracingShaderGroup::Raygen(self.shader_loader.get_shader(raygen).unwrap())
+                }
+                RayTracingShaderGroupDesc::Miss(miss) => {
+                    RayTracingShaderGroup::Miss(self.shader_loader.get_shader(miss).unwrap())
+                }
+                RayTracingShaderGroupDesc::TrianglesHit { closest_hit } => RayTracingShaderGroup::TrianglesHit {
+                    closest_hit: self.shader_loader.get_shader(closest_hit).unwrap(),
+                },
+            })
+            .collect();
         let key = PipelineCacheKey::RayTracing {
             pipeline_layout,
-            raygen_shader,
-            closest_hit_shader,
-            miss_shader,
+            shader_groups: shader_groups.clone(),
         };
         self.current_pipelines.get(&key).copied().unwrap_or_else(|| {
             // TODO: create pipeline on worker thread, for now we just block on miss
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let shader_stage_create_info = [
-                    vk::PipelineShaderStageCreateInfo {
-                        stage: vk::ShaderStageFlags::RAYGEN_KHR,
-                        module: Some(raygen_shader),
-                        p_name: shader_entry_name.as_ptr(),
-                        ..Default::default()
-                    },
-                    vk::PipelineShaderStageCreateInfo {
-                        stage: vk::ShaderStageFlags::MISS_KHR,
-                        module: Some(miss_shader),
-                        p_name: shader_entry_name.as_ptr(),
-                        ..Default::default()
-                    },
-                    vk::PipelineShaderStageCreateInfo {
-                        stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
-                        module: Some(closest_hit_shader),
-                        p_name: shader_entry_name.as_ptr(),
-                        ..Default::default()
-                    },
-                ];
+                let mut shader_stage_create_info = ArrayVec::<[_; Self::RAY_TRACING_MAX_MODULES]>::new();
+                let mut get_stage_index = |stage, module| {
+                    if let Some(i) = shader_stage_create_info.iter().enumerate().find_map(
+                        |(i, info): (usize, &vk::PipelineShaderStageCreateInfo)| {
+                            if stage == info.stage && Some(module) == info.module {
+                                Some(i as u32)
+                            } else {
+                                None
+                            }
+                        },
+                    ) {
+                        i
+                    } else {
+                        shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                            stage,
+                            module: Some(module),
+                            p_name: shader_entry_name.as_ptr(),
+                            ..Default::default()
+                        });
+                        (shader_stage_create_info.len() - 1) as u32
+                    }
+                };
 
-                let shader_group_create_info = [
-                    vk::RayTracingShaderGroupCreateInfoKHR {
-                        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-                        general_shader: 0,
-                        closest_hit_shader: vk::SHADER_UNUSED_KHR,
-                        any_hit_shader: vk::SHADER_UNUSED_KHR,
-                        intersection_shader: vk::SHADER_UNUSED_KHR,
-                        ..Default::default()
-                    },
-                    vk::RayTracingShaderGroupCreateInfoKHR {
-                        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-                        general_shader: 1,
-                        closest_hit_shader: vk::SHADER_UNUSED_KHR,
-                        any_hit_shader: vk::SHADER_UNUSED_KHR,
-                        intersection_shader: vk::SHADER_UNUSED_KHR,
-                        ..Default::default()
-                    },
-                    vk::RayTracingShaderGroupCreateInfoKHR {
-                        ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
-                        general_shader: vk::SHADER_UNUSED_KHR,
-                        closest_hit_shader: 2,
-                        any_hit_shader: vk::SHADER_UNUSED_KHR,
-                        intersection_shader: vk::SHADER_UNUSED_KHR,
-                        ..Default::default()
-                    },
-                ];
+                let shader_group_create_info: ArrayVec<[_; Self::RAY_TRACING_MAX_SHADER_GROUPS]> = shader_groups
+                    .iter()
+                    .map(|group| match group {
+                        RayTracingShaderGroup::Raygen(raygen) => vk::RayTracingShaderGroupCreateInfoKHR {
+                            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                            general_shader: get_stage_index(vk::ShaderStageFlags::RAYGEN_KHR, *raygen),
+                            closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                            any_hit_shader: vk::SHADER_UNUSED_KHR,
+                            intersection_shader: vk::SHADER_UNUSED_KHR,
+                            ..Default::default()
+                        },
+                        RayTracingShaderGroup::Miss(miss) => vk::RayTracingShaderGroupCreateInfoKHR {
+                            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                            general_shader: get_stage_index(vk::ShaderStageFlags::MISS_KHR, *miss),
+                            closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                            any_hit_shader: vk::SHADER_UNUSED_KHR,
+                            intersection_shader: vk::SHADER_UNUSED_KHR,
+                            ..Default::default()
+                        },
+                        RayTracingShaderGroup::TrianglesHit { closest_hit } => vk::RayTracingShaderGroupCreateInfoKHR {
+                            ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
+                            general_shader: vk::SHADER_UNUSED_KHR,
+                            closest_hit_shader: get_stage_index(vk::ShaderStageFlags::CLOSEST_HIT_KHR, *closest_hit),
+                            any_hit_shader: vk::SHADER_UNUSED_KHR,
+                            intersection_shader: vk::SHADER_UNUSED_KHR,
+                            ..Default::default()
+                        },
+                    })
+                    .collect();
 
                 let pipeline_create_info = vk::RayTracingPipelineCreateInfoKHR::builder()
                     .p_stages(&shader_stage_create_info)

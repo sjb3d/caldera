@@ -343,9 +343,13 @@ impl AccelInfo {
 
         // TODO: figure out live reload, needs to regenerate SBT!
         let trace_pipeline = pipeline_cache.get_ray_tracing(
-            "mesh/trace.rgen.spv",
-            "mesh/trace.rchit.spv",
-            "mesh/trace.rmiss.spv",
+            &[
+                RayTracingShaderGroupDesc::Raygen("mesh/trace.rgen.spv"),
+                RayTracingShaderGroupDesc::Miss("mesh/trace.rmiss.spv"),
+                RayTracingShaderGroupDesc::TrianglesHit {
+                    closest_hit: "mesh/trace.rchit.spv",
+                },
+            ],
             trace_pipeline_layout,
         );
 
