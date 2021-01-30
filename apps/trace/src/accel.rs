@@ -200,10 +200,14 @@ impl SceneAccel {
                 RayTracingShaderGroupDesc::Miss("trace/extend.rmiss.spv"),
                 RayTracingShaderGroupDesc::TrianglesHit {
                     closest_hit: "trace/extend.rchit.spv",
+                    any_hit: None,
+                    intersection: None,
                 },
                 RayTracingShaderGroupDesc::Miss("trace/occlusion.rmiss.spv"),
                 RayTracingShaderGroupDesc::TrianglesHit {
                     closest_hit: "trace/occlusion.rchit.spv",
+                    any_hit: None,
+                    intersection: None,
                 },
             ],
             path_trace_pipeline_layout,
@@ -223,7 +227,10 @@ impl SceneAccel {
                 move |allocator| {
                     let mut mesh_builder = TriangleMeshBuilder::new();
                     let (positions, indices) = match *shared.scene.geometry(geometry_ref) {
-                        Geometry::TriangleMesh { ref positions, ref indices } => (positions.as_slice(), indices.as_slice()),
+                        Geometry::TriangleMesh {
+                            ref positions,
+                            ref indices,
+                        } => (positions.as_slice(), indices.as_slice()),
                         Geometry::Quad { transform, size } => {
                             let half_size = 0.5 * size;
                             mesh_builder = mesh_builder.with_quad(
@@ -481,7 +488,7 @@ impl SceneAccel {
                         ..Default::default()
                     },
                 },
-                flags: vk::GeometryFlagsKHR::OPAQUE,
+                flags: vk::GeometryFlagsKHR::empty(),
                 ..Default::default()
             });
             max_primitive_counts.push(triangle_count);

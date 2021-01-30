@@ -177,8 +177,8 @@ pub enum RayTracingShaderGroupDesc<'a> {
     Miss(&'a str),
     TrianglesHit {
         closest_hit: &'a str,
-        //pub any_hit: Option<&'a str>,
-        //pub intersection: Option<&'a str>,
+        any_hit: Option<&'a str>,
+        intersection: Option<&'a str>,
     },
 }
 
@@ -188,8 +188,8 @@ enum RayTracingShaderGroup {
     Miss(vk::ShaderModule),
     TrianglesHit {
         closest_hit: vk::ShaderModule,
-        //any_hit: vk::ShaderModule,
-        //intersection: vk::ShaderModule,
+        any_hit: Option<vk::ShaderModule>,
+        intersection: Option<vk::ShaderModule>,
     },
 }
 
@@ -424,8 +424,14 @@ impl PipelineCache {
                 RayTracingShaderGroupDesc::Miss(miss) => {
                     RayTracingShaderGroup::Miss(self.shader_loader.get_shader(miss).unwrap())
                 }
-                RayTracingShaderGroupDesc::TrianglesHit { closest_hit } => RayTracingShaderGroup::TrianglesHit {
+                RayTracingShaderGroupDesc::TrianglesHit {
+                    closest_hit,
+                    any_hit,
+                    intersection,
+                } => RayTracingShaderGroup::TrianglesHit {
                     closest_hit: self.shader_loader.get_shader(closest_hit).unwrap(),
+                    any_hit: any_hit.map(|name| self.shader_loader.get_shader(name).unwrap()),
+                    intersection: intersection.map(|name| self.shader_loader.get_shader(name).unwrap()),
                 },
             })
             .collect();
@@ -480,12 +486,20 @@ impl PipelineCache {
                             intersection_shader: vk::SHADER_UNUSED_KHR,
                             ..Default::default()
                         },
-                        RayTracingShaderGroup::TrianglesHit { closest_hit } => vk::RayTracingShaderGroupCreateInfoKHR {
+                        RayTracingShaderGroup::TrianglesHit {
+                            closest_hit,
+                            any_hit,
+                            intersection,
+                        } => vk::RayTracingShaderGroupCreateInfoKHR {
                             ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
                             general_shader: vk::SHADER_UNUSED_KHR,
                             closest_hit_shader: get_stage_index(vk::ShaderStageFlags::CLOSEST_HIT_KHR, *closest_hit),
-                            any_hit_shader: vk::SHADER_UNUSED_KHR,
-                            intersection_shader: vk::SHADER_UNUSED_KHR,
+                            any_hit_shader: any_hit.map_or(vk::SHADER_UNUSED_KHR, |module| {
+                                get_stage_index(vk::ShaderStageFlags::ANY_HIT_KHR, module)
+                            }),
+                            intersection_shader: intersection.map_or(vk::SHADER_UNUSED_KHR, |module| {
+                                get_stage_index(vk::ShaderStageFlags::INTERSECTION_KHR, module)
+                            }),
                             ..Default::default()
                         },
                     })

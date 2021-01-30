@@ -18,7 +18,7 @@ void main()
 
     traceRayEXT(
         g_accel,
-        gl_RayFlagsOpaqueEXT,
+        gl_RayFlagsNoneEXT,
         0xff,
         0,
         0,

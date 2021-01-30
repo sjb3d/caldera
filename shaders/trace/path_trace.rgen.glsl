@@ -26,7 +26,7 @@ void main()
 
     traceRayEXT(
         g_accel,
-        gl_RayFlagsOpaqueEXT,
+        gl_RayFlagsNoneEXT,
         0xff,
         EXTEND_HIT_SHADER_OFFSET,
         HIT_SHADER_COUNT_PER_INSTANCE,
@@ -55,7 +55,7 @@ void main()
         const float distance_epsilon_factor = 1.f - ldexp(1.f, log2_epsilon_factor);        
         traceRayEXT(
             g_accel,
-            gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+            gl_RayFlagsNoneEXT | gl_RayFlagsTerminateOnFirstHitEXT,
             0xff,
             OCCLUSION_HIT_SHADER_OFFSET,
             HIT_SHADER_COUNT_PER_INSTANCE,

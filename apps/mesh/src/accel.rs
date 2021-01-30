@@ -64,7 +64,7 @@ impl AccelLevel {
             geometry: vk::AccelerationStructureGeometryDataKHR {
                 triangles: geometry_triangles_data,
             },
-            flags: vk::GeometryFlagsKHR::OPAQUE,
+            flags: vk::GeometryFlagsKHR::empty(),
             ..Default::default()
         };
 
@@ -348,6 +348,8 @@ impl AccelInfo {
                 RayTracingShaderGroupDesc::Miss("mesh/trace.rmiss.spv"),
                 RayTracingShaderGroupDesc::TrianglesHit {
                     closest_hit: "mesh/trace.rchit.spv",
+                    any_hit: None,
+                    intersection: None,
                 },
             ],
             trace_pipeline_layout,
