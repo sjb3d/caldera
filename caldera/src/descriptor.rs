@@ -3,7 +3,6 @@ use crate::context::Context;
 use arrayvec::ArrayVec;
 use imgui::{ProgressBar, Ui};
 use spark::{vk, Builder};
-use std::os::raw::c_void;
 use std::slice;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -18,7 +17,7 @@ struct UniformDataPool {
     atom_size: u32,
     size_per_frame: u32,
     mem: vk::DeviceMemory,
-    mapping: *mut c_void,
+    mapping: *mut u8,
     buffers: [vk::Buffer; Self::COUNT],
     buffer_index: usize,
     next_offset: AtomicUsize,
@@ -83,7 +82,7 @@ impl UniformDataPool {
             atom_size,
             size_per_frame,
             mem,
-            mapping,
+            mapping: mapping as *mut _,
             buffers,
             buffer_index: 0,
             next_offset: AtomicUsize::new(0),
@@ -115,7 +114,7 @@ impl UniformDataPool {
         self.buffers[self.buffer_index]
     }
 
-    pub fn alloc(&self, size: u32) -> Option<(*mut c_void, u32)> {
+    pub fn alloc(&self, size: u32) -> Option<(&mut [u8], u32)> {
         let aligned_size = align_up(size, self.min_alignment);
 
         let base = self.next_offset.fetch_add(aligned_size as usize, Ordering::SeqCst) as u32;
@@ -124,8 +123,13 @@ impl UniformDataPool {
         if end <= self.size_per_frame {
             Some((
                 unsafe {
-                    (self.mapping as *mut u8).add(self.buffer_index * (self.size_per_frame as usize) + (base as usize))
-                } as *mut c_void,
+                    slice::from_raw_parts_mut(
+                        self.mapping
+                            .add(self.buffer_index * (self.size_per_frame as usize))
+                            .add(base as usize),
+                        size as usize,
+                    )
+                },
                 base,
             ))
         } else {
@@ -165,7 +169,7 @@ pub enum DescriptorSetLayoutBinding {
 pub enum DescriptorSetBindingData<'a> {
     SampledImage { image_view: vk::ImageView },
     StorageImage { image_view: vk::ImageView },
-    UniformData { size: u32, writer: &'a dyn Fn(*mut c_void) },
+    UniformData { size: u32, writer: &'a dyn Fn(&mut [u8]) },
     StorageBuffer { buffer: vk::Buffer },
     AccelerationStructure { accel: vk::AccelerationStructureKHR },
 }
@@ -457,18 +461,18 @@ impl DescriptorPool {
                         });
                     } else {
                         // write uniform data to the stack
-                        let size = *size;
+                        let size = *size as usize;
                         let data_ptr = inline_uniform_data.as_mut_ptr().wrapping_add(inline_uniform_data.len());
-                        if inline_uniform_data.len() + (size as usize) > inline_uniform_data.capacity() {
+                        if inline_uniform_data.len() + size > inline_uniform_data.capacity() {
                             panic!("not enough space to write inline uniform data");
                         }
                         unsafe {
-                            inline_uniform_data.set_len(inline_uniform_data.len() + (size as usize));
+                            inline_uniform_data.set_len(inline_uniform_data.len() + size);
                         }
-                        writer(data_ptr as *mut _);
+                        writer(unsafe { slice::from_raw_parts_mut(data_ptr, size) });
 
                         inline_writes.push(vk::WriteDescriptorSetInlineUniformBlockEXT {
-                            data_size: size,
+                            data_size: size as u32,
                             p_data: data_ptr as *const _,
                             ..Default::default()
                         });
@@ -476,9 +480,9 @@ impl DescriptorPool {
                         writes.push(vk::WriteDescriptorSet {
                             dst_set: Some(descriptor_set),
                             dst_binding: i as u32,
-                            descriptor_count: size,
+                            descriptor_count: size as u32,
                             descriptor_type: vk::DescriptorType::INLINE_UNIFORM_BLOCK_EXT,
-                            p_next: inline_writes.last().unwrap() as *const _ as *const c_void,
+                            p_next: inline_writes.last().unwrap() as *const _ as *const _,
                             ..Default::default()
                         });
                     }
@@ -511,7 +515,7 @@ impl DescriptorPool {
                         dst_binding: i as u32,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
-                        p_next: acceleration_structure_writes.last().unwrap() as *const _ as *const c_void,
+                        p_next: acceleration_structure_writes.last().unwrap() as *const _ as *const _,
                         ..Default::default()
                     });
                 }

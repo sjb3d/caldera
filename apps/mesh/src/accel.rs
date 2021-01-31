@@ -567,7 +567,7 @@ impl AccelInfo {
 
                 let trace_descriptor_set = self.trace_descriptor_set_layout.write(
                     &descriptor_pool,
-                    &|buf: &mut TraceData| {
+                    |buf: &mut TraceData| {
                         *buf = TraceData {
                             ray_origin: ray_origin.into(),
                             ray_vec_from_coord: *ray_vec_from_coord.as_array(),

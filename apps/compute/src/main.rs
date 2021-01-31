@@ -238,7 +238,7 @@ impl App {
 
                         let descriptor_set = trace_descriptor_set_layout.write(
                             &descriptor_pool,
-                            &|buf: &mut TraceData| {
+                            |buf: &mut TraceData| {
                                 let dims_rcp = Vec2::broadcast(1.0) / trace_image_size.as_float();
                                 *buf = TraceData {
                                     dims: trace_image_size.into(),
@@ -318,7 +318,7 @@ impl App {
 
                     let copy_descriptor_set = copy_descriptor_set_layout.write(
                         &descriptor_pool,
-                        &|buf| {
+                        |buf| {
                             *buf = CopyData {
                                 offset: ((trace_image_size.as_signed() - swap_size.as_signed()) / 2).into(),
                                 trace_dims: trace_image_size.into(),

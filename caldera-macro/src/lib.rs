@@ -146,10 +146,13 @@ impl Binding {
             BindingType::UniformData { ref ty, .. } => {
                 let writer = format_ident!("{}_writer", self.name);
                 (
-                    quote!(#writer: &dyn Fn(&mut #ty)),
+                    quote!(#writer: impl Fn(&mut #ty)),
                     quote!(DescriptorSetBindingData::UniformData {
                         size: ::std::mem::size_of::<#ty>() as u32,
-                        writer: unsafe { ::std::mem::transmute(#writer) },
+                        writer: &move |s: &mut [u8]| {
+                            let p = s.as_mut_ptr() as *mut #ty;
+                            #writer(unsafe { p.as_mut() }.unwrap());
+                        },
                     }),
                 )
             }

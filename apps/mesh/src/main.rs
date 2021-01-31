@@ -288,7 +288,7 @@ impl App {
                         Some(instance_buffer),
                     ) = (position_buffer, attribute_buffer, index_buffer, instance_buffer)
                     {
-                        let raster_descriptor_set = raster_descriptor_set_layout.write(&descriptor_pool, &|buf| {
+                        let raster_descriptor_set = raster_descriptor_set_layout.write(&descriptor_pool, |buf| {
                             *buf = RasterData {
                                 proj_from_world: *(proj_from_view * view_from_world.into_homogeneous_matrix())
                                     .as_array(),
