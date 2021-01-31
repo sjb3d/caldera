@@ -221,7 +221,7 @@ impl Context {
             if instance.extensions.core_version >= vk::Version::from_raw_parts(1, 1, 0) {
                 let mut rtpp = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
                 let mut properties2 = vk::PhysicalDeviceProperties2::builder().insert_next(&mut rtpp);
-                unsafe { instance.get_physical_device_properties2(physical_device, properties2.as_mut()) };
+                unsafe { instance.get_physical_device_properties2(physical_device, properties2.get_mut()) };
                 Some(ContextRayTracingPipelineProperties {
                     shader_group_handle_size: rtpp.shader_group_handle_size,
                     shader_group_base_alignment: rtpp.shader_group_base_alignment,

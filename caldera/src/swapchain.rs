@@ -55,12 +55,11 @@ impl Swapchain {
 
         let surface_format = surface_formats
             .iter()
-            .filter(|sf| match (sf.format, sf.color_space) {
+            .find(|sf| match (sf.format, sf.color_space) {
                 (vk::Format::R8G8B8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR) => true,
                 (vk::Format::B8G8R8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR) => true,
                 _ => false,
             })
-            .next()
             .cloned()
             .expect("no supported swapchain format found");
 

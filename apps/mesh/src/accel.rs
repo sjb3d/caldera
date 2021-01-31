@@ -299,7 +299,7 @@ struct ShaderBindingRegion {
 }
 
 impl ShaderBindingRegion {
-    fn into_device_address_region(&self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
+    fn into_device_address_region(self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
         vk::StridedDeviceAddressRegionKHR {
             device_address: base_device_address + self.offset as vk::DeviceSize,
             stride: self.stride as vk::DeviceSize,
@@ -524,6 +524,7 @@ impl AccelInfo {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn dispatch<'a>(
         &'a self,
         context: &'a Context,

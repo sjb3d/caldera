@@ -1,8 +1,8 @@
 use std::convert::TryInto;
 use std::ops::Mul;
-pub use ultraviolet::*;
 
-pub const PI: f32 = 3.1415926536;
+pub use std::f32::consts::PI;
+pub use ultraviolet::*;
 
 pub trait AsSigned {
     type Output;
@@ -193,7 +193,7 @@ impl Scale2Offset2 {
         Self { scale, offset }
     }
 
-    pub fn into_homogeneous_matrix(&self) -> Mat3 {
+    pub fn into_homogeneous_matrix(self) -> Mat3 {
         Mat3::new(
             Vec3::new(self.scale.x, 0.0, 0.0),
             Vec3::new(0.0, self.scale.y, 0.0),

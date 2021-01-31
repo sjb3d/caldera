@@ -11,7 +11,6 @@ use crate::swapchain::*;
 use imgui::im_str;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use spark::{vk, Device};
-use spark_imgui;
 use std::slice;
 use std::sync::Arc;
 use std::time::Instant;
@@ -62,6 +61,7 @@ pub fn dispatch_helper(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_helper(
     device: &Device,
     pipeline_cache: &PipelineCache,

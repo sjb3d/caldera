@@ -3,7 +3,6 @@ use arrayvec::ArrayVec;
 use imgui::Ui;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use spark::{vk, Builder, Device};
-use spark_imgui;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs::File;
@@ -193,6 +192,7 @@ enum RayTracingShaderGroup {
     },
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum PipelineCacheKey {
     Compute {

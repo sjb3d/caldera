@@ -172,6 +172,7 @@ impl TriangleMeshBuilder {
     }
 }
 
+#[allow(clippy::excessive_precision)]
 pub fn create_cornell_box_scene() -> Scene {
     let mut scene = Scene::default();
 

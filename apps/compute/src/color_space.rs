@@ -4,6 +4,7 @@ fn lerp_mat3(a: &Mat3, b: &Mat3, t: f32) -> Mat3 {
     (*a) * (1.0 - t) + (*b) * t
 }
 
+#[allow(clippy::excessive_precision)]
 pub fn derive_matrices() {
     // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
     let xyz_from_rec709 = Mat3::new(

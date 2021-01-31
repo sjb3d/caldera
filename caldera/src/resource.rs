@@ -6,7 +6,7 @@ pub(crate) struct Generation(num::NonZeroU16);
 
 impl Generation {
     pub(crate) fn advance(&mut self) {
-        self.0 = num::NonZeroU16::new(self.0.get().wrapping_add(1)).unwrap_or(Self::first_generation())
+        self.0 = num::NonZeroU16::new(self.0.get().wrapping_add(1)).unwrap_or_else(Self::first_generation)
     }
 
     pub(crate) fn first_generation() -> num::NonZeroU16 {
