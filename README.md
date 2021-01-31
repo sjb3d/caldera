@@ -32,7 +32,7 @@ make && cargo run --bin <app_name>
 A simple path tracer in a compute shader, also for tinkering with:
 
 * [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) implemented in [pmj](https://github.com/sjb3d/pmj)
-  * Several sequences are generated into a texture at startup and used tiled over the image
+  * Several sequences are generated at startup, then indexed by hashing the pixel coordinate and ray depth
 * Wide colour gamut in the [ACEScg](https://en.wikipedia.org/wiki/Academy_Color_Encoding_System) colour space, transformed to sRGB/Rec709 using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
   * There is code to re-derive the colour space conversion matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/apps/compute/src/color_space.rs), but the tonemap curve fit is used as-is
 

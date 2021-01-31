@@ -19,9 +19,9 @@ layout(set = 0, binding = 1, r32f) uniform restrict image2D g_result_r;
 layout(set = 0, binding = 2, r32f) uniform restrict image2D g_result_g;
 layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_b;
 
-layout(set = 0, binding = 4, rg16ui) uniform restrict readonly uimage2DArray g_samples;
+layout(set = 0, binding = 4, rg16ui) uniform restrict readonly uimage2D g_samples;
 
-#define SAMPLE_TILE_SIZE        64
+#define SEQUENCE_COUNT        4096
 
 void sample_camera(
     const vec2 film_uv,
@@ -88,14 +88,11 @@ bool intersect_sphere(
 
 vec2 rand_u01(uvec2 pixel_coord, uint ray_index, uint sample_index)
 {
-    // for each ray, randomly offset within the tile
-    // TODO: also randomly flip?
-    const uint seq_hash = hash(ray_index);
-    const uvec2 tile_coord = uvec2(
-        (pixel_coord.x + seq_hash) & (SAMPLE_TILE_SIZE - 1),
-        (pixel_coord.y + (seq_hash >> 8)) & (SAMPLE_TILE_SIZE - 1)
-    );
-    return (imageLoad(g_samples, ivec3(tile_coord, sample_index)).xy + .5f)/65536.f;
+    // hash the pixel coordinate and ray index to pick a sequence
+    const uint seq_hash = hash((ray_index << 20) | (pixel_coord.y << 10) | pixel_coord.x);
+    const ivec2 sample_coord = ivec2(sample_index, seq_hash & (SEQUENCE_COUNT - 1));
+    const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
+    return (vec2(sample_bits) + .5f)/65536.f;
 }
 
 vec3 perp(vec3 u)
@@ -179,7 +176,7 @@ void main()
     const uint max_ray_count = 4;
     for (uint sample_index = 0; sample_index < sample_count; ++sample_index) {
         const uint seq_sample_index = sample_count*g_trace.pass_index + sample_index;
-        const vec2 film_rand_u01 = rand_u01(pixel_coord, max_ray_count, seq_sample_index);
+        const vec2 film_rand_u01 = rand_u01(pixel_coord, 0, seq_sample_index);
         const vec2 film_uv = (vec2(pixel_coord) + film_rand_u01)*g_trace.dims_rcp;
 
         vec3 ray_origin, ray_dir;
@@ -242,7 +239,7 @@ void main()
                 -dot(ray_dir, normal));
 
             // sample GGX
-            const vec2 ray_rand_u01 = rand_u01(pixel_coord, ray_index, seq_sample_index);
+            const vec2 ray_rand_u01 = rand_u01(pixel_coord, 1 + ray_index, seq_sample_index);
             const vec3 h = sample_ggx_vndf(out_dir, alpha, ray_rand_u01);
             const vec3 in_dir = reflect(-out_dir, h);
 

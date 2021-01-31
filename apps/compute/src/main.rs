@@ -73,6 +73,7 @@ struct App {
 }
 
 impl App {
+    const SEQUENCE_COUNT: u32 = 4096;
     const SAMPLES_PER_SEQUENCE: u32 = 256;
     const MAX_PASS_COUNT: u32 = Self::SAMPLES_PER_SEQUENCE / 4;
 
@@ -91,10 +92,7 @@ impl App {
 
         let sample_image = base.systems.resource_loader.create_image();
         base.systems.resource_loader.async_load(move |allocator| {
-            const TILE_SIZE: u32 = 64;
-            const PIXEL_COUNT: usize = (TILE_SIZE * TILE_SIZE) as usize;
-
-            let sequences: Vec<Vec<_>> = (0..PIXEL_COUNT)
+            let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
                 .into_par_iter()
                 .map(|i| {
                     let mut rng = SmallRng::seed_from_u64(i as u64);
@@ -103,26 +101,21 @@ impl App {
                 .collect();
 
             let desc = ImageDesc::new_2d(
-                TILE_SIZE,
-                TILE_SIZE,
+                Self::SAMPLES_PER_SEQUENCE,
+                Self::SEQUENCE_COUNT,
                 vk::Format::R16G16_UINT,
                 vk::ImageAspectFlags::COLOR,
-            )
-            .with_layer_count(Self::SAMPLES_PER_SEQUENCE as u32);
-
+            );
             let mut writer = allocator
                 .map_image(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
                 .unwrap();
 
-            for sample_index in 0..Self::SAMPLES_PER_SEQUENCE {
-                for sequence_index in 0..PIXEL_COUNT {
-                    let sample = sequences[sequence_index][sample_index as usize];
-                    let pixel = SamplePixel {
-                        x: sample.x_bits(16) as u16,
-                        y: sample.y_bits(16) as u16,
-                    };
-                    writer.write_all(pixel.as_byte_slice());
-                }
+            for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
+                let pixel = SamplePixel {
+                    x: sample.x_bits(16) as u16,
+                    y: sample.y_bits(16) as u16,
+                };
+                writer.write_all(pixel.as_byte_slice());
             }
         });
 
