@@ -16,6 +16,26 @@ use winit::{
     window::WindowBuilder,
 };
 
+pub struct QuadLight {
+    pub transform: Isometry3,
+    pub size: Vec2,
+    pub emission: Vec3,
+}
+
+#[repr(C)]
+struct PathTraceData {
+    ray_origin: [f32; 3],
+    ray_vec_from_coord: [f32; 9],
+    world_from_light: [f32; 12],
+    light_size_ws: [f32; 2],
+}
+
+descriptor_set_layout!(PathTraceDescriptorSetLayout {
+    data: UniformData<PathTraceData>,
+    accel: AccelerationStructure,
+    output: StorageImage,
+});
+
 descriptor_set_layout!(CopyDescriptorSetLayout { ids: StorageImage });
 
 struct ViewDrag {
@@ -54,6 +74,9 @@ impl ViewDrag {
 struct App {
     context: Arc<Context>,
 
+    path_trace_pipeline_layout: vk::PipelineLayout,
+    path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
+
     copy_descriptor_set_layout: CopyDescriptorSetLayout,
     copy_pipeline_layout: vk::PipelineLayout,
 
@@ -69,6 +92,10 @@ impl App {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
+        let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let path_trace_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
+
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
         let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
 
@@ -76,7 +103,7 @@ impl App {
         let accel = SceneAccel::new(
             scene,
             &context,
-            &mut base.systems.descriptor_set_layout_cache,
+            path_trace_pipeline_layout,
             &base.systems.pipeline_cache,
             &mut base.systems.resource_loader,
         );
@@ -101,6 +128,8 @@ impl App {
 
         Self {
             context: Arc::clone(&context),
+            path_trace_descriptor_set_layout,
+            path_trace_pipeline_layout,
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             accel,
@@ -192,16 +221,71 @@ impl App {
             ImageUsage::empty(),
         );
 
-        let trace_image = self.accel.trace(
-            &base.context,
-            &base.systems.resource_loader,
-            &mut schedule,
-            &base.systems.descriptor_pool,
-            &swap_extent,
-            ray_origin,
-            ray_vec_from_coord,
-            self.light.as_ref(),
-        );
+        let trace_image = if self.accel.is_ready(&base.systems.resource_loader) {
+            let trace_image_desc = ImageDesc::new_2d(
+                swap_extent.width,
+                swap_extent.height,
+                vk::Format::R32_UINT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let trace_image = schedule.describe_image(&trace_image_desc);
+
+            let top_level_accel = self.accel.top_level_accel().unwrap();
+
+            schedule.add_compute(
+                command_name!("trace"),
+                |params| {
+                    self.accel.declare_parameters(params);
+                    params.add_image(trace_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                },
+                {
+                    let descriptor_pool = &base.systems.descriptor_pool;
+                    let resource_loader = &base.systems.resource_loader;
+                    let path_trace_descriptor_set_layout = &self.path_trace_descriptor_set_layout;
+                    let path_trace_pipeline_layout = self.path_trace_pipeline_layout;
+                    let accel = &self.accel;
+                    let light = self.light.as_ref();
+                    move |params, cmd| {
+                        let trace_image_view = params.get_image_view(trace_image);
+
+                        let path_trace_descriptor_set = path_trace_descriptor_set_layout.write(
+                            descriptor_pool,
+                            |buf: &mut PathTraceData| {
+                                *buf = PathTraceData {
+                                    ray_origin: ray_origin.into(),
+                                    ray_vec_from_coord: *ray_vec_from_coord.as_array(),
+                                    world_from_light: light
+                                        .map(|light| light.transform)
+                                        .unwrap_or_else(Isometry3::identity)
+                                        .into_homogeneous_matrix()
+                                        .into_transform()
+                                        .as_array(),
+                                    light_size_ws: light
+                                        .map(|light| light.size)
+                                        .unwrap_or_else(|| Vec2::broadcast(1.0))
+                                        .into(),
+                                }
+                            },
+                            top_level_accel,
+                            trace_image_view,
+                        );
+
+                        accel.emit_trace(
+                            cmd,
+                            resource_loader,
+                            path_trace_pipeline_layout,
+                            path_trace_descriptor_set,
+                            swap_extent.width,
+                            swap_extent.height,
+                        );
+                    }
+                },
+            );
+
+            Some(trace_image)
+        } else {
+            None
+        };
 
         let main_sample_count = vk::SampleCountFlags::N1;
         let main_render_state = RenderState::new(swap_image, &[0f32, 0f32, 0f32, 0f32]);

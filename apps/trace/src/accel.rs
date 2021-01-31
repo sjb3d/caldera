@@ -1,6 +1,5 @@
 use crate::scene::*;
 use caldera::*;
-use caldera_macro::descriptor_set_layout;
 use half::f16;
 use spark::{vk, Builder};
 use std::sync::Arc;
@@ -13,14 +12,6 @@ struct PositionData([f32; 3]);
 struct IndexData([u32; 3]);
 
 #[repr(C)]
-struct PathTraceData {
-    ray_origin: [f32; 3],
-    ray_vec_from_coord: [f32; 9],
-    world_from_light: [f32; 12],
-    light_size_ws: [f32; 2],
-}
-
-#[repr(C)]
 struct HitRecordData {
     index_buffer_address: u64,
     position_buffer_address: u64,
@@ -28,18 +19,6 @@ struct HitRecordData {
 }
 
 unsafe impl AsByteSlice for HitRecordData {}
-
-pub struct QuadLight {
-    pub transform: Isometry3,
-    pub size: Vec2,
-    pub emission: Vec3,
-}
-
-descriptor_set_layout!(DebugDescriptorSetLayout {
-    data: UniformData<PathTraceData>,
-    accel: AccelerationStructure,
-    output: StorageImage,
-});
 
 struct TriangleMeshData {
     index_buffer: StaticBufferHandle,
@@ -94,7 +73,7 @@ struct ShaderBindingRegion {
 }
 
 impl ShaderBindingRegion {
-    fn into_device_address_region(&self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
+    fn into_device_address_region(self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
         vk::StridedDeviceAddressRegionKHR {
             device_address: base_device_address + self.offset as vk::DeviceSize,
             stride: self.stride as vk::DeviceSize,
@@ -113,8 +92,6 @@ struct ShaderBindingTable {
 pub struct SceneAccel {
     shared: Arc<SceneShared>,
     context: Arc<Context>,
-    path_trace_descriptor_set_layout: DebugDescriptorSetLayout,
-    path_trace_pipeline_layout: vk::PipelineLayout,
     path_trace_pipeline: vk::Pipeline,
     geometry_data: Vec<Option<TriangleMeshData>>,
     shader_binding_table: Option<ShaderBindingTable>,
@@ -182,7 +159,7 @@ impl SceneAccel {
     pub fn new(
         scene: Scene,
         context: &Arc<Context>,
-        descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
+        path_trace_pipeline_layout: vk::PipelineLayout,
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
     ) -> Self {
@@ -190,10 +167,6 @@ impl SceneAccel {
         let shared = Arc::new(SceneShared { scene, clusters });
 
         // make pipeline
-        let path_trace_descriptor_set_layout = DebugDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let path_trace_pipeline_layout =
-            descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
-
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(
             &[
                 RayTracingShaderGroupDesc::Raygen("trace/path_trace.rgen.spv"),
@@ -277,8 +250,6 @@ impl SceneAccel {
         Self {
             shared,
             context: Arc::clone(&context),
-            path_trace_descriptor_set_layout,
-            path_trace_pipeline_layout,
             path_trace_pipeline,
             geometry_data,
             shader_binding_table: None,
@@ -794,111 +765,81 @@ impl SceneAccel {
         &self.shared.scene
     }
 
-    pub fn trace<'a>(
-        &'a self,
-        context: &'a Context,
+    pub fn is_ready(&self, resource_loader: &ResourceLoader) -> bool {
+        self.top_level_accel.is_some()
+            && self
+                .shader_binding_table
+                .as_ref()
+                .map(|table| resource_loader.get_buffer(table.buffer).is_some())
+                .unwrap_or(false)
+    }
+
+    pub fn top_level_accel(&self) -> Option<vk::AccelerationStructureKHR> {
+        self.top_level_accel.as_ref().map(|top_level| top_level.accel)
+    }
+
+    pub fn declare_parameters(&self, params: &mut RenderParameterDeclaration) {
+        for bottom_level_accel in self.cluster_accel.iter() {
+            params.add_buffer(
+                bottom_level_accel.buffer,
+                BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+            );
+        }
+        if let Some(top_level) = self.top_level_accel.as_ref() {
+            params.add_buffer(top_level.buffer, BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE);
+        }
+    }
+
+    pub fn emit_trace(
+        &self,
+        cmd: vk::CommandBuffer,
         resource_loader: &ResourceLoader,
-        schedule: &mut RenderSchedule<'a>,
-        descriptor_pool: &'a DescriptorPool,
-        swap_extent: &'a vk::Extent2D,
-        ray_origin: Vec3,
-        ray_vec_from_coord: Mat3,
-        light: Option<&'a QuadLight>,
-    ) -> Option<ImageHandle> {
-        let top_level_accel = self.top_level_accel.as_ref()?;
-        let shader_binding_table = self.shader_binding_table.as_ref()?;
-        let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_table.buffer)?;
+        path_trace_pipeline_layout: vk::PipelineLayout,
+        path_trace_descriptor_set: vk::DescriptorSet,
+        width: u32,
+        height: u32,
+    ) {
+        let device = &self.context.device;
 
-        let shader_binding_table_address = unsafe {
-            context
-                .device
-                .get_buffer_device_address_helper(shader_binding_table_buffer)
-        };
+        let shader_binding_table = self.shader_binding_table.as_ref().unwrap();
+        let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_table.buffer).unwrap();
+        let shader_binding_table_address =
+            unsafe { device.get_buffer_device_address_helper(shader_binding_table_buffer) };
 
-        let output_desc = ImageDesc::new_2d(
-            swap_extent.width,
-            swap_extent.height,
-            vk::Format::R32_UINT,
-            vk::ImageAspectFlags::COLOR,
-        );
-        let output_image = schedule.describe_image(&output_desc);
+        unsafe {
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::RAY_TRACING_KHR, self.path_trace_pipeline);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::RAY_TRACING_KHR,
+                path_trace_pipeline_layout,
+                0,
+                slice::from_ref(&path_trace_descriptor_set),
+                &[],
+            );
+        }
 
-        schedule.add_compute(
-            command_name!("trace"),
-            |params| {
-                for bottom_level_accel in self.cluster_accel.iter() {
-                    params.add_buffer(
-                        bottom_level_accel.buffer,
-                        BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
-                    );
-                }
-                params.add_buffer(top_level_accel.buffer, BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE);
-                params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-            },
-            move |params, cmd| {
-                let output_image_view = params.get_image_view(output_image);
-
-                let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
-                    &descriptor_pool,
-                    &|buf: &mut PathTraceData| {
-                        *buf = PathTraceData {
-                            ray_origin: ray_origin.into(),
-                            ray_vec_from_coord: *ray_vec_from_coord.as_array(),
-                            world_from_light: light
-                                .map(|light| light.transform)
-                                .unwrap_or(Isometry3::identity())
-                                .into_homogeneous_matrix()
-                                .into_transform()
-                                .as_array(),
-                            light_size_ws: light.map(|light| light.size).unwrap_or(Vec2::broadcast(1.0)).into(),
-                        }
-                    },
-                    top_level_accel.accel,
-                    output_image_view,
-                );
-
-                unsafe {
-                    context.device.cmd_bind_pipeline(
-                        cmd,
-                        vk::PipelineBindPoint::RAY_TRACING_KHR,
-                        self.path_trace_pipeline,
-                    );
-                    context.device.cmd_bind_descriptor_sets(
-                        cmd,
-                        vk::PipelineBindPoint::RAY_TRACING_KHR,
-                        self.path_trace_pipeline_layout,
-                        0,
-                        slice::from_ref(&path_trace_descriptor_set),
-                        &[],
-                    );
-                }
-
-                let raygen_shader_binding_table = shader_binding_table
-                    .raygen_region
-                    .into_device_address_region(shader_binding_table_address);
-                let miss_shader_binding_table = shader_binding_table
-                    .miss_region
-                    .into_device_address_region(shader_binding_table_address);
-                let hit_shader_binding_table = shader_binding_table
-                    .hit_region
-                    .into_device_address_region(shader_binding_table_address);
-                let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
-                unsafe {
-                    context.device.cmd_trace_rays_khr(
-                        cmd,
-                        &raygen_shader_binding_table,
-                        &miss_shader_binding_table,
-                        &hit_shader_binding_table,
-                        &callable_shader_binding_table,
-                        swap_extent.width,
-                        swap_extent.height,
-                        1,
-                    );
-                }
-            },
-        );
-
-        Some(output_image)
+        let raygen_shader_binding_table = shader_binding_table
+            .raygen_region
+            .into_device_address_region(shader_binding_table_address);
+        let miss_shader_binding_table = shader_binding_table
+            .miss_region
+            .into_device_address_region(shader_binding_table_address);
+        let hit_shader_binding_table = shader_binding_table
+            .hit_region
+            .into_device_address_region(shader_binding_table_address);
+        let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
+        unsafe {
+            device.cmd_trace_rays_khr(
+                cmd,
+                &raygen_shader_binding_table,
+                &miss_shader_binding_table,
+                &hit_shader_binding_table,
+                &callable_shader_binding_table,
+                width,
+                height,
+                1,
+            );
+        }
     }
 }
 
