@@ -1,20 +1,4 @@
-
-float sum_elements(vec2 v)
-{
-    return v.x + v.y;
-}
-float sum_elements(vec3 v)
-{
-    return v.x + v.y + v.z;
-}
-
-vec2 copysign(vec2 x, vec2 s)
-{
-    const uvec2 x_bits = floatBitsToUint(x);
-    const uvec2 s_bits = floatBitsToUint(s);
-    const uvec2 y_bits = (x_bits & 0x7fffffff) | (s_bits & 0x80000000);
-    return uintBitsToFloat(y_bits);
-}
+#include "maths.glsl"
 
 // reference: "Survey of Efficient Representations for Independent Unit Vectors"
 // http://jcgt.org/published/0003/02/01/

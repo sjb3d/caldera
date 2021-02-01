@@ -7,14 +7,15 @@ struct ExtendPayload {
     uint flags_packed;
 };
 
-#define EXTEND_FLAGS_MAX_EXP_MASK   0x000000ff
-#define EXTEND_FLAGS_VALID_BIT      0x00000800
+#define EXTEND_FLAGS_MAX_EXP_MASK       0x000000ff
+#define EXTEND_FLAGS_HAS_SURFACE_BIT    0x00000100
+#define EXTEND_FLAGS_HAS_LIGHT_BIT      0x00000200
 
-#define EXTEND_HIT_SHADER_OFFSET    0
-#define EXTEND_MISS_SHADER_OFFSET   0
-#define EXTEND_PAYLOAD_INDEX        0
-#define EXTEND_PAYLOAD_READ(NAME)   layout(location = 0) rayPayloadEXT ExtendPayload NAME
-#define EXTEND_PAYLOAD_WRITE(NAME)  layout(location = 0) rayPayloadInEXT ExtendPayload NAME
+#define EXTEND_HIT_SHADER_OFFSET        0
+#define EXTEND_MISS_SHADER_OFFSET       0
+#define EXTEND_PAYLOAD_INDEX            0
+#define EXTEND_PAYLOAD_READ(NAME)       layout(location = 0) rayPayloadEXT ExtendPayload NAME
+#define EXTEND_PAYLOAD_WRITE(NAME)      layout(location = 0) rayPayloadInEXT ExtendPayload NAME
 
 struct OcclusionPayload {
     uint is_occluded;

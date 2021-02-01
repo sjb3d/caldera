@@ -1,4 +1,7 @@
-#define PI          3.1415926535f
+#ifndef INCLUDED_COMMON_SAMPLER
+#define INCLUDED_COMMON_SAMPLER
+
+#include "maths.glsl"
 
 uint hash(uint a)
 {
@@ -61,3 +64,5 @@ vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
     // transforming the normal back to the ellipsoid configuration
     return normalize(vec3(alpha.x*Nh.x, alpha.y*Nh.y, max(0.f, Nh.z)));
 }
+
+#endif

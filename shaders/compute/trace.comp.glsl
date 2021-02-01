@@ -5,8 +5,6 @@
 #include "color_space.glsl"
 #include "sampler.glsl"
 
-#define FLT_INF     uintBitsToFloat(0x7f800000U)
-
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(set = 0, binding = 0, scalar) uniform TraceData {
@@ -93,19 +91,6 @@ vec2 rand_u01(uvec2 pixel_coord, uint ray_index, uint sample_index)
     const ivec2 sample_coord = ivec2(sample_index, seq_hash & (SEQUENCE_COUNT - 1));
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
-}
-
-vec3 perp(vec3 u)
-{
-    vec3 a = abs(u);
-    vec3 v;
-    if (a.x <= a.y && a.x <= a.z)
-        v = vec3(0.f, -u.z, u.y);
-    else if (a.y <= a.x && a.y <= a.z)
-        v = vec3(-u.z, 0.f, u.x);
-    else
-        v = vec3(-u.y, u.x, 0.f);
-    return v;
 }
 
 float smith_lambda(vec3 v, vec2 alpha)

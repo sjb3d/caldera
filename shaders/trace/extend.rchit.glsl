@@ -60,6 +60,6 @@ void main()
     g_extend.reflectance_and_emission = g_record.reflectance_and_emission;
     g_extend.flags_packed
         = (max_exponent_packed & EXTEND_FLAGS_MAX_EXP_MASK)
-        | EXTEND_FLAGS_VALID_BIT
+        | EXTEND_FLAGS_HAS_SURFACE_BIT
         ;
 }

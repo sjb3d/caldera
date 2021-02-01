@@ -7,6 +7,9 @@ use caldera::*;
 use caldera_macro::descriptor_set_layout;
 use imgui::im_str;
 use imgui::{Key, MouseButton};
+use rand::prelude::*;
+use rand::rngs::SmallRng;
+use rayon::prelude::*;
 use spark::vk;
 use std::env;
 use std::sync::Arc;
@@ -16,6 +19,14 @@ use winit::{
     window::WindowBuilder,
 };
 
+#[repr(C)]
+struct SamplePixel {
+    x: u16,
+    y: u16,
+}
+
+unsafe impl AsByteSlice for SamplePixel {}
+
 pub struct QuadLight {
     pub transform: Isometry3,
     pub size: Vec2,
@@ -24,19 +35,27 @@ pub struct QuadLight {
 
 #[repr(C)]
 struct PathTraceData {
-    ray_origin: [f32; 3],
-    ray_vec_from_coord: [f32; 9],
+    world_from_camera: [f32; 12],
+    fov_size_at_unit_z: [f32; 2],
     world_from_light: [f32; 12],
     light_size_ws: [f32; 2],
+    light_emission: [f32; 3],
 }
 
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
     data: UniformData<PathTraceData>,
     accel: AccelerationStructure,
-    output: StorageImage,
+    samples: StorageImage,
+    result_r: StorageImage,
+    result_g: StorageImage,
+    result_b: StorageImage,
 });
 
-descriptor_set_layout!(CopyDescriptorSetLayout { ids: StorageImage });
+descriptor_set_layout!(CopyDescriptorSetLayout {
+    result_r: StorageImage,
+    result_g: StorageImage,
+    result_b: StorageImage,
+});
 
 struct ViewDrag {
     pub rotation: Rotor3,
@@ -51,11 +70,21 @@ impl ViewDrag {
         }
     }
 
-    fn update(&mut self, io: &imgui::Io, dir_from_coord: impl FnOnce(Vec2) -> Vec3) {
+    fn update(&mut self, io: &imgui::Io, fov_y: f32) {
         if io.want_capture_mouse {
             self.drag_start = None;
         } else {
-            let dir_now = dir_from_coord(Vec2::from(io.mouse_pos));
+            let display_size: Vec2 = io.display_size.into();
+            let aspect_ratio = (display_size.x as f32) / (display_size.y as f32);
+
+            let xy_from_st = Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * fov_y).tan(), Vec2::zero());
+            let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, -2.0), Vec2::new(1.0, 1.0));
+            let coord_from_uv = Scale2Offset2::new(display_size, Vec2::zero());
+            let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
+
+            let dir_now = (xy_from_coord * Vec2::from(io.mouse_pos))
+                .into_homogeneous_point()
+                .normalized();
             if io[MouseButton::Left] {
                 if let Some((rotation_start, dir_start)) = self.drag_start {
                     self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
@@ -80,14 +109,19 @@ struct App {
     copy_descriptor_set_layout: CopyDescriptorSetLayout,
     copy_pipeline_layout: vk::PipelineLayout,
 
+    sample_image: StaticImageHandle,
+
     accel: SceneAccel,
     camera_ref: CameraRef,
-    view_drag: ViewDrag,
-
     light: Option<QuadLight>,
+
+    view_drag: ViewDrag,
 }
 
 impl App {
+    const SEQUENCE_COUNT: u32 = 256;
+    const SAMPLES_PER_SEQUENCE: u32 = 256;
+
     fn new(base: &mut AppBase) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
@@ -98,6 +132,35 @@ impl App {
 
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
         let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
+
+        let sample_image = base.systems.resource_loader.create_image();
+        base.systems.resource_loader.async_load(move |allocator| {
+            let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
+                .into_par_iter()
+                .map(|i| {
+                    let mut rng = SmallRng::seed_from_u64(i as u64);
+                    pmj::generate(Self::SAMPLES_PER_SEQUENCE as usize, 4, &mut rng)
+                })
+                .collect();
+
+            let desc = ImageDesc::new_2d(
+                Self::SAMPLES_PER_SEQUENCE,
+                Self::SEQUENCE_COUNT,
+                vk::Format::R16G16_UINT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let mut writer = allocator
+                .map_image(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
+                .unwrap();
+
+            for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
+                let pixel = SamplePixel {
+                    x: sample.x_bits(16) as u16,
+                    y: sample.y_bits(16) as u16,
+                };
+                writer.write_all(pixel.as_byte_slice());
+            }
+        });
 
         let scene = create_cornell_box_scene();
         let accel = SceneAccel::new(
@@ -132,38 +195,25 @@ impl App {
             path_trace_pipeline_layout,
             copy_descriptor_set_layout,
             copy_pipeline_layout,
+            sample_image,
             accel,
             camera_ref,
-            view_drag: ViewDrag::new(rotation),
             light,
+            view_drag: ViewDrag::new(rotation),
         }
     }
 
     fn render(&mut self, base: &mut AppBase) {
         // TODO: move to an update function
-        let io = base.ui_context.io();
         let scene = self.accel.scene();
-        let camera = &scene.cameras[0];
-
-        let display_size: Vec2 = io.display_size.into();
-        let aspect_ratio = (display_size.x as f32) / (display_size.y as f32);
-
-        let xy_from_st = Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * camera.fov_y).tan(), Vec2::zero());
-        let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, -2.0), Vec2::new(1.0, 1.0));
-        let coord_from_uv = Scale2Offset2::new(display_size, Vec2::zero());
-        let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
-
-        self.view_drag.update(base.ui_context.io(), |p: Vec2| {
-            let v = xy_from_coord * p;
-            v.into_homogeneous_point().normalized()
-        });
-
-        let world_from_view = Isometry3::new(
+        let camera = scene.camera(self.camera_ref);
+        self.view_drag.update(base.ui_context.io(), camera.fov_y);
+        let world_from_camera = Isometry3::new(
             scene.transform(camera.transform_ref).0.translation,
             self.view_drag.rotation,
         );
-        let ray_origin = world_from_view.translation;
-        let ray_vec_from_coord = world_from_view.rotation.into_matrix() * xy_from_coord.into_homogeneous_matrix();
+        let display_size = Vec2::from(base.ui_context.io().display_size);
+        let fov_size_at_unit_z = camera.fov_y.tan() * Vec2::new(display_size.x / display_size.y, 1.0);
 
         // start render
         let ui = base.ui_context.frame();
@@ -221,14 +271,21 @@ impl App {
             ImageUsage::empty(),
         );
 
-        let trace_image = if self.accel.is_ready(&base.systems.resource_loader) {
+        let trace_images = if let (Some(sample_image_view), true) = (
+            base.systems.resource_loader.get_image_view(self.sample_image),
+            self.accel.is_ready(&base.systems.resource_loader),
+        ) {
             let trace_image_desc = ImageDesc::new_2d(
                 swap_extent.width,
                 swap_extent.height,
                 vk::Format::R32_UINT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let trace_image = schedule.describe_image(&trace_image_desc);
+            let trace_images = (
+                schedule.describe_image(&trace_image_desc),
+                schedule.describe_image(&trace_image_desc),
+                schedule.describe_image(&trace_image_desc),
+            );
 
             let top_level_accel = self.accel.top_level_accel().unwrap();
 
@@ -236,7 +293,9 @@ impl App {
                 command_name!("trace"),
                 |params| {
                     self.accel.declare_parameters(params);
-                    params.add_image(trace_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(trace_images.0, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(trace_images.1, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(trace_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
                 },
                 {
                     let descriptor_pool = &base.systems.descriptor_pool;
@@ -246,14 +305,21 @@ impl App {
                     let accel = &self.accel;
                     let light = self.light.as_ref();
                     move |params, cmd| {
-                        let trace_image_view = params.get_image_view(trace_image);
+                        let trace_image_views = (
+                            params.get_image_view(trace_images.0),
+                            params.get_image_view(trace_images.1),
+                            params.get_image_view(trace_images.2),
+                        );
 
                         let path_trace_descriptor_set = path_trace_descriptor_set_layout.write(
                             descriptor_pool,
                             |buf: &mut PathTraceData| {
                                 *buf = PathTraceData {
-                                    ray_origin: ray_origin.into(),
-                                    ray_vec_from_coord: *ray_vec_from_coord.as_array(),
+                                    world_from_camera: world_from_camera
+                                        .into_homogeneous_matrix()
+                                        .into_transform()
+                                        .as_array(),
+                                    fov_size_at_unit_z: fov_size_at_unit_z.into(),
                                     world_from_light: light
                                         .map(|light| light.transform)
                                         .unwrap_or_else(Isometry3::identity)
@@ -264,10 +330,14 @@ impl App {
                                         .map(|light| light.size)
                                         .unwrap_or_else(|| Vec2::broadcast(1.0))
                                         .into(),
+                                    light_emission: light.map(|light| light.emission).unwrap_or_else(Vec3::zero).into(),
                                 }
                             },
                             top_level_accel,
-                            trace_image_view,
+                            sample_image_view,
+                            trace_image_views.0,
+                            trace_image_views.1,
+                            trace_image_views.2,
                         );
 
                         accel.emit_trace(
@@ -282,7 +352,7 @@ impl App {
                 },
             );
 
-            Some(trace_image)
+            Some(trace_images)
         } else {
             None
         };
@@ -294,8 +364,10 @@ impl App {
             command_name!("main"),
             main_render_state,
             |params| {
-                if let Some(trace_image) = trace_image {
-                    params.add_image(trace_image, ImageUsage::FRAGMENT_STORAGE_READ);
+                if let Some(trace_images) = trace_images {
+                    params.add_image(trace_images.0, ImageUsage::FRAGMENT_STORAGE_READ);
+                    params.add_image(trace_images.1, ImageUsage::FRAGMENT_STORAGE_READ);
+                    params.add_image(trace_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
                 }
             },
             {
@@ -310,10 +382,19 @@ impl App {
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_extent);
 
-                    if let Some(trace_image) = trace_image {
-                        let trace_image_view = params.get_image_view(trace_image);
+                    if let Some(trace_images) = trace_images {
+                        let trace_image_views = (
+                            params.get_image_view(trace_images.0),
+                            params.get_image_view(trace_images.1),
+                            params.get_image_view(trace_images.2),
+                        );
 
-                        let copy_descriptor_set = copy_descriptor_set_layout.write(&descriptor_pool, trace_image_view);
+                        let copy_descriptor_set = copy_descriptor_set_layout.write(
+                            &descriptor_pool,
+                            trace_image_views.0,
+                            trace_image_views.1,
+                            trace_image_views.2,
+                        );
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
 

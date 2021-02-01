@@ -1438,6 +1438,9 @@ dependencies = [
  "caldera-macro",
  "half",
  "imgui",
+ "pmj",
+ "rand 0.7.3",
+ "rayon",
  "spark",
  "winit",
 ]
