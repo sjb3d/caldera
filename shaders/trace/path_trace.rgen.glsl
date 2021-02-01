@@ -7,6 +7,7 @@
 #include "payload.glsl"
 #include "normal_pack.glsl"
 #include "sampler.glsl"
+#include "color_space.glsl"
 
 layout(set = 0, binding = 0, scalar) uniform PathTraceData {
     mat4x3 world_from_camera;
@@ -54,7 +55,7 @@ float sample_lights(
     const vec3 target_from_light = target_position - light_position;
 
     const float light_facing_term = dot(target_from_light, light_normal);
-    light_emission = (light_facing_term > 0.f) ? g_data.light_emission : vec3(0.f);
+    light_emission = (light_facing_term > 0.f) ? acescg_from_rec709(g_data.light_emission) : vec3(0.f);
     light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
 
     const float target_facing_term = dot(target_from_light, target_normal);
@@ -70,7 +71,7 @@ float evaluate_hit_light(
     out vec3 light_emission,
     out float light_area_pdf)
 {
-    light_emission = g_data.light_emission;
+    light_emission = acescg_from_rec709(g_data.light_emission);
     light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
 
     const vec3 prev_from_light = prev_position - light_position;
@@ -170,7 +171,7 @@ void main()
         }
 
         // unpack the BRDF
-        const vec3 hit_reflectance = get_reflectance(g_extend.hit)/PI;
+        const vec3 hit_reflectance = acescg_from_rec709(get_reflectance(g_extend.hit))/PI;
 
         const vec3 hit_position = g_extend.position;
         const mat3 hit_basis = basis_from_z_axis(normalize(vec_from_oct32(g_extend.normal_oct32)));
