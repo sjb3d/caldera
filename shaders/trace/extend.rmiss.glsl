@@ -8,5 +8,5 @@ EXTEND_PAYLOAD_WRITE(g_extend);
 
 void main()
 {
-    g_extend.flags_packed = 0;
+    g_extend.hit = create_miss_data();
 }

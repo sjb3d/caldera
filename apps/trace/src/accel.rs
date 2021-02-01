@@ -1,6 +1,5 @@
 use crate::scene::*;
 use caldera::*;
-use half::f16;
 use spark::{vk, Builder};
 use std::sync::Arc;
 use std::{mem, slice};
@@ -15,7 +14,8 @@ struct IndexData([u32; 3]);
 struct HitRecordData {
     index_buffer_address: u64,
     position_buffer_address: u64,
-    reflectance_and_emission: [u16; 6],
+    reflectance: [f32; 3],
+    is_emissive: u32,
 }
 
 unsafe impl AsByteSlice for HitRecordData {}
@@ -381,19 +381,12 @@ impl SceneAccel {
                         let (index_buffer_address, position_buffer_address) =
                             geometry_record[instance.geometry_ref.0 as usize];
                         let shader = shared.scene.shader(instance.shader_ref);
-                        let to_f16_bits = |x| f16::from_f32(x).to_bits();
 
                         let extend_hit_record = HitRecordData {
                             index_buffer_address,
                             position_buffer_address,
-                            reflectance_and_emission: [
-                                to_f16_bits(shader.reflectance.x),
-                                to_f16_bits(shader.reflectance.y),
-                                to_f16_bits(shader.reflectance.z),
-                                to_f16_bits(shader.emission.x),
-                                to_f16_bits(shader.emission.y),
-                                to_f16_bits(shader.emission.z),
-                            ],
+                            reflectance: shader.reflectance.into(),
+                            is_emissive: if shader.is_emissive() { 1 } else { 0 },
                         };
 
                         let end_offset = writer.written() + hit_region.stride as usize;

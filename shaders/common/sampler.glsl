@@ -48,6 +48,11 @@ vec3 sample_hemisphere_cosine_weighted(vec2 u)
     return vec3(disc_pos, z);
 }
 
+float get_hemisphere_cosine_weighted_psa_pdf()
+{
+    return 1.f/PI;
+}
+
 vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
 {
     // transforming the view direction to the hemisphere configuration

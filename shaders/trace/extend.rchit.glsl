@@ -19,7 +19,8 @@ layout(buffer_reference, scalar) buffer PositionBuffer {
 layout(shaderRecordEXT, scalar) buffer ShaderRecordData {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
-    uvec3 reflectance_and_emission;
+    vec3 reflectance;
+    uint is_emissive;
 } g_record;
 
 hitAttributeEXT vec2 g_bary_coord;
@@ -50,16 +51,12 @@ void main()
 
     // estimate floating point number size for local and world space
     // TODO: handle scale
-    const vec3 max_offset = max(max(abs(p0), abs(p1)), abs(p2)) + abs(gl_ObjectToWorldEXT[3]);
-    int max_exponent = 0;
-    frexp(max_element(max_offset), max_exponent);
-    uint max_exponent_packed = uint(max_exponent + 128);
+    const float max_position_value = max_element(
+        max(max(abs(p0), abs(p1)), abs(p2))
+        + abs(gl_ObjectToWorldEXT[3])
+    );
 
     g_extend.position = hit_pos_ws;
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
-    g_extend.reflectance_and_emission = g_record.reflectance_and_emission;
-    g_extend.flags_packed
-        = (max_exponent_packed & EXTEND_FLAGS_MAX_EXP_MASK)
-        | EXTEND_FLAGS_HAS_SURFACE_BIT
-        ;
+    g_extend.hit = create_hit_data(g_record.reflectance, g_record.is_emissive != 0, max_position_value);
 }
