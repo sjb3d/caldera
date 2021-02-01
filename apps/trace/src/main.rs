@@ -179,7 +179,7 @@ impl App {
         });
 
         let result_images = {
-            let desc = ImageDesc::new_2d(512, 512, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let desc = ImageDesc::new_2d(1024, 1024, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let usage = ImageUsage::FRAGMENT_STORAGE_READ
                 | ImageUsage::RAY_TRACING_STORAGE_READ
                 | ImageUsage::RAY_TRACING_STORAGE_WRITE;
@@ -318,7 +318,7 @@ impl App {
             let result_image_desc = schedule.graph().get_image_desc(self.result_images.0).clone();
 
             let aspect_ratio = (result_image_desc.width as f32) / (result_image_desc.height as f32);
-            let fov_size_at_unit_z = fov_y.tan() * Vec2::new(aspect_ratio, 1.0);
+            let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
             schedule.add_compute(
                 command_name!("trace"),
@@ -501,7 +501,7 @@ fn main() {
 
     let window = WindowBuilder::new()
         .with_title("trace")
-        .with_inner_size(Size::Logical(LogicalSize::new(640.0, 640.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(1024.0, 1024.0)))
         .build(&event_loop)
         .unwrap();
 
