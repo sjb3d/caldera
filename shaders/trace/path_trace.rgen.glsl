@@ -53,7 +53,6 @@ float sample_lights(
     light_epsilon = ldexp(max_element(abs(g_data.world_from_light[3])) + max_element(abs(g_data.light_size_ws)), LOG2_EPSILON_FACTOR);
 
     const vec3 target_from_light = target_position - light_position;
-
     const float light_facing_term = dot(target_from_light, light_normal);
     light_emission = (light_facing_term > 0.f) ? acescg_from_rec709(g_data.light_emission) : vec3(0.f);
     light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
@@ -71,11 +70,11 @@ float evaluate_hit_light(
     out vec3 light_emission,
     out float light_area_pdf)
 {
-    light_emission = acescg_from_rec709(g_data.light_emission);
-    light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
-
     const vec3 prev_from_light = prev_position - light_position;
     const float light_facing_term = dot(prev_from_light, light_normal);
+    light_emission = (light_facing_term > 0.f) ? acescg_from_rec709(g_data.light_emission) : vec3(0.f);
+    light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
+
     const float prev_facing_term = dot(prev_from_light, prev_normal);
     const float distance_sq = dot(prev_from_light, prev_from_light);
     return abs(light_facing_term * prev_facing_term) / (distance_sq * distance_sq);
