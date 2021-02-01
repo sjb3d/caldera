@@ -14,6 +14,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceData {
     mat4x3 world_from_light;
     vec2 light_size_ws;
     vec3 light_emission;
+    uint sample_index;
 } g_data;
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, r16ui) uniform restrict readonly uimage2D g_samples;
@@ -21,7 +22,6 @@ layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_r;
 layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result_g;
 layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_b;
 
-#define SAMPLE_INDEX            0
 #define SEQUENCE_COUNT          256
 
 #define LOG2_EPSILON_FACTOR     (-18)
@@ -30,7 +30,7 @@ vec2 rand_u01(uint ray_index)
 {
     // hash the pixel coordinate and ray index to pick a sequence
     const uint seq_hash = hash((ray_index << 20) | (gl_LaunchIDEXT.y << 10) | gl_LaunchIDEXT.x);
-    const ivec2 sample_coord = ivec2(SAMPLE_INDEX, seq_hash & (SEQUENCE_COUNT - 1));
+    const ivec2 sample_coord = ivec2(g_data.sample_index, seq_hash & (SEQUENCE_COUNT - 1));
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
 }
@@ -120,7 +120,7 @@ void main()
     // trace a path from the camera
     vec3 result_sum = vec3(0.f);
     uint segment_index = 0;
-    const uint max_segment_count = 3;
+    const uint max_segment_count = 4;
     for (;;) {
         // extend the path using the sampled (incoming) direction
         traceRayEXT(
@@ -262,6 +262,11 @@ void main()
         }
     }
 
+    if (g_data.sample_index != 0) {
+        result_sum.r += imageLoad(g_result_r, ivec2(gl_LaunchIDEXT.xy)).x;
+        result_sum.g += imageLoad(g_result_g, ivec2(gl_LaunchIDEXT.xy)).x;
+        result_sum.b += imageLoad(g_result_b, ivec2(gl_LaunchIDEXT.xy)).x;
+    }
     imageStore(g_result_r, ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
     imageStore(g_result_g, ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
     imageStore(g_result_b, ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));

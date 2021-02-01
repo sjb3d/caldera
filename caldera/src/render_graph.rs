@@ -561,6 +561,10 @@ impl<'a> RenderSchedule<'a> {
         self.render_graph.create_buffer(desc, all_usage, allocator)
     }
 
+    pub fn graph(&self) -> &RenderGraph {
+        self.render_graph
+    }
+
     pub fn get_buffer_hack(&self, handle: BufferHandle) -> vk::Buffer {
         self.render_graph.buffers.get(handle.0).unwrap().buffer().unwrap().0
     }

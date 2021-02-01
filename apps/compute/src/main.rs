@@ -120,26 +120,18 @@ impl App {
         });
 
         let trace_images = {
-            let mut trace_image_alloc = {
-                let trace_image_size = Self::trace_image_size();
-                let render_graph = &mut base.systems.render_graph;
-                let global_allocator = &mut base.systems.global_allocator;
-                move || -> ImageHandle {
-                    render_graph.create_image(
-                        &ImageDesc::new_2d(
-                            trace_image_size.x,
-                            trace_image_size.y,
-                            vk::Format::R32_SFLOAT,
-                            vk::ImageAspectFlags::COLOR,
-                        ),
-                        ImageUsage::FRAGMENT_STORAGE_READ
-                            | ImageUsage::COMPUTE_STORAGE_READ
-                            | ImageUsage::COMPUTE_STORAGE_WRITE,
-                        global_allocator,
-                    )
-                }
-            };
-            (trace_image_alloc(), trace_image_alloc(), trace_image_alloc())
+            let size = Self::trace_image_size();
+            let desc = ImageDesc::new_2d(size.x, size.y, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let usage = ImageUsage::FRAGMENT_STORAGE_READ
+                | ImageUsage::COMPUTE_STORAGE_READ
+                | ImageUsage::COMPUTE_STORAGE_WRITE;
+            let render_graph = &mut base.systems.render_graph;
+            let global_allocator = &mut base.systems.global_allocator;
+            (
+                render_graph.create_image(&desc, usage, global_allocator),
+                render_graph.create_image(&desc, usage, global_allocator),
+                render_graph.create_image(&desc, usage, global_allocator),
+            )
         };
 
         Self {

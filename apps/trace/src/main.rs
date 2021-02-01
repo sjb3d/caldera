@@ -40,6 +40,12 @@ struct PathTraceData {
     world_from_light: [f32; 12],
     light_size_ws: [f32; 2],
     light_emission: [f32; 3],
+    sample_index: u32,
+}
+
+#[repr(C)]
+struct CopyData {
+    sample_scale: f32,
 }
 
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
@@ -52,6 +58,7 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
 });
 
 descriptor_set_layout!(CopyDescriptorSetLayout {
+    data: UniformData<CopyData>,
     result_r: StorageImage,
     result_g: StorageImage,
     result_b: StorageImage,
@@ -59,7 +66,7 @@ descriptor_set_layout!(CopyDescriptorSetLayout {
 
 struct ViewDrag {
     pub rotation: Rotor3,
-    drag_start: Option<(Rotor3, Vec3)>,
+    drag_start: Option<(Vec2, Rotor3, Vec3)>,
 }
 
 impl ViewDrag {
@@ -70,7 +77,8 @@ impl ViewDrag {
         }
     }
 
-    fn update(&mut self, io: &imgui::Io, fov_y: f32) {
+    fn update(&mut self, io: &imgui::Io, fov_y: f32) -> bool {
+        let mut was_updated = false;
         if io.want_capture_mouse {
             self.drag_start = None;
         } else {
@@ -82,21 +90,27 @@ impl ViewDrag {
             let coord_from_uv = Scale2Offset2::new(display_size, Vec2::zero());
             let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
 
-            let dir_now = (xy_from_coord * Vec2::from(io.mouse_pos))
-                .into_homogeneous_point()
-                .normalized();
+            let mouse_now = Vec2::from(io.mouse_pos);
+            let dir_now = (xy_from_coord * mouse_now).into_homogeneous_point().normalized();
             if io[MouseButton::Left] {
-                if let Some((rotation_start, dir_start)) = self.drag_start {
-                    self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
+                if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start {
+                    if (mouse_now - mouse_start).mag() > io.mouse_drag_threshold {
+                        self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
+                        was_updated = true;
+                    }
                 } else {
-                    self.drag_start = Some((self.rotation, dir_now));
+                    self.drag_start = Some((mouse_now, self.rotation, dir_now));
                 }
             } else {
-                if let Some((rotation_start, dir_start)) = self.drag_start.take() {
-                    self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
+                if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start.take() {
+                    if (mouse_now - mouse_start).mag() > io.mouse_drag_threshold {
+                        self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
+                        was_updated = true;
+                    }
                 }
             }
         }
+        was_updated
     }
 }
 
@@ -110,6 +124,8 @@ struct App {
     copy_pipeline_layout: vk::PipelineLayout,
 
     sample_image: StaticImageHandle,
+    result_images: (ImageHandle, ImageHandle, ImageHandle),
+    next_sample_index: u32,
 
     accel: SceneAccel,
     camera_ref: CameraRef,
@@ -162,6 +178,20 @@ impl App {
             }
         });
 
+        let result_images = {
+            let desc = ImageDesc::new_2d(512, 512, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let usage = ImageUsage::FRAGMENT_STORAGE_READ
+                | ImageUsage::RAY_TRACING_STORAGE_READ
+                | ImageUsage::RAY_TRACING_STORAGE_WRITE;
+            let render_graph = &mut base.systems.render_graph;
+            let global_allocator = &mut base.systems.global_allocator;
+            (
+                render_graph.create_image(&desc, usage, global_allocator),
+                render_graph.create_image(&desc, usage, global_allocator),
+                render_graph.create_image(&desc, usage, global_allocator),
+            )
+        };
+
         let scene = create_cornell_box_scene();
         let accel = SceneAccel::new(
             scene,
@@ -196,6 +226,8 @@ impl App {
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             sample_image,
+            result_images,
+            next_sample_index: 0,
             accel,
             camera_ref,
             light,
@@ -206,16 +238,7 @@ impl App {
     fn render(&mut self, base: &mut AppBase) {
         // TODO: move to an update function
         let scene = self.accel.scene();
-        let camera = scene.camera(self.camera_ref);
-        self.view_drag.update(base.ui_context.io(), camera.fov_y);
-        let world_from_camera = Isometry3::new(
-            scene.transform(camera.transform_ref).0.translation,
-            self.view_drag.rotation,
-        );
-        let display_size = Vec2::from(base.ui_context.io().display_size);
-        let fov_size_at_unit_z = camera.fov_y.tan() * Vec2::new(display_size.x / display_size.y, 1.0);
 
-        // start render
         let ui = base.ui_context.frame();
         if ui.is_key_pressed(ui.key_index(Key::Escape)) {
             base.exit_requested = true;
@@ -229,18 +252,32 @@ impl App {
                 let selected_camera_ref = &mut self.camera_ref;
                 let view_drag = &mut self.view_drag;
                 let light = self.light.as_ref();
+                let next_sample_index = &mut self.next_sample_index;
                 move || {
                     for camera_ref in accel.scene().camera_ref_iter() {
                         if ui.radio_button(&im_str!("Camera {}", camera_ref.0), selected_camera_ref, camera_ref) {
-                            let rotation = accel.scene().transform(camera.transform_ref).0.rotation;
+                            let camera = scene.camera(camera_ref);
+                            let rotation = scene.transform(camera.transform_ref).0.rotation;
                             *selected_camera_ref = camera_ref;
                             *view_drag = ViewDrag::new(rotation);
+                            *next_sample_index = 0;
                         }
                     }
                     ui.text(format!("Lights: {}", light.map_or(0, |_| 1)));
                 }
             });
 
+        let camera = scene.camera(self.camera_ref);
+        let fov_y = camera.fov_y;
+        if self.view_drag.update(ui.io(), fov_y) {
+            self.next_sample_index = 0;
+        }
+        let world_from_camera = Isometry3::new(
+            scene.transform(camera.transform_ref).0.translation,
+            self.view_drag.rotation,
+        );
+
+        // start render
         let cbar = base.systems.acquire_command_buffer();
         base.ui_renderer
             .begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
@@ -271,44 +308,49 @@ impl App {
             ImageUsage::empty(),
         );
 
-        let trace_images = if let (Some(sample_image_view), true) = (
+        let next_sample_index = if self.next_sample_index == Self::SAMPLES_PER_SEQUENCE {
+            self.next_sample_index
+        } else if let (Some(sample_image_view), true) = (
             base.systems.resource_loader.get_image_view(self.sample_image),
             self.accel.is_ready(&base.systems.resource_loader),
         ) {
-            let trace_image_desc = ImageDesc::new_2d(
-                swap_extent.width,
-                swap_extent.height,
-                vk::Format::R32_UINT,
-                vk::ImageAspectFlags::COLOR,
-            );
-            let trace_images = (
-                schedule.describe_image(&trace_image_desc),
-                schedule.describe_image(&trace_image_desc),
-                schedule.describe_image(&trace_image_desc),
-            );
-
             let top_level_accel = self.accel.top_level_accel().unwrap();
+            let result_image_desc = schedule.graph().get_image_desc(self.result_images.0).clone();
+
+            let aspect_ratio = (result_image_desc.width as f32) / (result_image_desc.height as f32);
+            let fov_size_at_unit_z = fov_y.tan() * Vec2::new(aspect_ratio, 1.0);
 
             schedule.add_compute(
                 command_name!("trace"),
                 |params| {
                     self.accel.declare_parameters(params);
-                    params.add_image(trace_images.0, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-                    params.add_image(trace_images.1, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-                    params.add_image(trace_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(
+                        self.result_images.0,
+                        ImageUsage::RAY_TRACING_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_WRITE,
+                    );
+                    params.add_image(
+                        self.result_images.1,
+                        ImageUsage::RAY_TRACING_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_WRITE,
+                    );
+                    params.add_image(
+                        self.result_images.2,
+                        ImageUsage::RAY_TRACING_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_WRITE,
+                    );
                 },
                 {
                     let descriptor_pool = &base.systems.descriptor_pool;
                     let resource_loader = &base.systems.resource_loader;
                     let path_trace_descriptor_set_layout = &self.path_trace_descriptor_set_layout;
                     let path_trace_pipeline_layout = self.path_trace_pipeline_layout;
+                    let result_images = &self.result_images;
+                    let next_sample_index = self.next_sample_index;
                     let accel = &self.accel;
                     let light = self.light.as_ref();
                     move |params, cmd| {
-                        let trace_image_views = (
-                            params.get_image_view(trace_images.0),
-                            params.get_image_view(trace_images.1),
-                            params.get_image_view(trace_images.2),
+                        let result_image_views = (
+                            params.get_image_view(result_images.0),
+                            params.get_image_view(result_images.1),
+                            params.get_image_view(result_images.2),
                         );
 
                         let path_trace_descriptor_set = path_trace_descriptor_set_layout.write(
@@ -331,13 +373,14 @@ impl App {
                                         .unwrap_or_else(|| Vec2::broadcast(1.0))
                                         .into(),
                                     light_emission: light.map(|light| light.emission).unwrap_or_else(Vec3::zero).into(),
+                                    sample_index: next_sample_index,
                                 }
                             },
                             top_level_accel,
                             sample_image_view,
-                            trace_image_views.0,
-                            trace_image_views.1,
-                            trace_image_views.2,
+                            result_image_views.0,
+                            result_image_views.1,
+                            result_image_views.2,
                         );
 
                         accel.emit_trace(
@@ -345,16 +388,16 @@ impl App {
                             resource_loader,
                             path_trace_pipeline_layout,
                             path_trace_descriptor_set,
-                            swap_extent.width,
-                            swap_extent.height,
+                            result_image_desc.width,
+                            result_image_desc.height,
                         );
                     }
                 },
             );
 
-            Some(trace_images)
+            self.next_sample_index + 1
         } else {
-            None
+            0
         };
 
         let main_sample_count = vk::SampleCountFlags::N1;
@@ -364,10 +407,10 @@ impl App {
             command_name!("main"),
             main_render_state,
             |params| {
-                if let Some(trace_images) = trace_images {
-                    params.add_image(trace_images.0, ImageUsage::FRAGMENT_STORAGE_READ);
-                    params.add_image(trace_images.1, ImageUsage::FRAGMENT_STORAGE_READ);
-                    params.add_image(trace_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
+                if next_sample_index != 0 {
+                    params.add_image(self.result_images.0, ImageUsage::FRAGMENT_STORAGE_READ);
+                    params.add_image(self.result_images.1, ImageUsage::FRAGMENT_STORAGE_READ);
+                    params.add_image(self.result_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
                 }
             },
             {
@@ -376,24 +419,30 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
                 let copy_pipeline_layout = self.copy_pipeline_layout;
+                let result_images = &self.result_images;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_extent);
 
-                    if let Some(trace_images) = trace_images {
-                        let trace_image_views = (
-                            params.get_image_view(trace_images.0),
-                            params.get_image_view(trace_images.1),
-                            params.get_image_view(trace_images.2),
+                    if next_sample_index != 0 {
+                        let result_image_views = (
+                            params.get_image_view(result_images.0),
+                            params.get_image_view(result_images.1),
+                            params.get_image_view(result_images.2),
                         );
 
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
                             &descriptor_pool,
-                            trace_image_views.0,
-                            trace_image_views.1,
-                            trace_image_views.2,
+                            |buf: &mut CopyData| {
+                                *buf = CopyData {
+                                    sample_scale: 1.0 / (next_sample_index as f32),
+                                }
+                            },
+                            result_image_views.0,
+                            result_image_views.1,
+                            result_image_views.2,
                         );
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
@@ -430,6 +479,8 @@ impl App {
 
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
         base.display.present(swap_vk_image, rendering_finished_semaphore);
+
+        self.next_sample_index = next_sample_index;
     }
 }
 
