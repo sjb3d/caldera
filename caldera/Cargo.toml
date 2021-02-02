@@ -10,10 +10,12 @@ caldera-macro = { path = "../caldera-macro" }
 arrayvec = "0.5"
 spark = { path = "../../spark/spark" }
 spark-imgui = { path = "../../spark/spark-imgui" }
-notify = "4"
+notify = "4.0"
 winit = "0.24"
 raw-window-handle = "0.3"
 imgui = "0.6.1"
 imgui-winit-support = "0.6"
-ultraviolet = { version = "0.6.1", features = ["int"] }
+#ultraviolet = { version = "0.7.5", features = ["int", "serde"] }
+ultraviolet = { path = "../../ultraviolet", features = ["int", "serde"] }
 bitvec = "0.20"
+serde = "1.0"

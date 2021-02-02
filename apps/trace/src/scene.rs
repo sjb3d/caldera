@@ -1,13 +1,16 @@
 use caldera::*;
+use serde::{Serialize, Deserialize};
 
-#[derive(Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Transform(pub Isometry3); // TODO: allow scale?
 
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Geometry {
     TriangleMesh { positions: Vec<Vec3>, indices: Vec<UVec3> },
     Quad { transform: Isometry3, size: Vec2 },
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Shader {
     pub reflectance: Vec3,
     pub emission: Vec3,
@@ -31,30 +34,32 @@ impl Shader {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Instance {
     pub transform_ref: TransformRef,
     pub geometry_ref: GeometryRef,
     pub shader_ref: ShaderRef,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Camera {
     pub transform_ref: TransformRef,
     pub fov_y: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TransformRef(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GeometryRef(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ShaderRef(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceRef(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CameraRef(pub u32);
 
 impl Instance {
@@ -67,7 +72,7 @@ impl Instance {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Scene {
     pub transforms: Vec<Transform>,
     pub geometries: Vec<Geometry>,
