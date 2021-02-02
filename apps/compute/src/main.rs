@@ -24,11 +24,11 @@ struct SamplePixel {
     y: u16,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 struct TraceData {
-    dims: [u32; 2],
-    dims_rcp: [f32; 2],
+    dims: UVec2,
+    dims_rcp: Vec2,
     pass_index: u32,
 }
 
@@ -40,11 +40,11 @@ descriptor_set_layout!(TraceDescriptorSetLayout {
     samples: StorageImage,
 });
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 struct CopyData {
-    offset: [i32; 2],
-    trace_dims: [u32; 2],
+    offset: IVec2,
+    trace_dims: UVec2,
     trace_scale: f32,
 }
 

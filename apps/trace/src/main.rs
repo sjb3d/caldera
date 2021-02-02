@@ -33,18 +33,19 @@ pub struct QuadLight {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct PathTraceData {
-    world_from_camera: [f32; 12],
-    fov_size_at_unit_z: [f32; 2],
-    world_from_light: [f32; 12],
-    light_size_ws: [f32; 2],
-    light_emission: [f32; 3],
+    world_from_camera: Transform3,
+    fov_size_at_unit_z: Vec2,
+    world_from_light: Transform3,
+    light_size_ws: Vec2,
+    light_emission: Vec3,
     sample_index: u32,
     max_segment_count: u32,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct CopyData {
     sample_scale: f32,
 }
@@ -363,22 +364,17 @@ impl App {
                             descriptor_pool,
                             |buf: &mut PathTraceData| {
                                 *buf = PathTraceData {
-                                    world_from_camera: world_from_camera
-                                        .into_homogeneous_matrix()
-                                        .into_transform()
-                                        .as_array(),
-                                    fov_size_at_unit_z: fov_size_at_unit_z.into(),
+                                    world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
+                                    fov_size_at_unit_z,
                                     world_from_light: light
                                         .map(|light| light.transform)
                                         .unwrap_or_else(Isometry3::identity)
                                         .into_homogeneous_matrix()
-                                        .into_transform()
-                                        .as_array(),
+                                        .into_transform(),
                                     light_size_ws: light
                                         .map(|light| light.size)
-                                        .unwrap_or_else(|| Vec2::broadcast(1.0))
-                                        .into(),
-                                    light_emission: light.map(|light| light.emission).unwrap_or_else(Vec3::zero).into(),
+                                        .unwrap_or_else(|| Vec2::broadcast(1.0)),
+                                    light_emission: light.map(|light| light.emission).unwrap_or_else(Vec3::zero),
                                     sample_index: next_sample_index,
                                     max_segment_count: max_bounces + 2,
                                 }

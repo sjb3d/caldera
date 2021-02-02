@@ -6,9 +6,10 @@ use std::sync::Arc;
 use std::{mem, slice};
 
 #[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct TraceData {
-    ray_origin: [f32; 3],
-    ray_vec_from_coord: [f32; 9],
+    ray_origin: Vec3,
+    ray_vec_from_coord: Mat3,
 }
 
 #[repr(C)]
@@ -576,8 +577,8 @@ impl AccelInfo {
                     &descriptor_pool,
                     |buf: &mut TraceData| {
                         *buf = TraceData {
-                            ray_origin: ray_origin.into(),
-                            ray_vec_from_coord: *ray_vec_from_coord.as_array(),
+                            ray_origin,
+                            ray_vec_from_coord,
                         }
                     },
                     top_level.accel,

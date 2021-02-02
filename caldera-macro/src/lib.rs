@@ -150,8 +150,7 @@ impl Binding {
                     quote!(DescriptorSetBindingData::UniformData {
                         size: ::std::mem::size_of::<#ty>() as u32,
                         writer: &move |s: &mut [u8]| {
-                            let p = s.as_mut_ptr() as *mut #ty;
-                            #writer(unsafe { p.as_mut() }.unwrap());
+                            #writer(bytemuck::from_bytes_mut(s));
                         },
                     }),
                 )

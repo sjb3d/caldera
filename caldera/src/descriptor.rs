@@ -1,6 +1,6 @@
 use crate::command_buffer::CommandBufferPool;
 use crate::context::Context;
-use arrayvec::ArrayVec;
+use arrayvec::{Array, ArrayVec};
 use imgui::{ProgressBar, Ui};
 use spark::{vk, Builder};
 use std::slice;
@@ -9,6 +9,21 @@ use std::sync::Arc;
 
 fn align_up(x: u32, alignment: u32) -> u32 {
     (x + alignment - 1) & !(alignment - 1)
+}
+
+#[repr(align(4))]
+struct AlignedArray<A: Array>(A);
+
+unsafe impl<A: Array> Array for AlignedArray<A> {
+    type Item = A::Item;
+    type Index = A::Index;
+    const CAPACITY: usize = A::CAPACITY;
+    fn as_slice(&self) -> &[Self::Item] {
+        self.0.as_slice()
+    }
+    fn as_mut_slice(&mut self) -> &mut [Self::Item] {
+        self.0.as_mut_slice()
+    }
 }
 
 struct UniformDataPool {
@@ -401,7 +416,7 @@ impl DescriptorPool {
         let mut image_info = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
         let mut writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
         let mut inline_writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
-        let mut inline_uniform_data = ArrayVec::<[u8; Self::MAX_UNIFORM_DATA_PER_SET]>::new();
+        let mut inline_uniform_data = ArrayVec::<AlignedArray<[u8; Self::MAX_UNIFORM_DATA_PER_SET]>>::new();
         let mut acceleration_structure_writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
 
         for (i, data) in data.iter().enumerate() {

@@ -39,6 +39,8 @@ impl DivRoundUp for UVec2 {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 pub struct Transform3 {
     pub cols: [Vec3; 4],
 }

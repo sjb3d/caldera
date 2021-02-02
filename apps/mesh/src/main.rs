@@ -4,6 +4,7 @@ use crate::loader::*;
 mod accel;
 use crate::accel::*;
 
+use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use imgui::im_str;
 use imgui::Key;
@@ -17,8 +18,9 @@ use winit::{
 };
 
 #[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct RasterData {
-    proj_from_world: [f32; 16],
+    proj_from_world: Mat4,
 }
 
 descriptor_set_layout!(RasterDescriptorSetLayout {
@@ -289,8 +291,7 @@ impl App {
                     {
                         let raster_descriptor_set = raster_descriptor_set_layout.write(&descriptor_pool, |buf| {
                             *buf = RasterData {
-                                proj_from_world: *(proj_from_view * view_from_world.into_homogeneous_matrix())
-                                    .as_array(),
+                                proj_from_world: proj_from_view * view_from_world.into_homogeneous_matrix(),
                             };
                         });
 
