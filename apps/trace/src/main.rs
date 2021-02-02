@@ -41,6 +41,7 @@ struct PathTraceData {
     light_size_ws: [f32; 2],
     light_emission: [f32; 3],
     sample_index: u32,
+    max_segment_count: u32,
 }
 
 #[repr(C)]
@@ -131,6 +132,7 @@ struct App {
     camera_ref: CameraRef,
     light: Option<QuadLight>,
 
+    max_bounces: u32,
     view_drag: ViewDrag,
 }
 
@@ -138,7 +140,7 @@ impl App {
     const SEQUENCE_COUNT: u32 = 256;
     const SAMPLES_PER_SEQUENCE: u32 = 256;
 
-    fn new(base: &mut AppBase) -> Self {
+    fn new(base: &mut AppBase, params: &AppParams) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
@@ -192,7 +194,9 @@ impl App {
             )
         };
 
-        let scene = create_cornell_box_scene();
+        let scene = match params.scene_desc {
+            SceneDesc::CornellBox { with_extra_instances } => create_cornell_box_scene(with_extra_instances),
+        };
         let accel = SceneAccel::new(
             scene,
             &context,
@@ -231,6 +235,7 @@ impl App {
             accel,
             camera_ref,
             light,
+            max_bounces: params.max_bounces,
             view_drag: ViewDrag::new(rotation),
         }
     }
@@ -346,6 +351,7 @@ impl App {
                     let next_sample_index = self.next_sample_index;
                     let accel = &self.accel;
                     let light = self.light.as_ref();
+                    let max_bounces = self.max_bounces;
                     move |params, cmd| {
                         let result_image_views = (
                             params.get_image_view(result_images.0),
@@ -374,6 +380,7 @@ impl App {
                                         .into(),
                                     light_emission: light.map(|light| light.emission).unwrap_or_else(Vec3::zero).into(),
                                     sample_index: next_sample_index,
+                                    max_segment_count: max_bounces + 2,
                                 }
                             },
                             top_level_accel,
@@ -484,16 +491,55 @@ impl App {
     }
 }
 
+enum SceneDesc {
+    CornellBox { with_extra_instances: bool },
+}
+
+struct AppParams {
+    max_bounces: u32,
+    scene_desc: SceneDesc,
+}
+
+impl Default for AppParams {
+    fn default() -> Self {
+        Self {
+            max_bounces: 2,
+            scene_desc: SceneDesc::CornellBox {
+                with_extra_instances: false,
+            },
+        }
+    }
+}
+
 fn main() {
-    let mut params = ContextParams {
+    let mut context_params = ContextParams {
         version: vk::Version::from_raw_parts(1, 1, 0), // Vulkan 1.1 needed for ray tracing
         allow_ray_tracing: true,
         ..Default::default()
     };
-    for arg in env::args().skip(1) {
-        let arg = arg.as_str();
-        if !params.parse_arg(arg) {
-            panic!("unknown argument {:?}", arg);
+    let mut app_params = AppParams::default();
+    {
+        let mut it = env::args().skip(1);
+        while let Some(arg) = it.next() {
+            match arg.as_str() {
+                "-b" => app_params.max_bounces = it.next().and_then(|s| s.as_str().parse::<u32>().ok()).unwrap(),
+                "-s" => {
+                    app_params.scene_desc = match it.next().unwrap().as_str() {
+                        "cornell" => SceneDesc::CornellBox {
+                            with_extra_instances: false,
+                        },
+                        "cornelli" => SceneDesc::CornellBox {
+                            with_extra_instances: true,
+                        },
+                        s => panic!("unknown scene {:?}", s),
+                    }
+                }
+                _ => {
+                    if !context_params.parse_arg(arg.as_str()) {
+                        panic!("unknown argument {:?}", arg);
+                    }
+                }
+            }
         }
     }
 
@@ -505,8 +551,8 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut base = AppBase::new(window, &params);
-    let app = App::new(&mut base);
+    let mut base = AppBase::new(window, &context_params);
+    let app = App::new(&mut base, &app_params);
 
     let mut apps = Some((base, app));
     event_loop.run(move |event, target, control_flow| {

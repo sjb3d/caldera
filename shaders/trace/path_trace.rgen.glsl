@@ -16,6 +16,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceData {
     vec2 light_size_ws;
     vec3 light_emission;
     uint sample_index;
+    uint max_segment_count;
 } g_data;
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, r16ui) uniform restrict readonly uimage2D g_samples;
@@ -120,7 +121,6 @@ void main()
     // trace a path from the camera
     vec3 result_sum = vec3(0.f);
     uint segment_index = 0;
-    const uint max_segment_count = 4;
     for (;;) {
         // extend the path using the sampled (incoming) direction
         traceRayEXT(
@@ -165,7 +165,7 @@ void main()
         if (!has_surface(g_extend.hit)) {
             break;
         }
-        if (segment_index == max_segment_count) {
+        if (segment_index >= g_data.max_segment_count) {
             break;
         }
 

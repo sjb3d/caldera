@@ -178,7 +178,7 @@ impl TriangleMeshBuilder {
 }
 
 #[allow(clippy::excessive_precision)]
-pub fn create_cornell_box_scene() -> Scene {
+pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
     let mut scene = Scene::default();
 
     let floor = scene.add_geometry(
@@ -339,8 +339,7 @@ pub fn create_cornell_box_scene() -> Scene {
         fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
     });
 
-    let add_extra_blocks = false;
-    if add_extra_blocks {
+    if with_extra_instances {
         let extra_transforms: Vec<_> = (1..10)
             .map(|i| {
                 let f = i as f32;
