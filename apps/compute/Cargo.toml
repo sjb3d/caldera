@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 caldera = { path = "../../caldera" }
 spark = { path = "../../../spark/spark" }
+bytemuck = { version = "1.5", features = ["derive"] }
 winit = "0.24"
 imgui = "0.6.1"
 pmj = { path = "../../../pmj/pmj" }

@@ -3,6 +3,7 @@ mod scene;
 
 use crate::accel::*;
 use crate::scene::*;
+use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use imgui::im_str;
 use imgui::{Key, MouseButton};
@@ -19,12 +20,11 @@ use winit::{
 };
 
 #[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct SamplePixel {
     x: u16,
     y: u16,
 }
-
-unsafe impl AsByteSlice for SamplePixel {}
 
 pub struct QuadLight {
     pub transform: Isometry3,
@@ -33,6 +33,7 @@ pub struct QuadLight {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct PathTraceData {
     world_from_camera: [f32; 12],
     fov_size_at_unit_z: [f32; 2],
@@ -173,7 +174,7 @@ impl App {
                     x: sample.x_bits(16) as u16,
                     y: sample.y_bits(16) as u16,
                 };
-                writer.write_all(pixel.as_byte_slice());
+                writer.write(&pixel);
             }
         });
 

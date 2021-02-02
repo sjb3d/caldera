@@ -1,5 +1,5 @@
 use caldera::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Transform(pub Isometry3); // TODO: allow scale?

@@ -5,14 +5,15 @@ use crate::context::*;
 use crate::heap::*;
 use crate::render_cache::*;
 use crate::resource::*;
+use bytemuck::Pod;
 use imgui::Ui;
 use spark::vk;
 use std::collections::VecDeque;
+use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
-use std::{mem, slice};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StaticBufferHandle(ResourceHandle);
@@ -425,16 +426,6 @@ impl Drop for ResourceLoader {
     }
 }
 
-pub unsafe trait AsByteSlice: Sized {
-    fn as_byte_slice(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self as *const Self as *const u8, mem::size_of::<Self>()) }
-    }
-}
-
-unsafe impl AsByteSlice for u16 {}
-unsafe impl AsByteSlice for u32 {}
-unsafe impl AsByteSlice for vk::AccelerationStructureInstanceKHR {}
-
 pub struct ResourceWriter<'a> {
     shared: Arc<ResourceLoaderShared>,
     mapping: &'a mut [u8],
@@ -442,12 +433,29 @@ pub struct ResourceWriter<'a> {
     transfer: ResourceStagingTransfer,
 }
 
+pub trait AsBytes {
+    fn as_bytes(&self) -> &[u8];
+}
+
+impl<T: Pod> AsBytes for T {
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+impl<T: Pod> AsBytes for [T] {
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+}
+
 impl<'a> ResourceWriter<'a> {
-    pub fn write_all(&mut self, src: &[u8]) {
+    pub fn write<T: AsBytes + ?Sized>(&mut self, pod: &T) {
+        let bytes = pod.as_bytes();
         let start = self.next;
-        let end = start + src.len();
-        self.mapping[start..end].copy_from_slice(src);
-        self.next += src.len();
+        let end = start + bytes.len();
+        self.mapping[start..end].copy_from_slice(bytes);
+        self.next += bytes.len();
     }
 
     pub fn written(&self) -> usize {

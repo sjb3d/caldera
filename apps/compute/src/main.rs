@@ -1,3 +1,4 @@
+use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use imgui::im_str;
 use imgui::{Drag, Key, Slider};
@@ -17,12 +18,11 @@ use winit::{
 mod color_space;
 
 #[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct SamplePixel {
     x: u16,
     y: u16,
 }
-
-unsafe impl AsByteSlice for SamplePixel {}
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -114,7 +114,7 @@ impl App {
                     x: sample.x_bits(16) as u16,
                     y: sample.y_bits(16) as u16,
                 };
-                writer.write_all(pixel.as_byte_slice());
+                writer.write(&pixel);
             }
         });
 

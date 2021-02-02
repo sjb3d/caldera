@@ -1,3 +1,4 @@
+use bytemuck::{Pod, Zeroable};
 use std::convert::TryInto;
 use std::ops::Mul;
 
@@ -73,6 +74,8 @@ impl IntoTransform for Mat4 {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 pub struct TransposedTransform3 {
     pub cols: [Vec4; 3],
 }

@@ -43,22 +43,9 @@ impl ply::PropertyAccess for PlyFace {
     }
 }
 
-#[repr(C)]
-pub struct PositionData {
-    pos: [f32; 3],
-}
-
-#[repr(C)]
-pub struct AttributeData {
-    normal: [f32; 3],
-}
-
-#[repr(C)]
-pub struct InstanceData {
-    matrix: [f32; 12],
-}
-
-unsafe impl AsByteSlice for InstanceData {}
+pub type PositionData = Vec3;
+pub type AttributeData = Vec3;
+pub type InstanceData = TransposedTransform3;
 
 #[derive(Clone, Copy)]
 pub struct MeshInfo {
@@ -125,7 +112,7 @@ impl MeshInfo {
         let mut max = Vec3::broadcast(-f32::MAX);
         for src in vertices.iter() {
             let v = src.pos;
-            writer.write_all(v.as_byte_slice());
+            writer.write(&v);
             min = min.min_by_component(v);
             max = max.max_by_component(v);
         }
@@ -145,7 +132,7 @@ impl MeshInfo {
             .unwrap();
         let mut normals = vec![Vec3::zero(); vertices.len()];
         for src in faces.iter() {
-            writer.write_all(src.indices.as_byte_slice());
+            writer.write(&src.indices);
             let v0 = vertices[src.indices[0] as usize].pos;
             let v1 = vertices[src.indices[1] as usize].pos;
             let v2 = vertices[src.indices[2] as usize].pos;
@@ -172,7 +159,7 @@ impl MeshInfo {
             )
             .unwrap();
         for src in normals.iter() {
-            writer.write_all(src.as_byte_slice());
+            writer.write(src);
         }
 
         let scale = 0.9 / (max - min).component_max();
@@ -191,10 +178,8 @@ impl MeshInfo {
             .map_buffer(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
             .unwrap();
         for src in self.instances.iter() {
-            let instance_data = InstanceData {
-                matrix: src.into_homogeneous_matrix().into_transposed_transform().as_array(),
-            };
-            writer.write_all(instance_data.as_byte_slice());
+            let instance_data = src.into_homogeneous_matrix().into_transposed_transform();
+            writer.write(&instance_data);
         }
     }
 }

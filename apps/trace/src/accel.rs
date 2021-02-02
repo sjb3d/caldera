@@ -1,24 +1,31 @@
 use crate::scene::*;
+use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use spark::{vk, Builder};
 use std::sync::Arc;
 use std::{mem, slice};
 
-#[repr(C)]
-struct PositionData([f32; 3]);
+type PositionData = Vec3;
+type IndexData = UVec3;
 
 #[repr(C)]
-struct IndexData([u32; 3]);
-
-#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct HitRecordData {
     index_buffer_address: u64,
     position_buffer_address: u64,
-    reflectance: [f32; 3],
+    reflectance: Vec3,
     is_emissive: u32,
 }
 
-unsafe impl AsByteSlice for HitRecordData {}
+// vk::AccelerationStructureInstanceKHR with Pod trait
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct AccelerationStructureInstance {
+    pub transform: TransposedTransform3,
+    pub instance_custom_index_and_mask: u32,
+    pub instance_shader_binding_table_record_offset_and_flags: u32,
+    pub acceleration_structure_reference: u64,
+}
 
 struct TriangleMeshData {
     index_buffer: StaticBufferHandle,
@@ -225,7 +232,7 @@ impl SceneAccel {
                         )
                         .unwrap();
                     for face in indices.iter() {
-                        writer.write_all(face.as_byte_slice());
+                        writer.write(face);
                     }
 
                     let position_buffer_desc = BufferDesc::new(positions.len() * mem::size_of::<PositionData>());
@@ -237,7 +244,7 @@ impl SceneAccel {
                         )
                         .unwrap();
                     for pos in positions.iter() {
-                        writer.write_all(pos.as_byte_slice());
+                        writer.write(pos);
                     }
                 }
             });
@@ -361,16 +368,16 @@ impl SceneAccel {
                     .unwrap();
 
                 assert_eq!(raygen_region.offset, 0);
-                writer.write_all(raygen_group_handle);
+                writer.write(raygen_group_handle);
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
                 {
                     let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write_all(extend_miss_group_handle);
+                    writer.write(extend_miss_group_handle);
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write_all(occlusion_miss_group_handle);
+                    writer.write(occlusion_miss_group_handle);
                     writer.write_zeros(end_offset - writer.written());
                 }
 
@@ -390,12 +397,12 @@ impl SceneAccel {
                         };
 
                         let end_offset = writer.written() + hit_region.stride as usize;
-                        writer.write_all(extend_hit_group_handle);
-                        writer.write_all(extend_hit_record.as_byte_slice());
+                        writer.write(extend_hit_group_handle);
+                        writer.write(&extend_hit_record);
                         writer.write_zeros(end_offset - writer.written());
 
                         let end_offset = writer.written() + hit_region.stride as usize;
-                        writer.write_all(occlusion_hit_group_handle);
+                        writer.write(occlusion_hit_group_handle);
                         writer.write_zeros(end_offset - writer.written());
                     }
                 }
@@ -569,7 +576,7 @@ impl SceneAccel {
             move |allocator| {
                 let count = shared.scene.instances.len();
 
-                let desc = BufferDesc::new(count * mem::size_of::<vk::AccelerationStructureInstanceKHR>());
+                let desc = BufferDesc::new(count * mem::size_of::<AccelerationStructureInstance>());
                 let mut writer = allocator
                     .map_buffer(instance_buffer, &desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
                     .unwrap();
@@ -581,19 +588,13 @@ impl SceneAccel {
                     for transform_ref in cluster.transform_refs.iter().cloned() {
                         let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
                         let transform = shared.scene.transform(transform_ref);
-                        let instance = vk::AccelerationStructureInstanceKHR {
-                            transform: vk::TransformMatrixKHR {
-                                matrix: transform
-                                    .0
-                                    .into_homogeneous_matrix()
-                                    .into_transposed_transform()
-                                    .as_array(),
-                            },
+                        let instance = AccelerationStructureInstance {
+                            transform: transform.0.into_homogeneous_matrix().into_transposed_transform(),
                             instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
                             instance_shader_binding_table_record_offset_and_flags: record_offset,
                             acceleration_structure_reference,
                         };
-                        writer.write_all(instance.as_byte_slice());
+                        writer.write(&instance);
                         record_offset += (cluster.elements.len() as u32) * Self::HIT_GROUP_COUNT_PER_INSTANCE;
                     }
                 }

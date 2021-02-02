@@ -1,4 +1,5 @@
 use crate::loader::*;
+use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use spark::vk;
 use std::sync::Arc;
@@ -11,18 +12,27 @@ struct TraceData {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct HitRecordData {
     index_buffer_address: u64,
     attribute_buffer_address: u64,
 }
-
-unsafe impl AsByteSlice for HitRecordData {}
 
 descriptor_set_layout!(TraceDescriptorSetLayout {
     trace: UniformData<TraceData>,
     accel: AccelerationStructure,
     output: StorageImage,
 });
+
+// vk::AccelerationStructureInstanceKHR with Pod trait
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct AccelerationStructureInstance {
+    pub transform: TransposedTransform3,
+    pub instance_custom_index_and_mask: u32,
+    pub instance_shader_binding_table_record_offset_and_flags: u32,
+    pub acceleration_structure_reference: u64,
+}
 
 struct AccelLevel {
     pub context: Arc<Context>,
@@ -443,14 +453,14 @@ impl AccelInfo {
                     .unwrap();
 
                 assert_eq!(shader_binding_raygen_region.offset, 0);
-                writer.write_all(raygen_group_handle);
+                writer.write(raygen_group_handle);
 
                 writer.write_zeros(shader_binding_miss_region.offset as usize - writer.written());
-                writer.write_all(miss_group_handle);
+                writer.write(miss_group_handle);
 
                 writer.write_zeros(shader_binding_hit_region.offset as usize - writer.written());
-                writer.write_all(hit_group_handle);
-                writer.write_all(hit_data.as_byte_slice());
+                writer.write(hit_group_handle);
+                writer.write(&hit_data);
             }
         });
 
@@ -476,15 +486,13 @@ impl AccelInfo {
                     .unwrap();
 
                 for src in instances.iter() {
-                    let instance = vk::AccelerationStructureInstanceKHR {
-                        transform: vk::TransformMatrixKHR {
-                            matrix: src.into_homogeneous_matrix().into_transposed_transform().as_array(),
-                        },
+                    let instance = AccelerationStructureInstance {
+                        transform: src.into_homogeneous_matrix().into_transposed_transform(),
                         instance_custom_index_and_mask: 0xff_00_00_00,
                         instance_shader_binding_table_record_offset_and_flags: 0,
                         acceleration_structure_reference: bottom_level_device_address,
                     };
-                    writer.write_all(instance.as_byte_slice());
+                    writer.write(&instance);
                 }
             }
         });
