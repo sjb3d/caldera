@@ -4,6 +4,8 @@ pub use crate::allocator::*;
 mod app_base;
 pub use crate::app_base::*;
 
+pub use caldera_macro::*;
+
 mod barrier;
 pub use crate::barrier::*;
 

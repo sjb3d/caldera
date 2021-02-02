@@ -1,6 +1,5 @@
 use crate::loader::*;
 use caldera::*;
-use caldera_macro::descriptor_set_layout;
 use spark::vk;
 use std::sync::Arc;
 use std::{mem, slice};

@@ -6,7 +6,6 @@ edition = "2018"
 publish = false
 
 [dependencies]
-caldera-macro = { path = "../../caldera-macro" }
 caldera = { path = "../../caldera" }
 spark = { path = "../../../spark/spark" }
 winit = "0.24"

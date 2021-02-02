@@ -4,7 +4,6 @@ mod scene;
 use crate::accel::*;
 use crate::scene::*;
 use caldera::*;
-use caldera_macro::descriptor_set_layout;
 use imgui::im_str;
 use imgui::{Key, MouseButton};
 use rand::prelude::*;

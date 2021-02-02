@@ -1,5 +1,4 @@
 use caldera::*;
-use caldera_macro::descriptor_set_layout;
 use imgui::im_str;
 use imgui::{Drag, Key, Slider};
 use rand::prelude::*;
