@@ -32,6 +32,15 @@ pub fn ap1_from_xyz_matrix() -> Mat3 {
     )
 }
 
+pub fn d65_from_e_matrix() -> Mat3 {
+    // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
+    Mat3::new(
+        Vec3::new(0.9531874, -0.0382467, 0.0026068),
+        Vec3::new(-0.0265906, 1.0288406, -0.0030332),
+        Vec3::new(0.0238731, 0.0094060, 1.0892565),
+    )
+}
+
 #[allow(clippy::excessive_precision)]
 pub fn derive_aces_fit_matrices() {
     let xyz_from_rec709 = xyz_from_rec709_matrix();

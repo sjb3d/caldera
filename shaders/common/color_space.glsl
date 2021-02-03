@@ -62,3 +62,32 @@ vec3 rec709_from_fit(vec3 col)
         +  col.y*vec3(-0.53108f,  1.10813f, -0.07276f)
         +  col.z*vec3(-0.07367f, -0.00605f,  1.07602f);
 }
+
+float linear_from_gamma(float x)
+{
+    const float lo = x/12.92f;
+    const float hi = pow((x + 0.055f)/1.055f, 2.4f);
+    return (x < 0.04045f) ? lo : hi;
+}
+vec3 linear_from_gamma(vec3 c)
+{
+    return vec3(
+        linear_from_gamma(c.x),
+        linear_from_gamma(c.y),
+        linear_from_gamma(c.z));
+}
+
+// reference: http://filmicworlds.com/blog/filmic-tonemapping-operators/
+float filmic_tone_map(float x)
+{
+    x = max(0.f, x - .004f);
+    x = (x*(6.2f*x + .5f)) / (x*(6.2f*x + 1.7f) + .06f);
+    return x;
+}
+vec3 filmic_tone_map(vec3 c)
+{
+    return vec3(
+        filmic_tone_map(c.x),
+        filmic_tone_map(c.y),
+        filmic_tone_map(c.z));
+}

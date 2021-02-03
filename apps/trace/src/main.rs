@@ -3,7 +3,7 @@ mod scene;
 
 use crate::accel::*;
 use crate::scene::*;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::im_str;
 use imgui::{Key, MouseButton};
@@ -42,12 +42,30 @@ struct PathTraceData {
     light_emission: Vec3,
     sample_index: u32,
     max_segment_count: u32,
+    render_color_space: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct CopyData {
     sample_scale: f32,
+    render_color_space: u32,
+    tone_map_method: u32,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
+enum RenderColorSpace {
+    Rec709 = 0,
+    ACEScg = 1,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
+enum ToneMapMethod {
+    None = 0,
+    FilmicSrgb = 1,
+    AcesFit = 2,
 }
 
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
@@ -133,6 +151,8 @@ struct App {
     camera_ref: CameraRef,
     light: Option<QuadLight>,
 
+    render_color_space: RenderColorSpace,
+    tone_map_method: ToneMapMethod,
     max_bounces: u32,
     view_drag: ViewDrag,
 }
@@ -236,6 +256,8 @@ impl App {
             accel,
             camera_ref,
             light,
+            render_color_space: RenderColorSpace::ACEScg,
+            tone_map_method: ToneMapMethod::AcesFit,
             max_bounces: params.max_bounces,
             view_drag: ViewDrag::new(rotation),
         }
@@ -243,8 +265,6 @@ impl App {
 
     fn render(&mut self, base: &mut AppBase) {
         // TODO: move to an update function
-        let scene = self.accel.scene();
-
         let ui = base.ui_context.frame();
         if ui.is_key_pressed(ui.key_index(Key::Escape)) {
             base.exit_requested = true;
@@ -253,26 +273,51 @@ impl App {
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
-                let ui = &ui;
-                let accel = &self.accel;
-                let selected_camera_ref = &mut self.camera_ref;
-                let view_drag = &mut self.view_drag;
-                let light = self.light.as_ref();
-                let next_sample_index = &mut self.next_sample_index;
-                move || {
-                    for camera_ref in accel.scene().camera_ref_iter() {
-                        if ui.radio_button(&im_str!("Camera {}", camera_ref.0), selected_camera_ref, camera_ref) {
+                || {
+                    let mut needs_reset = false;
+                    ui.text("Render Color Space:");
+                    needs_reset |= ui.radio_button(
+                        im_str!("Rec709 (sRGB primaries)"),
+                        &mut self.render_color_space,
+                        RenderColorSpace::Rec709,
+                    );
+                    needs_reset |= ui.radio_button(
+                        im_str!("ACEScg (AP1 primaries)"),
+                        &mut self.render_color_space,
+                        RenderColorSpace::ACEScg,
+                    );
+                    ui.text("Tone Map Method:");
+                    ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
+                    ui.radio_button(
+                        im_str!("Filmic sRGB"),
+                        &mut self.tone_map_method,
+                        ToneMapMethod::FilmicSrgb,
+                    );
+                    ui.radio_button(
+                        im_str!("ACES (fitted)"),
+                        &mut self.tone_map_method,
+                        ToneMapMethod::AcesFit,
+                    );
+                    ui.text("Cameras:");
+                    let scene = self.accel.scene();
+                    for camera_ref in scene.camera_ref_iter() {
+                        if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
                             let camera = scene.camera(camera_ref);
                             let rotation = scene.transform(camera.transform_ref).0.rotation;
-                            *selected_camera_ref = camera_ref;
-                            *view_drag = ViewDrag::new(rotation);
-                            *next_sample_index = 0;
+                            self.camera_ref = camera_ref;
+                            self.view_drag = ViewDrag::new(rotation);
+                            needs_reset = true;
                         }
                     }
-                    ui.text(format!("Lights: {}", light.map_or(0, |_| 1)));
+                    ui.text(format!("Lights: {}", self.light.as_ref().map_or(0, |_| 1)));
+
+                    if needs_reset {
+                        self.next_sample_index = 0;
+                    }
                 }
             });
 
+        let scene = self.accel.scene();
         let camera = scene.camera(self.camera_ref);
         let fov_y = camera.fov_y;
         if self.view_drag.update(ui.io(), fov_y) {
@@ -353,6 +398,7 @@ impl App {
                     let accel = &self.accel;
                     let light = self.light.as_ref();
                     let max_bounces = self.max_bounces;
+                    let render_color_space = self.render_color_space;
                     move |params, cmd| {
                         let result_image_views = (
                             params.get_image_view(result_images.0),
@@ -377,6 +423,7 @@ impl App {
                                     light_emission: light.map(|light| light.emission).unwrap_or_else(Vec3::zero),
                                     sample_index: next_sample_index,
                                     max_segment_count: max_bounces + 2,
+                                    render_color_space: render_color_space.into_integer(),
                                 }
                             },
                             top_level_accel,
@@ -426,6 +473,8 @@ impl App {
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
+                let render_color_space = self.render_color_space;
+                let tone_map_method = self.tone_map_method;
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_extent);
 
@@ -441,6 +490,8 @@ impl App {
                             |buf: &mut CopyData| {
                                 *buf = CopyData {
                                     sample_scale: 1.0 / (next_sample_index as f32),
+                                    render_color_space: render_color_space.into_integer(),
+                                    tone_map_method: tone_map_method.into_integer(),
                                 }
                             },
                             result_image_views.0,

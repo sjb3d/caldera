@@ -17,7 +17,12 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceData {
     vec3 light_emission;
     uint sample_index;
     uint max_segment_count;
+    uint render_color_space;
 } g_data;
+
+#define RENDER_COLOR_SPACE_REC709   0
+#define RENDER_COLOR_SPACE_ACESCG   1
+
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, r16ui) uniform restrict readonly uimage2D g_samples;
 layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_r;
@@ -27,6 +32,15 @@ layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_b;
 #define SEQUENCE_COUNT          256
 
 #define LOG2_EPSILON_FACTOR     (-18)
+
+vec3 sample_from_rec709(vec3 c)
+{
+    switch (g_data.render_color_space) {
+        default:
+        case RENDER_COLOR_SPACE_REC709: return c;
+        case RENDER_COLOR_SPACE_ACESCG: return acescg_from_rec709(c);
+    }
+}
 
 vec2 rand_u01(uint ray_index)
 {
@@ -55,7 +69,7 @@ float sample_lights(
 
     const vec3 target_from_light = target_position - light_position;
     const float light_facing_term = dot(target_from_light, light_normal);
-    light_emission = (light_facing_term > 0.f) ? acescg_from_rec709(g_data.light_emission) : vec3(0.f);
+    light_emission = (light_facing_term > 0.f) ? sample_from_rec709(g_data.light_emission) : vec3(0.f);
     light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
 
     const float target_facing_term = dot(target_from_light, target_normal);
@@ -73,7 +87,7 @@ float evaluate_hit_light(
 {
     const vec3 prev_from_light = prev_position - light_position;
     const float light_facing_term = dot(prev_from_light, light_normal);
-    light_emission = (light_facing_term > 0.f) ? acescg_from_rec709(g_data.light_emission) : vec3(0.f);
+    light_emission = (light_facing_term > 0.f) ? sample_from_rec709(g_data.light_emission) : vec3(0.f);
     light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
 
     const float prev_facing_term = dot(prev_from_light, prev_normal);
@@ -170,7 +184,7 @@ void main()
         }
 
         // unpack the BRDF
-        const vec3 hit_reflectance = acescg_from_rec709(get_reflectance(g_extend.hit))/PI;
+        const vec3 hit_reflectance = sample_from_rec709(get_reflectance(g_extend.hit))/PI;
 
         const vec3 hit_position = g_extend.position;
         const mat3 hit_basis = basis_from_z_axis(normalize(vec_from_oct32(g_extend.normal_oct32)));

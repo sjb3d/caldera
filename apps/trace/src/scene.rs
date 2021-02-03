@@ -19,13 +19,13 @@ pub struct Shader {
 impl Shader {
     pub fn new_lambertian(reflectance: Vec3) -> Self {
         Self {
-            reflectance,
+            reflectance: reflectance.clamped(Vec3::zero(), Vec3::one()),
             emission: Vec3::zero(),
         }
     }
 
     pub fn with_emission(mut self, emission: Vec3) -> Self {
-        self.emission = emission;
+        self.emission = emission.max_by_component(Vec3::zero());
         self
     }
 
@@ -177,6 +177,98 @@ impl TriangleMeshBuilder {
     }
 }
 
+struct SampledSpectrum {
+    wavelength: f32,
+    value: f32,
+}
+macro_rules! spectrum_samples {
+    ($(($w:literal, $v:literal)),+) => { [ $( SampledSpectrum { wavelength: $w, value: $v, }, )+ ] }
+}
+
+// reference: https://www.graphics.cornell.edu/online/box/data.html
+#[rustfmt::skip]
+const CORNELL_BOX_WHITE_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+    (400.0, 0.343),(404.0, 0.445),(408.0, 0.551),(412.0, 0.624),(416.0, 0.665),
+    (420.0, 0.687),(424.0, 0.708),(428.0, 0.723),(432.0, 0.715),(436.0, 0.710),
+    (440.0, 0.745),(444.0, 0.758),(448.0, 0.739),(452.0, 0.767),(456.0, 0.777),
+    (460.0, 0.765),(464.0, 0.751),(468.0, 0.745),(472.0, 0.748),(476.0, 0.729),
+    (480.0, 0.745),(484.0, 0.757),(488.0, 0.753),(492.0, 0.750),(496.0, 0.746),
+    (500.0, 0.747),(504.0, 0.735),(508.0, 0.732),(512.0, 0.739),(516.0, 0.734),
+    (520.0, 0.725),(524.0, 0.721),(528.0, 0.733),(532.0, 0.725),(536.0, 0.732),
+    (540.0, 0.743),(544.0, 0.744),(548.0, 0.748),(552.0, 0.728),(556.0, 0.716),
+    (560.0, 0.733),(564.0, 0.726),(568.0, 0.713),(572.0, 0.740),(576.0, 0.754),
+    (580.0, 0.764),(584.0, 0.752),(588.0, 0.736),(592.0, 0.734),(596.0, 0.741),
+    (600.0, 0.740),(604.0, 0.732),(608.0, 0.745),(612.0, 0.755),(616.0, 0.751),
+    (620.0, 0.744),(624.0, 0.731),(628.0, 0.733),(632.0, 0.744),(636.0, 0.731),
+    (640.0, 0.712),(644.0, 0.708),(648.0, 0.729),(652.0, 0.730),(656.0, 0.727),
+    (660.0, 0.707),(664.0, 0.703),(668.0, 0.729),(672.0, 0.750),(676.0, 0.760),
+    (680.0, 0.751),(684.0, 0.739),(688.0, 0.724),(692.0, 0.730),(696.0, 0.740),
+    (700.0, 0.737)
+);
+#[rustfmt::skip]
+const CORNELL_BOX_GREEN_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+    (400.0, 0.092),(404.0, 0.096),(408.0, 0.098),(412.0, 0.097),(416.0, 0.098),
+    (420.0, 0.095),(424.0, 0.095),(428.0, 0.097),(432.0, 0.095),(436.0, 0.094),
+    (440.0, 0.097),(444.0, 0.098),(448.0, 0.096),(452.0, 0.101),(456.0, 0.103),
+    (460.0, 0.104),(464.0, 0.107),(468.0, 0.109),(472.0, 0.112),(476.0, 0.115),
+    (480.0, 0.125),(484.0, 0.140),(488.0, 0.160),(492.0, 0.187),(496.0, 0.229),
+    (500.0, 0.285),(504.0, 0.343),(508.0, 0.390),(512.0, 0.435),(516.0, 0.464),
+    (520.0, 0.472),(524.0, 0.476),(528.0, 0.481),(532.0, 0.462),(536.0, 0.447),
+    (540.0, 0.441),(544.0, 0.426),(548.0, 0.406),(552.0, 0.373),(556.0, 0.347),
+    (560.0, 0.337),(564.0, 0.314),(568.0, 0.285),(572.0, 0.277),(576.0, 0.266),
+    (580.0, 0.250),(584.0, 0.230),(588.0, 0.207),(592.0, 0.186),(596.0, 0.171),
+    (600.0, 0.160),(604.0, 0.148),(608.0, 0.141),(612.0, 0.136),(616.0, 0.130),
+    (620.0, 0.126),(624.0, 0.123),(628.0, 0.121),(632.0, 0.122),(636.0, 0.119),
+    (640.0, 0.114),(644.0, 0.115),(648.0, 0.117),(652.0, 0.117),(656.0, 0.118),
+    (660.0, 0.120),(664.0, 0.122),(668.0, 0.128),(672.0, 0.132),(676.0, 0.139),
+    (680.0, 0.144),(684.0, 0.146),(688.0, 0.150),(692.0, 0.152),(696.0, 0.157),
+    (700.0, 0.159)
+);
+#[rustfmt::skip]
+const CORNELL_BOX_RED_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+    (400.0, 0.040),(404.0, 0.046),(408.0, 0.048),(412.0, 0.053),(416.0, 0.049),
+    (420.0, 0.050),(424.0, 0.053),(428.0, 0.055),(432.0, 0.057),(436.0, 0.056),
+    (440.0, 0.059),(444.0, 0.057),(448.0, 0.061),(452.0, 0.061),(456.0, 0.060),
+    (460.0, 0.062),(464.0, 0.062),(468.0, 0.062),(472.0, 0.061),(476.0, 0.062),
+    (480.0, 0.060),(484.0, 0.059),(488.0, 0.057),(492.0, 0.058),(496.0, 0.058),
+    (500.0, 0.058),(504.0, 0.056),(508.0, 0.055),(512.0, 0.056),(516.0, 0.059),
+    (520.0, 0.057),(524.0, 0.055),(528.0, 0.059),(532.0, 0.059),(536.0, 0.058),
+    (540.0, 0.059),(544.0, 0.061),(548.0, 0.061),(552.0, 0.063),(556.0, 0.063),
+    (560.0, 0.067),(564.0, 0.068),(568.0, 0.072),(572.0, 0.080),(576.0, 0.090),
+    (580.0, 0.099),(584.0, 0.124),(588.0, 0.154),(592.0, 0.192),(596.0, 0.255),
+    (600.0, 0.287),(604.0, 0.349),(608.0, 0.402),(612.0, 0.443),(616.0, 0.487),
+    (620.0, 0.513),(624.0, 0.558),(628.0, 0.584),(632.0, 0.620),(636.0, 0.606),
+    (640.0, 0.609),(644.0, 0.651),(648.0, 0.612),(652.0, 0.610),(656.0, 0.650),
+    (660.0, 0.638),(664.0, 0.627),(668.0, 0.620),(672.0, 0.630),(676.0, 0.628),
+    (680.0, 0.642),(684.0, 0.639),(688.0, 0.657),(692.0, 0.639),(696.0, 0.635),
+    (700.0, 0.642)
+);
+#[rustfmt::skip]
+const CORNELL_BOX_LIGHT_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+    (400.0,  0.0),
+    (500.0,  8.0),
+    (600.0, 15.6),
+    (700.0, 18.4),
+    (750.0,  0.0)
+);
+
+fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
+    let measure = |wavelength: f32| match samples
+        .binary_search_by_key(&wavelength.to_bits(), |sample| sample.wavelength.to_bits())
+    {
+        Ok(index) => samples[index].value,
+        Err(index) if 0 < index && index < samples.len() => {
+            let s1 = unsafe { samples.get_unchecked(index) };
+            let s0 = unsafe { samples.get_unchecked(index - 1) };
+            assert!(s0.wavelength < wavelength && wavelength < s1.wavelength);
+            let t = (wavelength - s0.wavelength) / (s1.wavelength - s0.wavelength);
+            s0.value * (1.0 - t) + s1.value * t
+        }
+        _ => 0.0,
+    };
+    xyz_from_spectrum(measure) / xyz_from_spectrum(|_| 1.0).y
+}
+
 #[allow(clippy::excessive_precision)]
 pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
     let mut scene = Scene::default();
@@ -300,20 +392,26 @@ pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
             .build(),
     );
 
-    let grey_shader = scene.add_shader(Shader::new_lambertian(Vec3::new(0.730, 0.735, 0.729)));
-    let red_shader = scene.add_shader(Shader::new_lambertian(Vec3::new(0.611, 0.058, 0.062)));
-    let green_shader = scene.add_shader(Shader::new_lambertian(Vec3::new(0.117, 0.449, 0.115)));
+    let rgb_from_xyz = xyz_from_rec709_matrix().inversed() * d65_from_e_matrix();
+    let white_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_WHITE_SAMPLES);
+    let red_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_RED_SAMPLES);
+    let green_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_GREEN_SAMPLES);
+
+    let white_shader = scene.add_shader(Shader::new_lambertian(dbg!(white_reflectance)));
+    let red_shader = scene.add_shader(Shader::new_lambertian(dbg!(red_reflectance)));
+    let green_shader = scene.add_shader(Shader::new_lambertian(dbg!(green_reflectance)));
 
     let identity = scene.add_transform(Transform::default());
 
-    scene.add_instance(Instance::new(identity, floor, grey_shader));
-    scene.add_instance(Instance::new(identity, ceiling, grey_shader));
-    scene.add_instance(Instance::new(identity, grey_wall, grey_shader));
+    scene.add_instance(Instance::new(identity, floor, white_shader));
+    scene.add_instance(Instance::new(identity, ceiling, white_shader));
+    scene.add_instance(Instance::new(identity, grey_wall, white_shader));
     scene.add_instance(Instance::new(identity, red_wall, red_shader));
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
-    scene.add_instance(Instance::new(identity, short_block, grey_shader));
-    scene.add_instance(Instance::new(identity, tall_block, grey_shader));
+    scene.add_instance(Instance::new(identity, short_block, white_shader));
+    scene.add_instance(Instance::new(identity, tall_block, white_shader));
 
+    let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
     let light_x0 = 0.213;
     let light_x1 = 0.343;
     let light_z0 = 0.227;
@@ -327,7 +425,7 @@ pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
         size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
     });
     let light_shader =
-        scene.add_shader(Shader::new_lambertian(Vec3::broadcast(0.78)).with_emission(Vec3::new(17.0, 11.8, 4.0)));
+        scene.add_shader(Shader::new_lambertian(Vec3::broadcast(0.78)).with_emission(dbg!(light_emission)));
     scene.add_instance(Instance::new(identity, light_geometry, light_shader));
 
     let camera_transform = scene.add_transform(Transform(Isometry3::new(
@@ -354,14 +452,14 @@ pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
             scene.add_instance(Instance::new(
                 extra,
                 tall_block,
-                if (i % 2) != 0 { green_shader } else { grey_shader },
+                if (i % 2) != 0 { green_shader } else { white_shader },
             ));
         }
         for (i, extra) in extra_transforms.iter().rev().cloned().enumerate() {
             scene.add_instance(Instance::new(
                 extra,
                 short_block,
-                if (i % 2) != 0 { red_shader } else { grey_shader },
+                if (i % 2) != 0 { red_shader } else { white_shader },
             ));
         }
     }

@@ -25,7 +25,7 @@ layout(set = 0, binding = 4, rg16ui) uniform restrict readonly uimage2D g_sample
 
 #define SEQUENCE_COUNT        4096
 
-vec3 render_space_color(vec3 c)
+vec3 sample_from_rec709(vec3 c)
 {
     switch (g_trace.render_color_space) {
         default:
@@ -195,12 +195,13 @@ void main()
                 float light_scale = 1.0f;
                 vec3 light_value;
                 if (((hit_bits.y >> 20) & 0x3) == ((hit_bits.x >> 21) & 0x3)) {
-                    light_value = render_space_color(light_scale*vec3(1.f, 1.f, .5f));
+                    light_value = light_scale*vec3(1.f, 1.f, .5f);
                 } else if (((hit_bits.y >> 20) & 0x3) == ((hit_bits.x >> 21) & 0x1)) {
-                    light_value = render_space_color(light_scale*vec3(1.f, .1f, .5f));
+                    light_value = light_scale*vec3(1.f, .1f, .5f);
                 } else {
-                    light_value = render_space_color(light_scale*vec3(.2f, .1f, .2f));
+                    light_value = light_scale*vec3(.2f, .1f, .2f);
                 }
+                light_value = sample_from_rec709(light_value);
                 sum += sample_value*light_value;
                 break;
             }
@@ -223,7 +224,7 @@ void main()
                     alpha *= 2.f;
                 }
             }
-            r0 = render_space_color(r0);
+            r0 = sample_from_rec709(r0);
 
             // make sampling basis
             const vec3 normal = normalize(gnv);

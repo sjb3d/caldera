@@ -43,6 +43,9 @@ pub use crate::render_graph::*;
 
 mod resource;
 
+mod spectrum;
+pub use crate::spectrum::*;
+
 mod swapchain;
 pub use crate::swapchain::*;
 

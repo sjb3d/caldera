@@ -25,21 +25,6 @@ layout(set = 0, binding = 1, r32f) uniform readonly image2D g_image_r;
 layout(set = 0, binding = 2, r32f) uniform readonly image2D g_image_g;
 layout(set = 0, binding = 3, r32f) uniform readonly image2D g_image_b;
 
-// reference: http://filmicworlds.com/blog/filmic-tonemapping-operators/
-float filmic_tone_map(float x)
-{
-    x = max(0.f, x - .004f);
-    x = (x*(6.2f*x + .5f)) / (x*(6.2f*x + 1.7f) + .06f);
-    return x;
-}
-vec3 filmic_tone_map(vec3 c)
-{
-    return vec3(
-        filmic_tone_map(c.x),
-        filmic_tone_map(c.y),
-        filmic_tone_map(c.z));
-}
-
 vec3 acescg_from_sample(vec3 c)
 {
     switch (g_copy.render_color_space) {
@@ -55,20 +40,6 @@ vec3 rec709_from_sample(vec3 c)
         case RENDER_COLOR_SPACE_REC709: return c;
         case RENDER_COLOR_SPACE_ACESCG: return rec709_from_acescg(c);
     }
-}
-
-float linear_from_gamma(float x)
-{
-    const float lo = x/12.92f;
-    const float hi = pow((x + 0.055f)/1.055f, 2.4f);
-    return (x < 0.04045f) ? lo : hi;
-}
-vec3 linear_from_gamma(vec3 c)
-{
-    return vec3(
-        linear_from_gamma(c.x),
-        linear_from_gamma(c.y),
-        linear_from_gamma(c.z));
 }
 
 vec3 tone_map_sample(vec3 c)
