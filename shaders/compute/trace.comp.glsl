@@ -11,7 +11,11 @@ layout(set = 0, binding = 0, scalar) uniform TraceData {
     uvec2 dims;
     vec2 dims_rcp;
     uint pass_index;
+    uint render_color_space;
 } g_trace;
+
+#define RENDER_COLOR_SPACE_REC709   0
+#define RENDER_COLOR_SPACE_ACESCG   1
 
 layout(set = 0, binding = 1, r32f) uniform restrict image2D g_result_r;
 layout(set = 0, binding = 2, r32f) uniform restrict image2D g_result_g;
@@ -20,6 +24,15 @@ layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_b;
 layout(set = 0, binding = 4, rg16ui) uniform restrict readonly uimage2D g_samples;
 
 #define SEQUENCE_COUNT        4096
+
+vec3 render_space_color(vec3 c)
+{
+    switch (g_trace.render_color_space) {
+        default:
+        case RENDER_COLOR_SPACE_REC709: return c;
+        case RENDER_COLOR_SPACE_ACESCG: return acescg_from_rec709(c);
+    }
+}
 
 void sample_camera(
     const vec2 film_uv,
@@ -179,14 +192,14 @@ void main()
 
             if (hit == HIT_LIGHT) {
                 const uvec2 hit_bits = floatBitsToUint(hit_pos.xy - vec2(4.f, 3.f));
-                float light_scale = 1.5f;
+                float light_scale = 1.0f;
                 vec3 light_value;
                 if (((hit_bits.y >> 20) & 0x3) == ((hit_bits.x >> 21) & 0x3)) {
-                    light_value = acescg_from_rec709(light_scale*vec3(1.f, 1.f, .5f));
+                    light_value = render_space_color(light_scale*vec3(1.f, 1.f, .5f));
                 } else if (((hit_bits.y >> 20) & 0x3) == ((hit_bits.x >> 21) & 0x1)) {
-                    light_value = acescg_from_rec709(light_scale*vec3(1.f, .1f, .5f));
+                    light_value = render_space_color(light_scale*vec3(1.f, .1f, .5f));
                 } else {
-                    light_value = acescg_from_rec709(light_scale*vec3(.2f, .1f, .2f));
+                    light_value = render_space_color(light_scale*vec3(.2f, .1f, .2f));
                 }
                 sum += sample_value*light_value;
                 break;
@@ -210,7 +223,7 @@ void main()
                     alpha *= 2.f;
                 }
             }
-            r0 = acescg_from_rec709(r0);
+            r0 = render_space_color(r0);
 
             // make sampling basis
             const vec3 normal = normalize(gnv);
