@@ -203,14 +203,14 @@ impl App {
                     &mut self.tone_map_method,
                     ToneMapMethod::AcesFit,
                 );
+                Drag::new(im_str!("Exposure"))
+                    .speed(0.05f32)
+                    .build(&ui, &mut self.log2_exposure_scale);
                 Slider::new(im_str!("Target Pass Count"))
                     .range(1..=Self::MAX_PASS_COUNT)
                     .build(&ui, &mut self.target_pass_count);
                 ui.text(format!("Passes: {}", self.next_pass_index));
                 needs_reset |= ui.button(im_str!("Reset"), [0.0, 0.0]);
-                Drag::new(im_str!("Exposure"))
-                    .speed(0.05f32)
-                    .build(&ui, &mut self.log2_exposure_scale);
 
                 if needs_reset {
                     self.next_pass_index = 0;

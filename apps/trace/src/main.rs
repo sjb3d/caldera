@@ -6,7 +6,7 @@ use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::im_str;
-use imgui::{Key, MouseButton};
+use imgui::{Drag, Key, MouseButton};
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
@@ -151,6 +151,7 @@ struct App {
     camera_ref: CameraRef,
     light: Option<QuadLight>,
 
+    log2_exposure_scale: f32,
     render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
     max_bounces: u32,
@@ -256,6 +257,7 @@ impl App {
             accel,
             camera_ref,
             light,
+            log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
             max_bounces: params.max_bounces,
@@ -298,6 +300,9 @@ impl App {
                         &mut self.tone_map_method,
                         ToneMapMethod::AcesFit,
                     );
+                    Drag::new(im_str!("Exposure"))
+                        .speed(0.05f32)
+                        .build(&ui, &mut self.log2_exposure_scale);
                     ui.text("Cameras:");
                     let scene = self.accel.scene();
                     for camera_ref in scene.camera_ref_iter() {
@@ -473,6 +478,7 @@ impl App {
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
+                let log2_exposure_scale = self.log2_exposure_scale;
                 let render_color_space = self.render_color_space;
                 let tone_map_method = self.tone_map_method;
                 move |params, cmd, render_pass| {
@@ -489,7 +495,7 @@ impl App {
                             &descriptor_pool,
                             |buf: &mut CopyData| {
                                 *buf = CopyData {
-                                    sample_scale: 1.0 / (next_sample_index as f32),
+                                    sample_scale: log2_exposure_scale.exp2() / (next_sample_index as f32),
                                     render_color_space: render_color_space.into_integer(),
                                     tone_map_method: tone_map_method.into_integer(),
                                 }
