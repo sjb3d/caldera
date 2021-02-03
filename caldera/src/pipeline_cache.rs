@@ -44,19 +44,19 @@ struct ShaderReloader {
 
 struct ShaderLoader {
     context: Arc<Context>,
-    path: PathBuf,
+    base_path: PathBuf,
     reloader: Option<ShaderReloader>,
-    current_shaders: HashMap<String, vk::ShaderModule>,
-    new_shaders: Arc<Mutex<HashMap<String, vk::ShaderModule>>>,
+    current_shaders: HashMap<PathBuf, vk::ShaderModule>,
+    new_shaders: Arc<Mutex<HashMap<PathBuf, vk::ShaderModule>>>,
 }
 
 impl ShaderLoader {
-    pub fn new<P: AsRef<Path>>(context: &Arc<Context>, path: P) -> Self {
-        let path = path.as_ref().to_path_buf();
+    pub fn new<P: AsRef<Path>>(context: &Arc<Context>, base_path: P) -> Self {
+        let base_path = base_path.as_ref().to_owned();
 
         let (tx, rx) = mpsc::channel();
         let mut watcher = notify::watcher(tx, Duration::from_millis(500)).unwrap();
-        watcher.watch(&path, RecursiveMode::NonRecursive).unwrap();
+        watcher.watch(&base_path, RecursiveMode::Recursive).unwrap();
 
         let current_shaders = HashMap::new();
         let new_shaders = Arc::new(Mutex::new(HashMap::new()));
@@ -64,18 +64,21 @@ impl ShaderLoader {
         let join_handle = thread::spawn({
             let context = Arc::clone(&context);
             let new_shaders = Arc::clone(&new_shaders);
-            let path = Clone::clone(&path);
+            let short_base_path = base_path.clone();
+            let full_base_path = base_path.canonicalize().unwrap();
             move || {
                 while let Ok(event) = rx.recv() {
                     if let DebouncedEvent::Create(path_buf)
                     | DebouncedEvent::Write(path_buf)
                     | DebouncedEvent::Rename(_, path_buf) = event
                     {
-                        if let Some(name) = path_buf.file_name().and_then(|os_str| os_str.to_str()) {
-                            if let Some(shader) = load_shader_module(&context.device, &path.join(name)) {
+                        if let Ok(relative_path) = path_buf.canonicalize().unwrap().strip_prefix(&full_base_path) {
+                            if let Some(shader) =
+                                load_shader_module(&context.device, &short_base_path.join(relative_path))
+                            {
                                 let mut new_shaders = new_shaders.lock().unwrap();
-                                new_shaders.insert(name.to_owned(), shader);
-                                println!("reloaded shader: {}", name);
+                                println!("reloaded shader: {:?}", relative_path);
+                                new_shaders.insert(relative_path.to_owned(), shader);
                             }
                         }
                     }
@@ -86,19 +89,20 @@ impl ShaderLoader {
 
         Self {
             context: Arc::clone(&context),
-            path,
+            base_path,
             reloader: Some(ShaderReloader { watcher, join_handle }),
             current_shaders,
             new_shaders,
         }
     }
 
-    pub fn get_shader(&self, name: &str) -> Option<vk::ShaderModule> {
-        self.current_shaders.get(name).copied().or_else(|| {
+    pub fn get_shader<P: AsRef<Path>>(&self, relative_path: P) -> Option<vk::ShaderModule> {
+        let relative_path = relative_path.as_ref();
+        self.current_shaders.get(relative_path).copied().or_else(|| {
             let mut new_shaders = self.new_shaders.lock().unwrap();
-            new_shaders.get(name).copied().or_else(|| {
-                load_shader_module(&self.context.device, &self.path.join(name)).map(|shader| {
-                    new_shaders.insert(name.to_owned(), shader);
+            new_shaders.get(relative_path).copied().or_else(|| {
+                load_shader_module(&self.context.device, &self.base_path.join(relative_path)).map(|shader| {
+                    new_shaders.insert(relative_path.to_owned(), shader);
                     shader
                 })
             })
