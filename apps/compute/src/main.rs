@@ -15,8 +15,6 @@ use winit::{
     window::{Fullscreen, WindowBuilder},
 };
 
-mod color_space;
-
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct SamplePixel {
@@ -411,7 +409,7 @@ fn main() {
         match arg {
             "-f" => is_fullscreen = true,
             "--test" => {
-                color_space::derive_matrices();
+                derive_aces_fit_matrices();
                 return;
             }
             _ => {

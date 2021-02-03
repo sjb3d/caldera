@@ -9,6 +9,9 @@ pub use caldera_macro::*;
 mod barrier;
 pub use crate::barrier::*;
 
+mod color_space;
+pub use crate::color_space::*;
+
 mod command_buffer;
 pub use crate::command_buffer::*;
 
