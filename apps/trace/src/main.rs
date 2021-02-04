@@ -1,4 +1,5 @@
 mod accel;
+mod parser;
 mod scene;
 
 use crate::accel::*;
@@ -218,8 +219,12 @@ impl App {
             )
         };
 
-        let scene = match params.scene_desc {
-            SceneDesc::CornellBox(ref variant) => create_cornell_box_scene(variant),
+        let scene = match &params.scene_desc {
+            SceneDesc::CornellBox(variant) => create_cornell_box_scene(variant),
+            SceneDesc::File(filename) => {
+                let contents = std::fs::read_to_string(filename.as_str()).unwrap();
+                parser::parse_scene(&contents)
+            }
         };
         let accel = SceneAccel::new(
             scene,
@@ -566,6 +571,7 @@ impl App {
 
 enum SceneDesc {
     CornellBox(CornellBoxVariant),
+    File(String),
 }
 
 struct AppParams {
@@ -602,6 +608,9 @@ fn main() {
                         "cornell-domelight" => SceneDesc::CornellBox(CornellBoxVariant::DomeLight),
                         s => panic!("unknown scene {:?}", s),
                     }
+                }
+                "-f" => {
+                    app_params.scene_desc = SceneDesc::File(it.next().unwrap());
                 }
                 _ => {
                     if !context_params.parse_arg(arg.as_str()) {

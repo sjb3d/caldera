@@ -32,20 +32,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
-name = "bincode"
-version = "1.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f30d3a39baa26f9651f17b375061f3233dde33424a8b72b0dbe93a68a0bc896d"
-dependencies = [
- "byteorder",
- "serde",
-]
-
-[[package]]
 name = "bitflags"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
+
+[[package]]
+name = "bitvec"
+version = "0.19.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7ba35e9565969edb811639dbebfe34edc0368e472c5018474c8eb2543397f81"
+dependencies = [
+ "funty",
+ "radium 0.5.3",
+ "tap",
+ "wyz",
+]
 
 [[package]]
 name = "bitvec"
@@ -54,7 +56,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5011ffc90248764d7005b0e10c7294f5aa1bd87d9dd7248f4ad475b347c294d"
 dependencies = [
  "funty",
- "radium",
+ "radium 0.6.2",
  "tap",
  "wyz",
 ]
@@ -102,14 +104,13 @@ name = "caldera"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "bitvec",
+ "bitvec 0.20.1",
  "bytemuck",
  "caldera-macro",
  "imgui",
  "imgui-winit-support",
  "notify",
  "raw-window-handle",
- "serde",
  "spark",
  "spark-imgui",
  "ultraviolet",
@@ -646,6 +647,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
+name = "lexical-core"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db65c6da02e61f55dae90a0ae427b2a5f6b3e8db09f58d10efab23af92592616"
+dependencies = [
+ "arrayvec",
+ "bitflags",
+ "cfg-if 0.1.10",
+ "ryu",
+ "static_assertions",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -862,6 +876,8 @@ version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab6f70b46d6325aa300f1c7bb3d470127dfc27806d8ea6bf294ee0ce643ce2b1"
 dependencies = [
+ "bitvec 0.19.4",
+ "lexical-core",
  "memchr",
  "version_check",
 ]
@@ -1064,6 +1080,12 @@ checksum = "991431c3519a3f36861882da93630ce66b52918dcf1b8e2fd66b397fc96f28df"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "radium"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941ba9d78d8e2f7ce474c015eea4d9c6d25b6a3327f9832ee29a4de27f91bbb8"
 
 [[package]]
 name = "radium"
@@ -1287,9 +1309,6 @@ name = "serde"
 version = "1.0.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d5161132722baa40d802cc70b15262b98258453e85e5d1d365c757c73869ae"
-dependencies = [
- "serde_derive",
-]
 
 [[package]]
 name = "serde_derive"
@@ -1388,6 +1407,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
 name = "strsim"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1457,14 +1482,13 @@ dependencies = [
 name = "trace"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "bytemuck",
  "caldera",
  "imgui",
+ "nom",
  "pmj",
  "rand 0.7.3",
  "rayon",
- "serde",
  "spark",
  "winit",
 ]
@@ -1477,10 +1501,11 @@ checksum = "3e5d7cd7ab3e47dda6e56542f4bbf3824c15234958c6e1bd6aaa347e93499fdc"
 
 [[package]]
 name = "ultraviolet"
-version = "0.8.0-alpha.0"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6650a58414f856056ccc651abd3b9d80c384206250c3a621224497503a0f9f2"
 dependencies = [
  "bytemuck",
- "serde",
  "wide",
 ]
 
@@ -1594,9 +1619,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "0.6.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c51f160ef6333906fad7d31a2010d449148dd1a26bc377e0a1ace2cc9e1e1ee"
+checksum = "80b27c76ecc22bd81fe681d9c9eac81e002d7b7048105ee4608f57c4e92e9211"
 dependencies = [
  "bytemuck",
  "safe_arch",

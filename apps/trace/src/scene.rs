@@ -1,16 +1,15 @@
 use caldera::*;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Default)]
 pub struct Transform(pub Isometry3); // TODO: allow scale?
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum Geometry {
     TriangleMesh { positions: Vec<Vec3>, indices: Vec<UVec3> },
     Quad { transform: Isometry3, size: Vec2 },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum Surface {
     Diffuse { reflectance: Vec3 },
     Mirror,
@@ -25,46 +24,46 @@ pub enum Surface {
     For now we just enumerate some fixed options for the result of
     this shader.
 */
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Shader {
     pub surface: Surface,
     pub emission: Option<Vec3>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Instance {
     pub transform_ref: TransformRef,
     pub geometry_ref: GeometryRef,
     pub shader_ref: ShaderRef,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Light {
     pub emission: Vec3,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Camera {
     pub transform_ref: TransformRef,
     pub fov_y: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TransformRef(pub u32);
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GeometryRef(pub u32);
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ShaderRef(pub u32);
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceRef(pub u32);
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LightRef(pub u32);
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CameraRef(pub u32);
 
 impl Instance {
@@ -77,7 +76,7 @@ impl Instance {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Default)]
 pub struct Scene {
     pub transforms: Vec<Transform>,
     pub geometries: Vec<Geometry>,
@@ -88,37 +87,37 @@ pub struct Scene {
 }
 
 impl Scene {
-    fn add_transform(&mut self, transform: Transform) -> TransformRef {
+    pub fn add_transform(&mut self, transform: Transform) -> TransformRef {
         let index = self.transforms.len();
         self.transforms.push(transform);
         TransformRef(index as u32)
     }
 
-    fn add_geometry(&mut self, geometry: Geometry) -> GeometryRef {
+    pub fn add_geometry(&mut self, geometry: Geometry) -> GeometryRef {
         let index = self.geometries.len();
         self.geometries.push(geometry);
         GeometryRef(index as u32)
     }
 
-    fn add_shader(&mut self, shader: Shader) -> ShaderRef {
+    pub fn add_shader(&mut self, shader: Shader) -> ShaderRef {
         let index = self.shaders.len();
         self.shaders.push(shader);
         ShaderRef(index as u32)
     }
 
-    fn add_instance(&mut self, instance: Instance) -> InstanceRef {
+    pub fn add_instance(&mut self, instance: Instance) -> InstanceRef {
         let index = self.instances.len();
         self.instances.push(instance);
         InstanceRef(index as u32)
     }
 
-    fn add_light(&mut self, light: Light) -> LightRef {
+    pub fn add_light(&mut self, light: Light) -> LightRef {
         let index = self.lights.len();
         self.lights.push(light);
         LightRef(index as u32)
     }
 
-    fn add_camera(&mut self, camera: Camera) -> CameraRef {
+    pub fn add_camera(&mut self, camera: Camera) -> CameraRef {
         let index = self.cameras.len();
         self.cameras.push(camera);
         CameraRef(index as u32)
@@ -189,7 +188,7 @@ impl TriangleMeshBuilder {
     }
 }
 
-struct ShaderBuilder(Shader);
+pub struct ShaderBuilder(Shader);
 
 impl ShaderBuilder {
     pub fn new_diffuse(reflectance: Vec3) -> Self {
