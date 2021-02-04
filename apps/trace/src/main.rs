@@ -585,7 +585,7 @@ impl Default for AppParams {
 fn main() {
     let mut context_params = ContextParams {
         version: vk::Version::from_raw_parts(1, 1, 0), // Vulkan 1.1 needed for ray tracing
-        allow_ray_tracing: true,
+        ray_tracing: ContextFeature::Required,
         ..Default::default()
     };
     let mut app_params = AppParams::default();

@@ -413,14 +413,14 @@ impl App {
 fn main() {
     let mut params = ContextParams {
         version: vk::Version::from_raw_parts(1, 1, 0), // Vulkan 1.1 needed for ray tracing
-        allow_ray_tracing: true,
+        ray_tracing: ContextFeature::Optional,
         ..Default::default()
     };
     let mut mesh_file_name = None;
     for arg in env::args().skip(1) {
         let arg = arg.as_str();
         match arg {
-            "--no-rays" => params.allow_ray_tracing = false,
+            "--no-rays" => params.ray_tracing = ContextFeature::Disabled,
             _ => {
                 if !params.parse_arg(arg) {
                     if mesh_file_name.is_none() {

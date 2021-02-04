@@ -62,19 +62,46 @@ pub type UniqueImageView = Unique<vk::ImageView>;
 pub type UniqueRenderPass = Unique<vk::RenderPass>;
 pub type UniqueFramebuffer = Unique<vk::Framebuffer>;
 
+pub enum ContextFeature {
+    Disabled,
+    Optional,
+    Required,
+}
+
+impl ContextFeature {
+    fn apply(&self, is_supported: impl FnOnce() -> bool, enable_support: impl FnOnce(), on_error: impl FnOnce()) {
+        match self {
+            ContextFeature::Disabled => {}
+            ContextFeature::Optional => {
+                if is_supported() {
+                    enable_support();
+                }
+            }
+            ContextFeature::Required => {
+                if !is_supported() {
+                    on_error();
+                }
+                enable_support();
+            }
+        }
+    }
+}
+
 pub struct ContextParams {
     pub version: vk::Version,
-    pub is_debug: bool,
-    pub enable_geometry_shader: bool,
-    pub allow_inline_uniform_block: bool,
-    pub allow_ray_tracing: bool,
+    pub debug_utils: ContextFeature,
+    pub scalar_block_layout: ContextFeature,
+    pub pipeline_creation_cache_control: ContextFeature,
+    pub geometry_shader: ContextFeature,
+    pub inline_uniform_block: ContextFeature,
+    pub ray_tracing: ContextFeature,
 }
 
 impl ContextParams {
     pub fn parse_arg(&mut self, s: &str) -> bool {
         match s {
             "-d" => {
-                self.is_debug = true;
+                self.debug_utils = ContextFeature::Required;
                 true
             }
             "--vk10" => {
@@ -90,7 +117,7 @@ impl ContextParams {
                 true
             }
             "--no-iub" => {
-                self.allow_inline_uniform_block = false;
+                self.inline_uniform_block = ContextFeature::Disabled;
                 true
             }
             _ => false,
@@ -102,10 +129,12 @@ impl Default for ContextParams {
     fn default() -> Self {
         Self {
             version: Default::default(),
-            is_debug: false,
-            enable_geometry_shader: false,
-            allow_inline_uniform_block: true,
-            allow_ray_tracing: false,
+            debug_utils: ContextFeature::Disabled,
+            scalar_block_layout: ContextFeature::Required,
+            pipeline_creation_cache_control: ContextFeature::Optional,
+            geometry_shader: ContextFeature::Disabled,
+            inline_uniform_block: ContextFeature::Optional,
+            ray_tracing: ContextFeature::Disabled,
         }
     }
 }
@@ -156,21 +185,28 @@ impl Context {
 
             let mut extensions = InstanceExtensions::new(params.version);
             window_surface::enable_extensions(window, &mut extensions);
-            if params.is_debug {
-                extensions.enable_ext_debug_utils();
-            }
-            if params.allow_inline_uniform_block && available_extensions.supports_ext_inline_uniform_block() {
-                extensions.enable_ext_inline_uniform_block();
-            }
-            if params.allow_ray_tracing
-                && available_extensions.supports_khr_acceleration_structure()
-                && available_extensions.supports_khr_ray_tracing_pipeline()
-                && available_extensions.supports_khr_ray_query()
-            {
-                extensions.enable_khr_acceleration_structure();
-                extensions.enable_khr_ray_tracing_pipeline();
-                extensions.enable_khr_ray_query();
-            }
+            params.debug_utils.apply(
+                || available_extensions.supports_ext_debug_utils(),
+                || extensions.enable_ext_debug_utils(),
+                || panic!("EXT_debug_utils not supported"),
+            );
+            params.inline_uniform_block.apply(
+                || available_extensions.supports_ext_inline_uniform_block(),
+                || extensions.enable_ext_inline_uniform_block(),
+                || panic!("EXT_inline_uniform_block not supported"),
+            );
+            params.ray_tracing.apply(
+                || {
+                    available_extensions.supports_khr_acceleration_structure()
+                        && available_extensions.supports_khr_ray_tracing_pipeline()
+                },
+                || {
+                    extensions.enable_khr_acceleration_structure();
+                    extensions.enable_khr_ray_tracing_pipeline();
+                },
+                || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
+            );
+
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
                 println!("loading instance extension {:?}", name);
@@ -187,7 +223,7 @@ impl Context {
             unsafe { loader.create_instance(&instance_create_info, None) }.unwrap()
         };
 
-        let debug_utils_messenger = if params.is_debug {
+        let debug_utils_messenger = if instance.extensions.ext_debug_utils {
             let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
                 message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
@@ -215,6 +251,7 @@ impl Context {
             physical_devices[0]
         };
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
+        let physical_device_features = unsafe { instance.get_physical_device_features(physical_device) };
         let device_version = physical_device_properties.api_version;
 
         let ray_tracing_pipeline_properties =
@@ -280,56 +317,68 @@ impl Context {
                 .queue_family_index(queue_family_index)
                 .p_queue_priorities(&queue_priorities);
 
-            let mut enabled_features = vk::PhysicalDeviceFeatures::default();
-            if params.enable_geometry_shader {
-                enabled_features.geometry_shader = vk::TRUE;
-            }
-
             let available_extensions = {
                 let extension_properties =
                     unsafe { instance.enumerate_device_extension_properties_to_vec(physical_device, None) }.unwrap();
                 DeviceExtensions::from_properties(params.version, &extension_properties)
             };
 
-            assert!(available_extensions.supports_ext_scalar_block_layout());
-            let enable_inline_uniform_block =
-                params.allow_inline_uniform_block && available_extensions.supports_ext_inline_uniform_block();
-            let enable_pipeline_creation_cache_control =
-                available_extensions.supports_ext_pipeline_creation_cache_control();
-            let enable_ray_tracing = params.allow_ray_tracing
-                && available_extensions.supports_khr_acceleration_structure()
-                && available_extensions.supports_khr_ray_tracing_pipeline();
-
             let mut extensions = DeviceExtensions::new(params.version);
+            let mut enabled_features = vk::PhysicalDeviceFeatures::default();
+            let mut scalar_block_layout_features = vk::PhysicalDeviceScalarBlockLayoutFeaturesEXT::default();
+            let mut pipeline_creation_cache_control_features =
+                vk::PhysicalDevicePipelineCreationCacheControlFeaturesEXT::default();
+            let mut buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::default();
+            let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
+            let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
+
             extensions.enable_khr_swapchain();
-            extensions.enable_ext_scalar_block_layout();
-            if enable_pipeline_creation_cache_control {
-                extensions.enable_ext_pipeline_creation_cache_control();
-            }
-            if enable_inline_uniform_block {
-                extensions.enable_ext_inline_uniform_block();
-            }
-            if enable_ray_tracing {
-                extensions.enable_khr_acceleration_structure();
-                extensions.enable_khr_ray_tracing_pipeline();
-                enable_buffer_device_addresses = true;
-            }
+            params.geometry_shader.apply(
+                || physical_device_features.geometry_shader == vk::TRUE,
+                || enabled_features.geometry_shader = vk::TRUE,
+                || panic!("geometry shaders not supported"),
+            );
+            params.scalar_block_layout.apply(
+                || available_extensions.supports_ext_scalar_block_layout(),
+                || {
+                    extensions.enable_ext_scalar_block_layout();
+                    scalar_block_layout_features.scalar_block_layout = vk::TRUE;
+                },
+                || panic!("EXT_scalar_block_layout not supported"),
+            );
+            params.pipeline_creation_cache_control.apply(
+                || available_extensions.supports_ext_pipeline_creation_cache_control(),
+                || {
+                    extensions.enable_ext_pipeline_creation_cache_control();
+                    pipeline_creation_cache_control_features.pipeline_creation_cache_control = vk::TRUE;
+                },
+                || panic!("EXT_pipeline_creation_cache_control not support"),
+            );
+            params.inline_uniform_block.apply(
+                || available_extensions.supports_ext_inline_uniform_block(),
+                || extensions.enable_ext_inline_uniform_block(),
+                || panic!("EXT_inline_uniform_block not supported"),
+            );
+            params.ray_tracing.apply(
+                || {
+                    available_extensions.supports_khr_acceleration_structure()
+                        && available_extensions.supports_khr_ray_tracing_pipeline()
+                },
+                || {
+                    extensions.enable_khr_acceleration_structure();
+                    extensions.enable_khr_ray_tracing_pipeline();
+                    buffer_device_address_features.buffer_device_address = vk::TRUE;
+                    enable_buffer_device_addresses = true;
+                    acceleration_structure_features.acceleration_structure = vk::TRUE;
+                    ray_tracing_pipeline_features.ray_tracing_pipeline = vk::TRUE;
+                },
+                || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
+            );
+
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
                 println!("loading device extension {:?}", name);
             }
-
-            let mut scalar_block_layout_features =
-                vk::PhysicalDeviceScalarBlockLayoutFeaturesEXT::builder().scalar_block_layout(true);
-            let mut pipeline_creation_cache_control_features =
-                vk::PhysicalDevicePipelineCreationCacheControlFeaturesEXT::builder()
-                    .pipeline_creation_cache_control(enable_pipeline_creation_cache_control);
-            let mut buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::builder()
-                .buffer_device_address(enable_buffer_device_addresses);
-            let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
-                .acceleration_structure(enable_ray_tracing);
-            let mut ray_tracing_pipeline_features =
-                vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder().ray_tracing_pipeline(enable_ray_tracing);
 
             let extension_name_ptrs: Vec<_> = extension_names.iter().map(|s| s.as_ptr()).collect();
             let device_create_info = vk::DeviceCreateInfo::builder()
