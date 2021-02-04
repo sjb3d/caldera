@@ -272,8 +272,8 @@ impl App {
                             |buf: &mut TraceData| {
                                 let dims_rcp = Vec2::broadcast(1.0) / trace_image_size.as_float();
                                 *buf = TraceData {
-                                    dims: trace_image_size.into(),
-                                    dims_rcp: dims_rcp.into(),
+                                    dims: trace_image_size,
+                                    dims_rcp: dims_rcp,
                                     pass_index: next_pass_index,
                                     render_color_space: render_color_space.into_integer(),
                                 };
@@ -354,8 +354,8 @@ impl App {
                         &descriptor_pool,
                         |buf| {
                             *buf = CopyData {
-                                offset: ((trace_image_size.as_signed() - swap_size.as_signed()) / 2).into(),
-                                trace_dims: trace_image_size.into(),
+                                offset: ((trace_image_size.as_signed() - swap_size.as_signed()) / 2),
+                                trace_dims: trace_image_size,
                                 trace_scale: log2_exposure_scale.exp2() / (pass_count as f32),
                                 render_color_space: render_color_space.into_integer(),
                                 tone_map_method: tone_map_method.into_integer(),

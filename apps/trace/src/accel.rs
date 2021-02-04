@@ -392,8 +392,8 @@ impl SceneAccel {
                         let extend_hit_record = HitRecordData {
                             index_buffer_address,
                             position_buffer_address,
-                            reflectance: shader.reflectance.into(),
                             is_emissive: if shader.is_emissive() { 1 } else { 0 },
+                            reflectance: reflectance,
                         };
 
                         let end_offset = writer.written() + hit_region.stride as usize;
