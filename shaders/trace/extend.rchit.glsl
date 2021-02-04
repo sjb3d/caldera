@@ -5,6 +5,7 @@
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
+#include "record.glsl"
 #include "payload.glsl"
 #include "normal_pack.glsl"
 
@@ -16,15 +17,12 @@ layout(buffer_reference, scalar) buffer PositionBuffer {
     vec3 pos[];
 };
 
-layout(shaderRecordEXT, scalar) buffer ShaderRecordData {
+layout(shaderRecordEXT, scalar) buffer ExtendHitRecord {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
     vec3 reflectance;
     uint flags;
 } g_record;
-
-#define HIT_RECORD_FLAGS_BSDF_TYPE_MASK    0x1
-#define HIT_RECORD_FLAGS_IS_EMISSIVE_BIT   0x2
 
 hitAttributeEXT vec2 g_bary_coord;
 
@@ -52,6 +50,9 @@ void main()
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
+    const uint bsdf_type = g_record.flags & EXTEND_RECORD_FLAGS_BSDF_TYPE_MASK;
+    const bool is_emissive = ((g_record.flags & EXTEND_RECORD_FLAGS_IS_EMISSIVE_BIT) != 0);
+
     // estimate floating point number size for local and world space
     // TODO: handle scale
     const float max_position_value = max_element(
@@ -63,9 +64,5 @@ void main()
 
     g_extend.position = hit_pos_ws;
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
-    g_extend.hit = create_hit_data(
-        g_record.flags & HIT_RECORD_FLAGS_BSDF_TYPE_MASK,
-        g_record.reflectance,
-        (g_record.flags & HIT_RECORD_FLAGS_IS_EMISSIVE_BIT) != 0,
-        max_exponent);
+    g_extend.hit = create_hit_data(bsdf_type, g_record.reflectance, is_emissive, max_exponent);
 }

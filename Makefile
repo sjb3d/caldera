@@ -9,7 +9,8 @@ INC=\
 	common/maths.glsl \
 	common/normal_pack.glsl \
 	common/sampler.glsl \
-	trace/payload.glsl
+	trace/payload.glsl \
+	trace/record.glsl
 
 SRC=\
 	compute/trace.comp.glsl \

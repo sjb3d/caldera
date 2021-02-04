@@ -10,24 +10,34 @@ type IndexData = UVec3;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct HitRecordFlags(u32);
+struct ExtendRecordFlags(u32);
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct HitRecordData {
+struct ExtendHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
     reflectance: Vec3,
-    flags: HitRecordFlags,
+    flags: ExtendRecordFlags,
 }
 
-impl HitRecordFlags {
-    const BSDF_TYPE_DIFFUSE: HitRecordFlags = HitRecordFlags(0x0);
-    const BSDF_TYPE_MIRROR: HitRecordFlags = HitRecordFlags(0x1);
-    const IS_EMISSIVE: HitRecordFlags = HitRecordFlags(0x2);
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct ExtendMissRecord {
+    flags: ExtendRecordFlags,
 }
 
-impl BitOrAssign for HitRecordFlags {
+impl ExtendRecordFlags {
+    const BSDF_TYPE_DIFFUSE: ExtendRecordFlags = ExtendRecordFlags(0x0);
+    const BSDF_TYPE_MIRROR: ExtendRecordFlags = ExtendRecordFlags(0x1);
+    const IS_EMISSIVE: ExtendRecordFlags = ExtendRecordFlags(0x2);
+
+    fn empty() -> Self {
+        Self(0)
+    }
+}
+
+impl BitOrAssign for ExtendRecordFlags {
     fn bitor_assign(&mut self, rhs: Self) {
         self.0 |= rhs.0;
     }
@@ -318,7 +328,7 @@ impl SceneAccel {
         };
         next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
 
-        let miss_record_size = 0;
+        let miss_record_size = mem::size_of::<ExtendMissRecord>() as u32;
         let miss_stride = align_up(
             rtpp.shader_group_handle_size + miss_record_size,
             rtpp.shader_group_handle_alignment,
@@ -331,7 +341,7 @@ impl SceneAccel {
         };
         next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
 
-        let hit_record_size = mem::size_of::<HitRecordData>() as u32;
+        let hit_record_size = mem::size_of::<ExtendHitRecord>() as u32;
         let hit_stride = align_up(
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
@@ -388,8 +398,16 @@ impl SceneAccel {
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
                 {
+                    let mut flags = ExtendRecordFlags::empty();
+                    if !shared.scene.lights.is_empty() {
+                        flags |= ExtendRecordFlags::IS_EMISSIVE;
+                    }
+
+                    let extend_miss_record = ExtendMissRecord { flags };
+
                     let end_offset = writer.written() + miss_region.stride as usize;
                     writer.write(extend_miss_group_handle);
+                    writer.write(&extend_miss_record);
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + miss_region.stride as usize;
@@ -406,14 +424,16 @@ impl SceneAccel {
                         let shader = shared.scene.shader(instance.shader_ref);
 
                         let (reflectance, mut flags) = match shader.surface {
-                            Surface::Diffuse { reflectance } => (reflectance / PI, HitRecordFlags::BSDF_TYPE_DIFFUSE),
-                            Surface::Mirror => (Vec3::one(), HitRecordFlags::BSDF_TYPE_MIRROR),
+                            Surface::Diffuse { reflectance } => {
+                                (reflectance / PI, ExtendRecordFlags::BSDF_TYPE_DIFFUSE)
+                            }
+                            Surface::Mirror => (Vec3::one(), ExtendRecordFlags::BSDF_TYPE_MIRROR),
                         };
-                        if shader.is_emissive() {
-                            flags |= HitRecordFlags::IS_EMISSIVE;
+                        if shader.emission.is_some() {
+                            flags |= ExtendRecordFlags::IS_EMISSIVE;
                         }
 
-                        let extend_hit_record = HitRecordData {
+                        let extend_hit_record = ExtendHitRecord {
                             index_buffer_address,
                             position_buffer_address,
                             reflectance: reflectance,

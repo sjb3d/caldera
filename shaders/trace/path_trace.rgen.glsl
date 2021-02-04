@@ -160,18 +160,29 @@ void main()
             // evaluate the light here
             vec3 light_emission;
             float light_area_pdf;
-            const float geometry_term = evaluate_hit_light(
-                prev_position,
-                prev_normal,
-                g_extend.position,
-                g_data.world_from_light[2],
-                light_emission,
-                light_area_pdf);
-
+            float geometry_term;
+            bool light_can_be_sampled;
+            if (has_surface(g_extend.hit)) {
+                // we hit some surface
+                geometry_term = evaluate_hit_light(
+                    prev_position,
+                    prev_normal,
+                    g_extend.position,
+                    g_data.world_from_light[2],
+                    light_emission,
+                    light_area_pdf);
+                light_can_be_sampled = true;
+            } else {
+                // external light from miss shader
+                light_emission = g_data.light_emission;
+                light_area_pdf = 1.f/(4.f*PI);
+                geometry_term = abs(dot(prev_in_dir, prev_normal));
+                light_can_be_sampled = false; // not currently sampling external lights
+            }
             const vec3 unweighted_sample = alpha * light_emission;
 
             // apply MIS weight
-            const bool can_be_sampled = (segment_index > 1) && !prev_is_delta;
+            const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
             const float other_ratio = can_be_sampled ? (light_area_pdf / (geometry_term * prev_psa_pdf_in)) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
@@ -214,7 +225,7 @@ void main()
         const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
 
         // sample a light source
-        if (!hit_is_delta) {
+        if (!hit_is_delta && g_data.light_size_ws.x != 0.f) {
             // sample from all light sources
             vec3 light_position;
             vec3 light_normal;

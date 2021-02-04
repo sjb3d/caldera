@@ -28,34 +28,7 @@ pub enum Surface {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Shader {
     pub surface: Surface,
-    pub emission: Vec3,
-}
-
-impl Shader {
-    pub fn new_diffuse(reflectance: Vec3) -> Self {
-        Self {
-            surface: Surface::Diffuse {
-                reflectance: reflectance.saturated(),
-            },
-            emission: Vec3::zero(),
-        }
-    }
-
-    pub fn new_mirror() -> Self {
-        Self {
-            surface: Surface::Mirror,
-            emission: Vec3::zero(),
-        }
-    }
-
-    pub fn with_emission(mut self, emission: Vec3) -> Self {
-        self.emission = emission.max_by_component(Vec3::zero());
-        self
-    }
-
-    pub fn is_emissive(&self) -> bool {
-        self.emission.as_slice().iter().any(|&c| c > 0.0)
-    }
+    pub emission: Option<Vec3>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +36,11 @@ pub struct Instance {
     pub transform_ref: TransformRef,
     pub geometry_ref: GeometryRef,
     pub shader_ref: ShaderRef,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Light {
+    pub emission: Vec3,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -84,6 +62,9 @@ pub struct ShaderRef(pub u32);
 pub struct InstanceRef(pub u32);
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LightRef(pub u32);
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CameraRef(pub u32);
 
 impl Instance {
@@ -102,6 +83,7 @@ pub struct Scene {
     pub geometries: Vec<Geometry>,
     pub shaders: Vec<Shader>,
     pub instances: Vec<Instance>,
+    pub lights: Vec<Light>,
     pub cameras: Vec<Camera>,
 }
 
@@ -128,6 +110,12 @@ impl Scene {
         let index = self.instances.len();
         self.instances.push(instance);
         InstanceRef(index as u32)
+    }
+
+    fn add_light(&mut self, light: Light) -> LightRef {
+        let index = self.lights.len();
+        self.lights.push(light);
+        LightRef(index as u32)
     }
 
     fn add_camera(&mut self, camera: Camera) -> CameraRef {
@@ -198,6 +186,38 @@ impl TriangleMeshBuilder {
             positions: self.positions,
             indices: self.indices,
         }
+    }
+}
+
+struct ShaderBuilder(Shader);
+
+impl ShaderBuilder {
+    pub fn new_diffuse(reflectance: Vec3) -> Self {
+        Self(Shader {
+            surface: Surface::Diffuse {
+                reflectance: reflectance.saturated(),
+            },
+            emission: None,
+        })
+    }
+
+    pub fn new_mirror() -> Self {
+        Self(Shader {
+            surface: Surface::Mirror,
+            emission: None,
+        })
+    }
+
+    pub fn with_emission(mut self, emission: Vec3) -> Self {
+        let emission = emission.max_by_component(Vec3::zero());
+        if emission.as_slice().iter().any(|&c| c > 0.0) {
+            self.0.emission = Some(emission);
+        }
+        self
+    }
+
+    pub fn build(self) -> Shader {
+        self.0
     }
 }
 
@@ -295,7 +315,8 @@ fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
 
 pub enum CornellBoxVariant {
     Original,
-    MirrorBlock,
+    Mirror,
+    DomeLight,
     Instances,
 }
 
@@ -348,8 +369,8 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             .with_quad(
                 Vec3::new(0.0, 0.0, 0.5592),
                 Vec3::new(0.0, 0.0, 0.0),
-                Vec3::new(0.0, 0.548, 0.0),
-                Vec3::new(0.0, 0.548, 0.5592),
+                Vec3::new(0.0, 0.5488, 0.0),
+                Vec3::new(0.0, 0.5488, 0.5592),
             )
             .build(),
     );
@@ -427,11 +448,11 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let red_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_RED_SAMPLES);
     let green_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_GREEN_SAMPLES);
 
-    let white_shader = scene.add_shader(Shader::new_diffuse(dbg!(white_reflectance)));
-    let red_shader = scene.add_shader(Shader::new_diffuse(dbg!(red_reflectance)));
-    let green_shader = scene.add_shader(Shader::new_diffuse(dbg!(green_reflectance)));
-    let tall_block_shader = if matches!(variant, CornellBoxVariant::MirrorBlock) {
-        scene.add_shader(Shader::new_mirror())
+    let white_shader = scene.add_shader(ShaderBuilder::new_diffuse(white_reflectance).build());
+    let red_shader = scene.add_shader(ShaderBuilder::new_diffuse(red_reflectance).build());
+    let green_shader = scene.add_shader(ShaderBuilder::new_diffuse(green_reflectance).build());
+    let tall_block_shader = if matches!(variant, CornellBoxVariant::Mirror) {
+        scene.add_shader(ShaderBuilder::new_mirror().build())
     } else {
         white_shader
     };
@@ -446,21 +467,31 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     scene.add_instance(Instance::new(identity, short_block, white_shader));
     scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
 
-    let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
-    let light_x0 = 0.213;
-    let light_x1 = 0.343;
-    let light_z0 = 0.227;
-    let light_z1 = 0.332;
-    let light_y = 0.5488 - 0.0001;
-    let light_geometry = scene.add_geometry(Geometry::Quad {
-        transform: Isometry3::new(
-            Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
-            Rotor3::from_rotation_yz(0.5 * PI),
-        ),
-        size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
-    });
-    let light_shader = scene.add_shader(Shader::new_diffuse(Vec3::broadcast(0.78)).with_emission(dbg!(light_emission)));
-    scene.add_instance(Instance::new(identity, light_geometry, light_shader));
+    if matches!(variant, CornellBoxVariant::DomeLight) {
+        scene.add_light(Light {
+            emission: Vec3::new(0.4, 0.5, 0.6),
+        });
+    } else {
+        let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
+        let light_x0 = 0.213;
+        let light_x1 = 0.343;
+        let light_z0 = 0.227;
+        let light_z1 = 0.332;
+        let light_y = 0.5488 - 0.0001;
+        let light_geometry = scene.add_geometry(Geometry::Quad {
+            transform: Isometry3::new(
+                Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
+                Rotor3::from_rotation_yz(0.5 * PI),
+            ),
+            size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
+        });
+        let light_shader = scene.add_shader(
+            ShaderBuilder::new_diffuse(Vec3::broadcast(0.78))
+                .with_emission(light_emission)
+                .build(),
+        );
+        scene.add_instance(Instance::new(identity, light_geometry, light_shader));
+    }
 
     let camera_transform = scene.add_transform(Transform(Isometry3::new(
         Vec3::new(0.278, 0.273, -0.8),

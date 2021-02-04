@@ -33,10 +33,11 @@ HitData create_hit_data(
         ;
     return hit;
 }
-HitData create_miss_data()
+HitData create_miss_data(bool is_emissive)
 {
     HitData hit;
-    hit.bits = uvec2(0);
+    hit.bits.x = 0;
+    hit.bits.y = (is_emissive ? HIT_DATA_Y_HAS_LIGHT_BIT : 0);
     return hit;
 }
 

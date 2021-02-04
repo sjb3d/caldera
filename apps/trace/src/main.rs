@@ -26,6 +26,7 @@ struct SamplePixel {
     y: u16,
 }
 
+#[derive(Clone, Copy)]
 pub struct QuadLight {
     pub transform: Isometry3,
     pub size: Vec2,
@@ -150,7 +151,6 @@ struct App {
 
     accel: SceneAccel,
     camera_ref: CameraRef,
-    light: Option<QuadLight>,
 
     log2_exposure_scale: f32,
     render_color_space: RenderColorSpace,
@@ -233,20 +233,6 @@ impl App {
         let camera_ref = CameraRef(0);
         let rotation = scene.transform(scene.camera(camera_ref).transform_ref).0.rotation;
 
-        let light = scene
-            .instances
-            .iter()
-            .filter(|instance| scene.shader(instance.shader_ref).is_emissive())
-            .filter_map(|instance| match *scene.geometry(instance.geometry_ref) {
-                Geometry::TriangleMesh { .. } => None,
-                Geometry::Quad { size, transform } => Some(QuadLight {
-                    transform: scene.transform(instance.transform_ref).0 * transform,
-                    size,
-                    emission: scene.shader(instance.shader_ref).emission,
-                }),
-            })
-            .next();
-
         Self {
             context: Arc::clone(&context),
             path_trace_descriptor_set_layout,
@@ -258,7 +244,6 @@ impl App {
             next_sample_index: 0,
             accel,
             camera_ref,
-            light,
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
@@ -321,7 +306,15 @@ impl App {
                             needs_reset = true;
                         }
                     }
-                    ui.text(format!("Lights: {}", self.light.as_ref().map_or(0, |_| 1)));
+                    ui.text(format!(
+                        "Lights: {}",
+                        scene.lights.len()
+                            + scene
+                                .instances
+                                .iter()
+                                .filter_map(|instance| scene.shader(instance.shader_ref).emission)
+                                .count()
+                    ));
 
                     if needs_reset {
                         self.next_sample_index = 0;
@@ -408,7 +401,6 @@ impl App {
                     let result_images = &self.result_images;
                     let next_sample_index = self.next_sample_index;
                     let accel = &self.accel;
-                    let light = self.light.as_ref();
                     let max_bounces = self.max_bounces;
                     let use_max_roughness = self.use_max_roughness;
                     let render_color_space = self.render_color_space;
@@ -419,21 +411,40 @@ impl App {
                             params.get_image_view(result_images.2),
                         );
 
+                        let scene = accel.scene();
+                        let quad_light = scene
+                            .instances
+                            .iter()
+                            .filter_map(|instance| {
+                                let emission = scene.shader(instance.shader_ref).emission?;
+                                match *scene.geometry(instance.geometry_ref) {
+                                    Geometry::TriangleMesh { .. } => None,
+                                    Geometry::Quad { size, transform } => Some(QuadLight {
+                                        transform: scene.transform(instance.transform_ref).0 * transform,
+                                        size,
+                                        emission,
+                                    }),
+                                }
+                            })
+                            .next();
+                        let dome_light = scene.lights.first();
+
                         let path_trace_descriptor_set = path_trace_descriptor_set_layout.write(
                             descriptor_pool,
                             |buf: &mut PathTraceData| {
                                 *buf = PathTraceData {
                                     world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
                                     fov_size_at_unit_z,
-                                    world_from_light: light
+                                    world_from_light: quad_light
                                         .map(|light| light.transform)
                                         .unwrap_or_else(Isometry3::identity)
                                         .into_homogeneous_matrix()
                                         .into_transform(),
-                                    light_size_ws: light
-                                        .map(|light| light.size)
-                                        .unwrap_or_else(|| Vec2::broadcast(1.0)),
-                                    light_emission: light.map(|light| light.emission).unwrap_or_else(Vec3::zero),
+                                    light_size_ws: quad_light.map(|light| light.size).unwrap_or_else(Vec2::zero),
+                                    light_emission: quad_light
+                                        .map(|light| light.emission)
+                                        .or(dome_light.map(|light| light.emission))
+                                        .unwrap_or_else(Vec3::zero),
                                     sample_index: next_sample_index,
                                     max_segment_count: max_bounces + 2,
                                     render_color_space: render_color_space.into_integer(),
@@ -586,8 +597,9 @@ fn main() {
                 "-s" => {
                     app_params.scene_desc = match it.next().unwrap().as_str() {
                         "cornell" => SceneDesc::CornellBox(CornellBoxVariant::Original),
-                        "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::MirrorBlock),
+                        "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::Mirror),
                         "cornell-instances" => SceneDesc::CornellBox(CornellBoxVariant::Instances),
+                        "cornell-domelight" => SceneDesc::CornellBox(CornellBoxVariant::DomeLight),
                         s => panic!("unknown scene {:?}", s),
                     }
                 }
