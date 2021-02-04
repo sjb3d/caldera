@@ -34,13 +34,13 @@ A simple path tracer in a compute shader, also for tinkering with:
 * [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) implemented in [pmj](https://github.com/sjb3d/pmj)
   * Several sequences are generated at startup, then indexed by hashing the pixel coordinate and ray depth
 * Wide colour gamut in the [ACEScg](https://en.wikipedia.org/wiki/Academy_Color_Encoding_System) colour space, transformed to sRGB/Rec709 using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
-  * There is code to re-derive the colour space conversion matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/apps/compute/src/color_space.rs), but the tonemap curve fit is used as-is
+  * There is code to re-derive the colour space conversion matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/caldera/src/color_space.rs), but the tonemap curve fit is used as-is
 
 ### `mesh`
 
 ![mesh](https://github.com/sjb3d/caldera/blob/main/docs/mesh.jpg)
 
-Test project for `VK_KHR_acceleration_structure` and `VK_KHR_ray_tracing_pipeline`.  Takes a PLY mesh filename as argument ([Stanford bunny](http://graphics.stanford.edu/data/3Dscanrep/) shown above).
+Initial test project for `VK_KHR_acceleration_structure` and `VK_KHR_ray_tracing_pipeline`.  Takes a PLY mesh filename as argument ([Stanford bunny](http://graphics.stanford.edu/data/3Dscanrep/) shown above), draws a few instances using either rasterisation or ray tracing.
 
 Has code for:
 * Loading a PLY mesh using [ply-rs](https://github.com/Fluci/ply-rs)
@@ -50,7 +50,7 @@ Has code for:
   * A single bottom level acceleration structure for the PLY mesh
   * A top level acceleration structure that instances it a few times
 * Simple ray tracing pipeline
-  * Binds the index and vertex attribute buffers using a `shaderRecordEXT` block in the shader binding table, to be able to interpolate a vertex normal on hit
+  * Just interpolates vertex normals on hit
 
 ### `trace`
 
