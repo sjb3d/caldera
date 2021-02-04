@@ -6,7 +6,7 @@ use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::im_str;
-use imgui::{Drag, Key, MouseButton};
+use imgui::{Drag, Key, MouseButton, Slider};
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
@@ -43,6 +43,7 @@ struct PathTraceData {
     sample_index: u32,
     max_segment_count: u32,
     render_color_space: u32,
+    use_max_roughness: u32,
 }
 
 #[repr(C)]
@@ -155,6 +156,7 @@ struct App {
     render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
     max_bounces: u32,
+    use_max_roughness: bool,
     view_drag: ViewDrag,
 }
 
@@ -217,7 +219,7 @@ impl App {
         };
 
         let scene = match params.scene_desc {
-            SceneDesc::CornellBox { with_extra_instances } => create_cornell_box_scene(with_extra_instances),
+            SceneDesc::CornellBox(ref variant) => create_cornell_box_scene(variant),
         };
         let accel = SceneAccel::new(
             scene,
@@ -261,6 +263,7 @@ impl App {
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
             max_bounces: params.max_bounces,
+            use_max_roughness: true,
             view_drag: ViewDrag::new(rotation),
         }
     }
@@ -288,6 +291,10 @@ impl App {
                         &mut self.render_color_space,
                         RenderColorSpace::ACEScg,
                     );
+                    needs_reset |= Slider::new(im_str!("Max Bounces"))
+                        .range(0..=8)
+                        .build(&ui, &mut self.max_bounces);
+                    needs_reset |= ui.checkbox(im_str!("Use Max Roughness"), &mut self.use_max_roughness);
                     ui.text("Tone Map Method:");
                     ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
                     ui.radio_button(
@@ -403,6 +410,7 @@ impl App {
                     let accel = &self.accel;
                     let light = self.light.as_ref();
                     let max_bounces = self.max_bounces;
+                    let use_max_roughness = self.use_max_roughness;
                     let render_color_space = self.render_color_space;
                     move |params, cmd| {
                         let result_image_views = (
@@ -429,6 +437,7 @@ impl App {
                                     sample_index: next_sample_index,
                                     max_segment_count: max_bounces + 2,
                                     render_color_space: render_color_space.into_integer(),
+                                    use_max_roughness: if use_max_roughness { 1 } else { 0 },
                                 }
                             },
                             top_level_accel,
@@ -545,7 +554,7 @@ impl App {
 }
 
 enum SceneDesc {
-    CornellBox { with_extra_instances: bool },
+    CornellBox(CornellBoxVariant),
 }
 
 struct AppParams {
@@ -557,9 +566,7 @@ impl Default for AppParams {
     fn default() -> Self {
         Self {
             max_bounces: 2,
-            scene_desc: SceneDesc::CornellBox {
-                with_extra_instances: false,
-            },
+            scene_desc: SceneDesc::CornellBox(CornellBoxVariant::Original),
         }
     }
 }
@@ -578,12 +585,9 @@ fn main() {
                 "-b" => app_params.max_bounces = it.next().and_then(|s| s.as_str().parse::<u32>().ok()).unwrap(),
                 "-s" => {
                     app_params.scene_desc = match it.next().unwrap().as_str() {
-                        "cornell" => SceneDesc::CornellBox {
-                            with_extra_instances: false,
-                        },
-                        "cornelli" => SceneDesc::CornellBox {
-                            with_extra_instances: true,
-                        },
+                        "cornell" => SceneDesc::CornellBox(CornellBoxVariant::Original),
+                        "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::MirrorBlock),
+                        "cornell-instances" => SceneDesc::CornellBox(CornellBoxVariant::Instances),
                         s => panic!("unknown scene {:?}", s),
                     }
                 }

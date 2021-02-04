@@ -2,11 +2,15 @@ use crate::scene::*;
 use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use spark::{vk, Builder};
-use std::sync::Arc;
 use std::{mem, slice};
+use std::{ops::BitOrAssign, sync::Arc};
 
 type PositionData = Vec3;
 type IndexData = UVec3;
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct HitRecordFlags(u32);
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
@@ -14,7 +18,19 @@ struct HitRecordData {
     index_buffer_address: u64,
     position_buffer_address: u64,
     reflectance: Vec3,
-    is_emissive: u32,
+    flags: HitRecordFlags,
+}
+
+impl HitRecordFlags {
+    const BSDF_TYPE_DIFFUSE: HitRecordFlags = HitRecordFlags(0x0);
+    const BSDF_TYPE_MIRROR: HitRecordFlags = HitRecordFlags(0x1);
+    const IS_EMISSIVE: HitRecordFlags = HitRecordFlags(0x2);
+}
+
+impl BitOrAssign for HitRecordFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
 }
 
 // vk::AccelerationStructureInstanceKHR with Pod trait
@@ -389,11 +405,19 @@ impl SceneAccel {
                             geometry_record[instance.geometry_ref.0 as usize];
                         let shader = shared.scene.shader(instance.shader_ref);
 
+                        let (reflectance, mut flags) = match shader.surface {
+                            Surface::Diffuse { reflectance } => (reflectance / PI, HitRecordFlags::BSDF_TYPE_DIFFUSE),
+                            Surface::Mirror => (Vec3::one(), HitRecordFlags::BSDF_TYPE_MIRROR),
+                        };
+                        if shader.is_emissive() {
+                            flags |= HitRecordFlags::IS_EMISSIVE;
+                        }
+
                         let extend_hit_record = HitRecordData {
                             index_buffer_address,
                             position_buffer_address,
-                            is_emissive: if shader.is_emissive() { 1 } else { 0 },
                             reflectance: reflectance,
+                            flags,
                         };
 
                         let end_offset = writer.written() + hit_region.stride as usize;

@@ -18,6 +18,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceData {
     uint sample_index;
     uint max_segment_count;
     uint render_color_space;
+    uint use_max_roughness;
 } g_data;
 
 #define RENDER_COLOR_SPACE_REC709   0
@@ -95,7 +96,6 @@ float evaluate_hit_light(
     return abs(light_facing_term * prev_facing_term) / (distance_sq * distance_sq);
 }
 
-
 EXTEND_PAYLOAD_READ(g_extend);
 OCCLUSION_PAYLOAD_READ(g_occlusion);
 
@@ -103,6 +103,8 @@ void main()
 {
     vec3 prev_position;
     vec3 prev_normal;
+    bool prev_is_delta;
+    bool have_seen_non_delta;
     float prev_epsilon;
     vec3 prev_in_dir;
     float prev_psa_pdf_in;
@@ -126,6 +128,8 @@ void main()
 
         prev_position = g_data.world_from_camera[3];
         prev_normal = g_data.world_from_camera[2];
+        prev_is_delta = false;
+        have_seen_non_delta = false;
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
         prev_psa_pdf_in = psa_pdf_in;
@@ -167,7 +171,7 @@ void main()
             const vec3 unweighted_sample = alpha * light_emission;
 
             // apply MIS weight
-            const bool can_be_sampled = (segment_index > 1);
+            const bool can_be_sampled = (segment_index > 1) && !prev_is_delta;
             const float other_ratio = can_be_sampled ? (light_area_pdf / (geometry_term * prev_psa_pdf_in)) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
@@ -183,12 +187,26 @@ void main()
             break;
         }
 
+        // rewrite the BRDF to ensure roughness never reduces when extending an eye path
+        if (g_data.use_max_roughness != 0)
+        if (have_seen_non_delta && get_bsdf_type(g_extend.hit) == BSDF_TYPE_MIRROR) {
+            const vec3 mirror_reflectance = get_reflectance(g_extend.hit);
+            const bool is_emissive = has_light(g_extend.hit);
+            const int max_exponent = get_max_exponent(g_extend.hit);
+            g_extend.hit = create_hit_data(
+                BSDF_TYPE_DIFFUSE,
+                mirror_reflectance/PI,
+                is_emissive,
+                max_exponent);
+        }
+
         // unpack the BRDF
-        const vec3 hit_reflectance = sample_from_rec709(get_reflectance(g_extend.hit))/PI;
+        const vec3 hit_reflectance = sample_from_rec709(get_reflectance(g_extend.hit));
 
         const vec3 hit_position = g_extend.position;
         const mat3 hit_basis = basis_from_z_axis(normalize(vec_from_oct32(g_extend.normal_oct32)));
         const vec3 hit_normal = hit_basis[2];
+        const bool hit_is_delta = (get_bsdf_type(g_extend.hit) == BSDF_TYPE_MIRROR);
 
         const vec3 out_dir_ls = normalize(-prev_in_dir * hit_basis);
 
@@ -196,7 +214,7 @@ void main()
         const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
 
         // sample a light source
-        {
+        if (!hit_is_delta) {
             // sample from all light sources
             vec3 light_position;
             vec3 light_normal;
@@ -260,15 +278,29 @@ void main()
 
         // sample BSDF
         {
-            const vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
+            vec3 in_dir_ls;
+            float psa_pdf_in;
+            switch (get_bsdf_type(g_extend.hit)) {
+                default:
+                case BSDF_TYPE_DIFFUSE: {
+                    const vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
+                    in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
+                    psa_pdf_in = get_hemisphere_cosine_weighted_psa_pdf();
+                } break;
 
-            const vec3 in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
-            const float psa_pdf_in = get_hemisphere_cosine_weighted_psa_pdf();
-
+                case BSDF_TYPE_MIRROR: {
+                    in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
+                    psa_pdf_in = 1.f;
+                } break;
+            }
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
 
             prev_position = hit_position;
             prev_normal = hit_normal;
+            prev_is_delta = hit_is_delta;
+            if (!hit_is_delta) {
+                have_seen_non_delta = true;
+            }
             prev_epsilon = hit_epsilon;
             prev_in_dir = in_dir;
             prev_psa_pdf_in = psa_pdf_in;

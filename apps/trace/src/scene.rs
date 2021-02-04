@@ -11,15 +11,39 @@ pub enum Geometry {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum Surface {
+    Diffuse { reflectance: Vec3 },
+    Mirror,
+}
+
+/*
+    Ideally this would be some kind of shader that reads some
+    interpolated data from the geometry (e.g. texture coordinates)
+    and uniform data from the instance (e.g. textures, constants)
+    and produces a closure for the BRDF (and emitter if present).
+
+    For now we just enumerate some fixed options for the result of
+    this shader.
+*/
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Shader {
-    pub reflectance: Vec3,
+    pub surface: Surface,
     pub emission: Vec3,
 }
 
 impl Shader {
-    pub fn new_lambertian(reflectance: Vec3) -> Self {
+    pub fn new_diffuse(reflectance: Vec3) -> Self {
         Self {
-            reflectance: reflectance.clamped(Vec3::zero(), Vec3::one()),
+            surface: Surface::Diffuse {
+                reflectance: reflectance.saturated(),
+            },
+            emission: Vec3::zero(),
+        }
+    }
+
+    pub fn new_mirror() -> Self {
+        Self {
+            surface: Surface::Mirror,
             emission: Vec3::zero(),
         }
     }
@@ -269,8 +293,14 @@ fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
     xyz_from_spectrum(measure) / xyz_from_spectrum(|_| 1.0).y
 }
 
+pub enum CornellBoxVariant {
+    Original,
+    MirrorBlock,
+    Instances,
+}
+
 #[allow(clippy::excessive_precision)]
-pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
+pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let mut scene = Scene::default();
 
     let floor = scene.add_geometry(
@@ -397,9 +427,14 @@ pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
     let red_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_RED_SAMPLES);
     let green_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_GREEN_SAMPLES);
 
-    let white_shader = scene.add_shader(Shader::new_lambertian(dbg!(white_reflectance)));
-    let red_shader = scene.add_shader(Shader::new_lambertian(dbg!(red_reflectance)));
-    let green_shader = scene.add_shader(Shader::new_lambertian(dbg!(green_reflectance)));
+    let white_shader = scene.add_shader(Shader::new_diffuse(dbg!(white_reflectance)));
+    let red_shader = scene.add_shader(Shader::new_diffuse(dbg!(red_reflectance)));
+    let green_shader = scene.add_shader(Shader::new_diffuse(dbg!(green_reflectance)));
+    let tall_block_shader = if matches!(variant, CornellBoxVariant::MirrorBlock) {
+        scene.add_shader(Shader::new_mirror())
+    } else {
+        white_shader
+    };
 
     let identity = scene.add_transform(Transform::default());
 
@@ -409,7 +444,7 @@ pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
     scene.add_instance(Instance::new(identity, red_wall, red_shader));
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
     scene.add_instance(Instance::new(identity, short_block, white_shader));
-    scene.add_instance(Instance::new(identity, tall_block, white_shader));
+    scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
 
     let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
     let light_x0 = 0.213;
@@ -424,8 +459,7 @@ pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
         ),
         size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
     });
-    let light_shader =
-        scene.add_shader(Shader::new_lambertian(Vec3::broadcast(0.78)).with_emission(dbg!(light_emission)));
+    let light_shader = scene.add_shader(Shader::new_diffuse(Vec3::broadcast(0.78)).with_emission(dbg!(light_emission)));
     scene.add_instance(Instance::new(identity, light_geometry, light_shader));
 
     let camera_transform = scene.add_transform(Transform(Isometry3::new(
@@ -437,7 +471,7 @@ pub fn create_cornell_box_scene(with_extra_instances: bool) -> Scene {
         fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
     });
 
-    if with_extra_instances {
+    if matches!(variant, CornellBoxVariant::Instances) {
         let extra_transforms: Vec<_> = (1..10)
             .map(|i| {
                 let f = i as f32;

@@ -4,19 +4,23 @@ struct HitData {
     uvec2 bits;
 };
 
-#define HIT_DATA_Y_MAX_EXP_SHIFT    24
-#define HIT_DATA_Y_MAX_EXP_MASK     0xff000000
-#define HIT_DATA_Y_HAS_SURFACE_BIT  0x00010000
-#define HIT_DATA_Y_HAS_LIGHT_BIT    0x00020000
+#define HIT_DATA_Y_MAX_EXP_SHIFT        24
+#define HIT_DATA_Y_MAX_EXP_MASK         0xff000000
+#define HIT_DATA_Y_HAS_SURFACE_BIT      0x00010000
+#define HIT_DATA_Y_HAS_LIGHT_BIT        0x00020000
+#define HIT_DATA_Y_BSDF_TYPE_SHIFT      20
+#define HIT_DATA_Y_BSDF_TYPE_MASK       0x00300000
+
+#define BSDF_TYPE_DIFFUSE    0
+#define BSDF_TYPE_MIRROR     1
 
 HitData create_hit_data(
+    uint bsdf_type,
     vec3 reflectance,
     bool is_emissive,
-    float max_position_value)
+    int max_exponent)
 {
-    int max_exponent_tmp = 0;
-    frexp(max_position_value, max_exponent_tmp);
-    const uint max_exponent = uint(max_exponent_tmp + 128);
+    const uint biased_max_exponent = uint(max_exponent + 128);
 
     HitData hit;
     hit.bits.x = packHalf2x16(reflectance.xy);
@@ -24,7 +28,8 @@ HitData create_hit_data(
         = packHalf2x16(vec2(reflectance.z, 0.f))
         | HIT_DATA_Y_HAS_SURFACE_BIT
         | (is_emissive ? HIT_DATA_Y_HAS_LIGHT_BIT : 0)
-        | (max_exponent << HIT_DATA_Y_MAX_EXP_SHIFT)
+        | (bsdf_type << HIT_DATA_Y_BSDF_TYPE_SHIFT)
+        | (biased_max_exponent << HIT_DATA_Y_MAX_EXP_SHIFT)
         ;
     return hit;
 }
@@ -35,6 +40,10 @@ HitData create_miss_data()
     return hit;
 }
 
+uint get_bsdf_type(HitData hit)
+{
+    return (hit.bits.y & HIT_DATA_Y_BSDF_TYPE_MASK) >> HIT_DATA_Y_BSDF_TYPE_SHIFT;
+}
 vec3 get_reflectance(HitData hit)
 {
     return vec3(

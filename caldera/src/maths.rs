@@ -29,6 +29,16 @@ impl AsFloat for UVec2 {
     }
 }
 
+pub trait Saturated {
+    fn saturated(&self) -> Self;
+}
+
+impl Saturated for Vec3 {
+    fn saturated(&self) -> Self {
+        self.clamped(Vec3::zero(), Vec3::one())
+    }
+}
+
 pub trait DivRoundUp {
     fn div_round_up(&self, divisor: u32) -> Self;
 }

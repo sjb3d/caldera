@@ -20,8 +20,11 @@ layout(shaderRecordEXT, scalar) buffer ShaderRecordData {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
     vec3 reflectance;
-    uint is_emissive;
+    uint flags;
 } g_record;
+
+#define HIT_RECORD_FLAGS_BSDF_TYPE_MASK    0x1
+#define HIT_RECORD_FLAGS_IS_EMISSIVE_BIT   0x2
 
 hitAttributeEXT vec2 g_bary_coord;
 
@@ -55,8 +58,14 @@ void main()
         max(max(abs(p0), abs(p1)), abs(p2))
         + abs(gl_ObjectToWorldEXT[3])
     );
+    int max_exponent = 0;
+    frexp(max_position_value, max_exponent);
 
     g_extend.position = hit_pos_ws;
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
-    g_extend.hit = create_hit_data(g_record.reflectance, g_record.is_emissive != 0, max_position_value);
+    g_extend.hit = create_hit_data(
+        g_record.flags & HIT_RECORD_FLAGS_BSDF_TYPE_MASK,
+        g_record.reflectance,
+        (g_record.flags & HIT_RECORD_FLAGS_IS_EMISSIVE_BIT) != 0,
+        max_exponent);
 }
