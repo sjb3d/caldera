@@ -73,11 +73,8 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         self.meshes.clear()
         self.transforms.clear()
 
-    def export_mesh_data(self, fw, ob):
-        mesh = ob.to_mesh()
+    def export_mesh_data(self, fw, ob, mesh):
         check = Mesh(mesh)
-        ob.to_mesh_clear()
-
         if len(check.indices) == 0:
             return None
 
@@ -117,12 +114,22 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         return key
 
     def export_mesh(self, fw, ob, m):
-        mesh_key = self.export_mesh_data(fw, ob)
+        mesh = ob.to_mesh()
+
+        mesh_key = self.export_mesh_data(fw, ob, mesh)
         if mesh_key is not None:
             transform_key = self.export_transform(fw, ob.name, m)
 
-            fw('instance "%s" "%s"\n' % (transform_key, mesh_key))
+            color = [0.8, 0.8, 0.8]
+            if len(mesh.materials) > 0:
+                material = mesh.materials[0]
+                if material:
+                    color = material.diffuse_color
+
+            fw('instance "%s" "%s" %f %f %f\n' % (transform_key, mesh_key, color[0], color[1], color[2]))
             fw('\n')
+
+        ob.to_mesh_clear()
 
     def export_camera(self, fw, ob, m):
         # rotate to look down position z

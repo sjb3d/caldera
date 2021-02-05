@@ -25,6 +25,7 @@ enum Element<'a> {
     Instance {
         transform: &'a str,
         geometry: &'a str,
+        diffuse_color: Vec3,
     },
     Camera {
         transform: &'a str,
@@ -118,7 +119,15 @@ fn element_camera(i: &str) -> IResult<&str, Element> {
 fn element_instance(i: &str) -> IResult<&str, Element> {
     let (i, transform) = quoted_name(i)?;
     let (i, geometry) = preceded(multispace0, quoted_name)(i)?;
-    Ok((i, Element::Instance { transform, geometry }))
+    let (i, diffuse_color) = preceded(multispace0, vec3)(i)?;
+    Ok((
+        i,
+        Element::Instance {
+            transform,
+            geometry,
+            diffuse_color,
+        },
+    ))
 }
 
 fn element(i: &str) -> IResult<&str, Element> {
@@ -142,7 +151,6 @@ pub fn parse_scene(i: &str) -> Scene {
     scene.add_light(Light {
         emission: Vec3::new(0.5, 0.6, 0.7),
     });
-    let shader_ref = scene.add_shader(ShaderBuilder::new_diffuse(Vec3::broadcast(0.8)).build());
 
     for element in elements.drain(..) {
         match element {
@@ -162,7 +170,12 @@ pub fn parse_scene(i: &str) -> Scene {
                     panic!("multiple geometry with name \"{}\"", name);
                 }
             }
-            Element::Instance { transform, geometry } => {
+            Element::Instance {
+                transform,
+                geometry,
+                diffuse_color,
+            } => {
+                let shader_ref = scene.add_shader(ShaderBuilder::new_diffuse(diffuse_color).build());
                 scene.add_instance(Instance {
                     transform_ref: *transform_refs.get(transform).unwrap(),
                     geometry_ref: *geometry_refs.get(geometry).unwrap(),
