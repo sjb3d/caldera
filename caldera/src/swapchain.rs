@@ -1,4 +1,5 @@
 use crate::context::*;
+use crate::maths::*;
 use spark::{vk, Builder};
 use std::cmp;
 use std::slice;
@@ -9,7 +10,7 @@ pub struct Swapchain {
     context: Arc<Context>,
     swapchain: vk::SwapchainKHR,
     surface_format: vk::SurfaceFormatKHR,
-    extent: vk::Extent2D,
+    size: UVec2,
     images: Vec<UniqueImage>,
 }
 
@@ -26,7 +27,7 @@ impl Swapchain {
         context: &Context,
         usage: vk::ImageUsageFlags,
         old_swapchain: Option<vk::SwapchainKHR>,
-    ) -> (vk::SwapchainKHR, vk::SurfaceFormatKHR, vk::Extent2D) {
+    ) -> (vk::SwapchainKHR, vk::SurfaceFormatKHR, UVec2) {
         let surface_capabilities = unsafe {
             context
                 .instance
@@ -81,11 +82,11 @@ impl Swapchain {
             .old_swapchain(old_swapchain);
         let swapchain = unsafe { context.device.create_swapchain_khr(&swapchain_create_info, None) }.unwrap();
 
-        (swapchain, surface_format, extent)
+        (swapchain, surface_format, UVec2::new(extent.width, extent.height))
     }
 
     pub fn new(context: &Arc<Context>, usage: vk::ImageUsageFlags) -> Self {
-        let (swapchain, surface_format, extent) = Swapchain::create(context, usage, None);
+        let (swapchain, surface_format, size) = Swapchain::create(context, usage, None);
 
         let images = unsafe { context.device.get_swapchain_images_khr_to_vec(swapchain) }.unwrap();
         let uid = context.allocate_handle_uid();
@@ -94,13 +95,13 @@ impl Swapchain {
             context: Arc::clone(&context),
             swapchain,
             surface_format,
-            extent,
+            size,
             images: images.iter().map(|&im| Unique::new(im, uid)).collect(),
         }
     }
 
     pub fn recreate(&mut self, usage: vk::ImageUsageFlags) {
-        let (swapchain, surface_format, extent) = Swapchain::create(&self.context, usage, Some(self.swapchain));
+        let (swapchain, surface_format, size) = Swapchain::create(&self.context, usage, Some(self.swapchain));
         unsafe { self.context.device.destroy_swapchain_khr(Some(self.swapchain), None) };
 
         let images = unsafe { self.context.device.get_swapchain_images_khr_to_vec(swapchain) }.unwrap();
@@ -108,7 +109,7 @@ impl Swapchain {
 
         self.swapchain = swapchain;
         self.surface_format = surface_format;
-        self.extent = extent;
+        self.size = size;
         self.images = images.iter().map(|&im| Unique::new(im, uid)).collect();
     }
 
@@ -133,8 +134,8 @@ impl Swapchain {
         self.surface_format.format
     }
 
-    pub fn get_extent(&self) -> vk::Extent2D {
-        self.extent
+    pub fn get_size(&self) -> UVec2 {
+        self.size
     }
 
     pub fn present(&self, image: UniqueImage, rendering_finished_semaphore: vk::Semaphore) {

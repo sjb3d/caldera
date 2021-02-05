@@ -172,6 +172,10 @@ impl App {
     const SEQUENCE_COUNT: u32 = 256;
     const SAMPLES_PER_SEQUENCE: u32 = 256;
 
+    fn trace_size() -> UVec2 {
+        UVec2::new(1920, 1080)
+    }
+
     fn new(base: &mut AppBase, params: &AppParams) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
@@ -194,8 +198,7 @@ impl App {
                 .collect();
 
             let desc = ImageDesc::new_2d(
-                Self::SAMPLES_PER_SEQUENCE,
-                Self::SEQUENCE_COUNT,
+                UVec2::new(Self::SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
                 vk::Format::R16G16_UINT,
                 vk::ImageAspectFlags::COLOR,
             );
@@ -213,7 +216,8 @@ impl App {
         });
 
         let result_images = {
-            let desc = ImageDesc::new_2d(1024, 1024, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let trace_size = Self::trace_size();
+            let desc = ImageDesc::new_2d(trace_size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let usage = ImageUsage::FRAGMENT_STORAGE_READ
                 | ImageUsage::RAY_TRACING_STORAGE_READ
                 | ImageUsage::RAY_TRACING_STORAGE_WRITE;
@@ -365,15 +369,10 @@ impl App {
         );
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
-        let swap_extent = base.display.swapchain.get_extent();
+        let swap_size = base.display.swapchain.get_size();
         let swap_format = base.display.swapchain.get_format();
         let swap_image = schedule.import_image(
-            &ImageDesc::new_2d(
-                swap_extent.width,
-                swap_extent.height,
-                swap_format,
-                vk::ImageAspectFlags::COLOR,
-            ),
+            &ImageDesc::new_2d(swap_size, swap_format, vk::ImageAspectFlags::COLOR),
             ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
             swap_vk_image,
             ImageUsage::empty(),
@@ -386,9 +385,9 @@ impl App {
             self.accel.is_ready(&base.systems.resource_loader),
         ) {
             let top_level_accel = self.accel.top_level_accel().unwrap();
-            let result_image_desc = schedule.graph().get_image_desc(self.result_images.0).clone();
 
-            let aspect_ratio = (result_image_desc.width as f32) / (result_image_desc.height as f32);
+            let trace_size = Self::trace_size();
+            let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
             let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
             schedule.add_compute(
@@ -477,8 +476,7 @@ impl App {
                             resource_loader,
                             path_trace_pipeline_layout,
                             path_trace_descriptor_set,
-                            result_image_desc.width,
-                            result_image_desc.height,
+                            trace_size,
                         );
                     }
                 },
@@ -516,7 +514,7 @@ impl App {
                 let render_color_space = self.render_color_space;
                 let tone_map_method = self.tone_map_method;
                 move |params, cmd, render_pass| {
-                    set_viewport_helper(&context.device, cmd, swap_extent);
+                    set_viewport_helper(&context.device, cmd, swap_size);
 
                     if next_sample_index != 0 {
                         let result_image_views = (
@@ -632,9 +630,10 @@ fn main() {
 
     let event_loop = EventLoop::new();
 
+    let size = App::trace_size();
     let window = WindowBuilder::new()
         .with_title("trace")
-        .with_inner_size(Size::Logical(LogicalSize::new(1024.0, 1024.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(size.x as f64, size.y as f64)))
         .build(&event_loop)
         .unwrap();
 

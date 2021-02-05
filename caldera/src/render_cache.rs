@@ -1,5 +1,6 @@
 use crate::allocator::*;
 use crate::context::*;
+use crate::maths::*;
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};
@@ -39,8 +40,7 @@ pub struct BufferInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImageDesc {
-    pub width: u32,
-    pub height: u32,
+    pub size: UVec2,
     pub layer_count: u32,
     pub format: vk::Format,
     pub aspect_mask: vk::ImageAspectFlags,
@@ -48,10 +48,9 @@ pub struct ImageDesc {
 }
 
 impl ImageDesc {
-    pub fn new_2d(width: u32, height: u32, format: vk::Format, aspect_mask: vk::ImageAspectFlags) -> Self {
+    pub fn new_2d(size: UVec2, format: vk::Format, aspect_mask: vk::ImageAspectFlags) -> Self {
         ImageDesc {
-            width,
-            height,
+            size,
             layer_count: 1,
             format,
             aspect_mask,
@@ -71,8 +70,8 @@ impl ImageDesc {
 
     pub fn extent_2d(&self) -> vk::Extent2D {
         vk::Extent2D {
-            width: self.width,
-            height: self.height,
+            width: self.size.x,
+            height: self.size.y,
         }
     }
 
@@ -90,7 +89,7 @@ impl ImageDesc {
 
     pub(crate) fn staging_size(&self) -> usize {
         assert_eq!(self.samples, vk::SampleCountFlags::N1);
-        (self.width as usize) * (self.height as usize) * (self.layer_count as usize) * self.format.bits_per_element()
+        (self.size.x as usize) * (self.size.y as usize) * (self.layer_count as usize) * self.format.bits_per_element()
             / 8
     }
 }
@@ -129,8 +128,8 @@ impl DeviceGraphExt for Device {
             image_type: vk::ImageType::N2D,
             format: desc.format,
             extent: vk::Extent3D {
-                width: desc.width,
-                height: desc.height,
+                width: desc.size.x,
+                height: desc.size.y,
                 depth: 1,
             },
             mip_levels: 1,
@@ -186,7 +185,7 @@ struct ImageViewKey {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct FramebufferKey {
     render_pass: UniqueRenderPass,
-    extent: vk::Extent2D,
+    size: UVec2,
     color_output_image_view: UniqueImageView,
     color_temp_image_view: Option<UniqueImageView>,
     depth_temp_image_view: Option<UniqueImageView>,
@@ -466,7 +465,7 @@ impl RenderCache {
     pub fn get_framebuffer(
         &mut self,
         render_pass: UniqueRenderPass,
-        extent: &vk::Extent2D,
+        size: UVec2,
         color_output_image_view: UniqueImageView,
         color_temp_image_view: Option<UniqueImageView>,
         depth_temp_image_view: Option<UniqueImageView>,
@@ -476,7 +475,7 @@ impl RenderCache {
             .framebuffer
             .entry(FramebufferKey {
                 render_pass,
-                extent: *extent,
+                size,
                 color_output_image_view,
                 color_temp_image_view,
                 depth_temp_image_view,
@@ -494,8 +493,8 @@ impl RenderCache {
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(render_pass.0)
                     .p_attachments(&attachments)
-                    .width(extent.width)
-                    .height(extent.height)
+                    .width(size.x)
+                    .height(size.y)
                     .layers(1);
                 let framebuffer = unsafe { context.device.create_framebuffer(&framebuffer_create_info, None) }.unwrap();
                 Unique::new(framebuffer, context.allocate_handle_uid())

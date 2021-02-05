@@ -127,15 +127,10 @@ impl App {
         let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
-        let swap_extent = base.display.swapchain.get_extent();
+        let swap_size = base.display.swapchain.get_size();
         let swap_format = base.display.swapchain.get_format();
         let swap_image = schedule.import_image(
-            &ImageDesc::new_2d(
-                swap_extent.width,
-                swap_extent.height,
-                swap_format,
-                vk::ImageAspectFlags::COLOR,
-            ),
+            &ImageDesc::new_2d(swap_size, swap_format, vk::ImageAspectFlags::COLOR),
             ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
             swap_vk_image,
             ImageUsage::empty(),
@@ -146,25 +141,14 @@ impl App {
         } else {
             vk::SampleCountFlags::N1
         };
-        let depth_image_desc = ImageDesc::new_2d(
-            swap_extent.width,
-            swap_extent.height,
-            vk::Format::D32_SFLOAT,
-            vk::ImageAspectFlags::DEPTH,
-        )
-        .with_samples(main_sample_count);
+        let depth_image_desc = ImageDesc::new_2d(swap_size, vk::Format::D32_SFLOAT, vk::ImageAspectFlags::DEPTH)
+            .with_samples(main_sample_count);
         let depth_image = schedule.describe_image(&depth_image_desc);
         let mut main_render_state =
             RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]).with_depth_temp(depth_image);
         if main_sample_count != vk::SampleCountFlags::N1 {
             let msaa_image = schedule.describe_image(
-                &ImageDesc::new_2d(
-                    swap_extent.width,
-                    swap_extent.height,
-                    swap_format,
-                    vk::ImageAspectFlags::COLOR,
-                )
-                .with_samples(main_sample_count),
+                &ImageDesc::new_2d(swap_size, swap_format, vk::ImageAspectFlags::COLOR).with_samples(main_sample_count),
             );
             main_render_state = main_render_state.with_color_temp(msaa_image);
         }
@@ -181,7 +165,7 @@ impl App {
         );
 
         let vertical_fov = PI / 7.0;
-        let aspect_ratio = (swap_extent.width as f32) / (swap_extent.height as f32);
+        let aspect_ratio = (swap_size.x as f32) / (swap_size.y as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
         if base.context.device.extensions.supports_khr_acceleration_structure()
@@ -218,10 +202,7 @@ impl App {
             let xy_from_st =
                 Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * vertical_fov).tan(), Vec2::zero());
             let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
-            let coord_from_uv = Scale2Offset2::new(
-                UVec2::new(swap_extent.width, swap_extent.height).as_float(),
-                Vec2::zero(),
-            );
+            let coord_from_uv = Scale2Offset2::new(swap_size.as_float(), Vec2::zero());
             let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
 
             let ray_origin = world_from_view.translation;
@@ -234,7 +215,7 @@ impl App {
                 &base.systems.resource_loader,
                 &mut schedule,
                 &base.systems.descriptor_pool,
-                &swap_extent,
+                swap_size,
                 ray_origin,
                 ray_vec_from_coord,
             )
@@ -262,7 +243,7 @@ impl App {
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
-                    set_viewport_helper(&context.device, cmd, swap_extent);
+                    set_viewport_helper(&context.device, cmd, swap_size);
 
                     if let Some(trace_image) = trace_image {
                         let trace_image_view = params.get_image_view(trace_image);

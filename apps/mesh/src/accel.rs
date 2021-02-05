@@ -539,7 +539,7 @@ impl AccelInfo {
         resource_loader: &ResourceLoader,
         schedule: &mut RenderSchedule<'a>,
         descriptor_pool: &'a DescriptorPool,
-        swap_extent: &'a vk::Extent2D,
+        swap_size: UVec2,
         ray_origin: Vec3,
         ray_vec_from_coord: Mat3,
     ) -> Option<ImageHandle> {
@@ -552,12 +552,7 @@ impl AccelInfo {
                 .get_buffer_device_address_helper(shader_binding_table_buffer)
         };
 
-        let output_desc = ImageDesc::new_2d(
-            swap_extent.width,
-            swap_extent.height,
-            vk::Format::R32_UINT,
-            vk::ImageAspectFlags::COLOR,
-        );
+        let output_desc = ImageDesc::new_2d(swap_size, vk::Format::R32_UINT, vk::ImageAspectFlags::COLOR);
         let output_image = schedule.describe_image(&output_desc);
 
         schedule.add_compute(
@@ -616,8 +611,8 @@ impl AccelInfo {
                         &miss_shader_binding_table,
                         &hit_shader_binding_table,
                         &callable_shader_binding_table,
-                        swap_extent.width,
-                        swap_extent.height,
+                        swap_size.x,
+                        swap_size.y,
                         1,
                     );
                 }

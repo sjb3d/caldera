@@ -766,8 +766,7 @@ impl<'a> RenderSchedule<'a> {
                         let color_temp_desc = color_temp_resource.desc();
                         let color_temp_image_view = color_temp_resource.image_view().unwrap();
 
-                        assert_eq!(color_output_desc.width, color_temp_desc.width);
-                        assert_eq!(color_output_desc.height, color_temp_desc.height);
+                        assert_eq!(color_output_desc.size, color_temp_desc.size);
                         assert_eq!(color_output_desc.format, color_temp_desc.format);
 
                         clear_values.push(color_clear_value);
@@ -783,8 +782,7 @@ impl<'a> RenderSchedule<'a> {
                         let depth_temp_desc = depth_temp_resource.desc();
                         let depth_temp_image_view = depth_temp_resource.image_view().unwrap();
 
-                        assert_eq!(color_output_desc.width, depth_temp_desc.width);
-                        assert_eq!(color_output_desc.height, depth_temp_desc.height);
+                        assert_eq!(color_output_desc.size, depth_temp_desc.size);
                         assert_eq!(samples, depth_temp_desc.samples);
 
                         clear_values.push(depth_clear_value);
@@ -801,7 +799,7 @@ impl<'a> RenderSchedule<'a> {
 
                     let framebuffer = self.render_graph.render_cache.get_framebuffer(
                         render_pass,
-                        &color_output_desc.extent_2d(),
+                        color_output_desc.size,
                         color_output_image_view,
                         color_temp_image_view,
                         depth_temp_image_view,

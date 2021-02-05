@@ -118,8 +118,7 @@ impl App {
                 .collect();
 
             let desc = ImageDesc::new_2d(
-                Self::SAMPLES_PER_SEQUENCE,
-                Self::SEQUENCE_COUNT,
+                UVec2::new(Self::SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
                 vk::Format::R16G16_UINT,
                 vk::ImageAspectFlags::COLOR,
             );
@@ -138,7 +137,7 @@ impl App {
 
         let trace_images = {
             let size = Self::trace_image_size();
-            let desc = ImageDesc::new_2d(size.x, size.y, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let desc = ImageDesc::new_2d(size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let usage = ImageUsage::FRAGMENT_STORAGE_READ
                 | ImageUsage::COMPUTE_STORAGE_READ
                 | ImageUsage::COMPUTE_STORAGE_WRITE;
@@ -302,15 +301,10 @@ impl App {
         };
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
-        let swap_extent = base.display.swapchain.get_extent();
+        let swap_size = base.display.swapchain.get_size();
         let swap_format = base.display.swapchain.get_format();
         let swap_image = schedule.import_image(
-            &ImageDesc::new_2d(
-                swap_extent.width,
-                swap_extent.height,
-                swap_format,
-                vk::ImageAspectFlags::COLOR,
-            ),
+            &ImageDesc::new_2d(swap_size, swap_format, vk::ImageAspectFlags::COLOR),
             ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
             swap_vk_image,
             ImageUsage::empty(),
@@ -346,9 +340,8 @@ impl App {
                         params.get_image_view(trace_images.1),
                         params.get_image_view(trace_images.2),
                     );
-                    let swap_size = UVec2::new(swap_extent.width, swap_extent.height);
 
-                    set_viewport_helper(&context.device, cmd, swap_extent);
+                    set_viewport_helper(&context.device, cmd, swap_size);
 
                     let copy_descriptor_set = copy_descriptor_set_layout.write(
                         &descriptor_pool,

@@ -20,15 +20,18 @@ use winit::{
     window::Window,
 };
 
-pub fn set_viewport_helper(device: &Device, cmd: vk::CommandBuffer, extent: vk::Extent2D) {
+pub fn set_viewport_helper(device: &Device, cmd: vk::CommandBuffer, dims: UVec2) {
     let viewport = vk::Viewport {
-        width: extent.width as f32,
-        height: extent.height as f32,
+        width: dims.x as f32,
+        height: dims.y as f32,
         max_depth: 1.0,
         ..Default::default()
     };
     let scissor = vk::Rect2D {
-        extent,
+        extent: vk::Extent2D {
+            width: dims.x,
+            height: dims.y,
+        },
         ..Default::default()
     };
     unsafe {

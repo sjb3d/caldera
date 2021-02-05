@@ -834,8 +834,7 @@ impl SceneAccel {
         resource_loader: &ResourceLoader,
         path_trace_pipeline_layout: vk::PipelineLayout,
         path_trace_descriptor_set: vk::DescriptorSet,
-        width: u32,
-        height: u32,
+        dims: UVec2,
     ) {
         let device = &self.context.device;
 
@@ -873,8 +872,8 @@ impl SceneAccel {
                 &miss_shader_binding_table,
                 &hit_shader_binding_table,
                 &callable_shader_binding_table,
-                width,
-                height,
+                dims.x,
+                dims.y,
                 1,
             );
         }
