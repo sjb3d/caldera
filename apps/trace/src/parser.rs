@@ -49,14 +49,14 @@ fn transform_matrix(i: &str) -> IResult<&str, Transform> {
             preceded(multispace1, float),
         )),
         |v| {
-            let rotation = Mat3::new(
-                Vec3::new(v.0, v.4, v.8),
-                Vec3::new(v.1, v.5, v.9),
-                Vec3::new(v.2, v.6, v.10),
-            )
-            .into_rotor3();
-            let translation = Vec3::new(v.3, v.7, v.11);
-            Transform(Isometry3::new(translation, rotation))
+            let col0 = Vec3::new(v.0, v.4, v.8);
+            let col1 = Vec3::new(v.1, v.5, v.9);
+            let col2 = Vec3::new(v.2, v.6, v.10);
+            let col3 = Vec3::new(v.3, v.7, v.11);
+            let scale = col0.cross(col1).dot(col2).powf(1.0 / 3.0);
+            let rotation = Mat3::new(col0 / scale, col1 / scale, col2 / scale).into_rotor3();
+            let translation = col3;
+            Transform(Similarity3::new(translation, rotation, scale))
         },
     )(i)
 }

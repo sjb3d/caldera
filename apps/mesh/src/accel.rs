@@ -488,7 +488,7 @@ impl AccelInfo {
 
                 for src in instances.iter() {
                     let instance = AccelerationStructureInstance {
-                        transform: src.into_homogeneous_matrix().into_transposed_transform(),
+                        transform: src.into_transform().transposed(),
                         instance_custom_index_and_mask: 0xff_00_00_00,
                         instance_shader_binding_table_record_offset_and_flags: 0,
                         acceleration_structure_reference: bottom_level_device_address,

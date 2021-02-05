@@ -178,7 +178,7 @@ impl MeshInfo {
             .map_buffer(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
             .unwrap();
         for src in self.instances.iter() {
-            let instance_data = src.into_homogeneous_matrix().into_transposed_transform();
+            let instance_data = src.into_transform().transposed();
             writer.write(&instance_data);
         }
     }

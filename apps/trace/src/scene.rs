@@ -1,12 +1,12 @@
 use caldera::*;
 
 #[derive(Debug, Default)]
-pub struct Transform(pub Isometry3); // TODO: allow scale?
+pub struct Transform(pub Similarity3);
 
 #[derive(Debug)]
 pub enum Geometry {
     TriangleMesh { positions: Vec<Vec3>, indices: Vec<UVec3> },
-    Quad { transform: Isometry3, size: Vec2 },
+    Quad { transform: Similarity3, size: Vec2 },
 }
 
 #[derive(Debug)]
@@ -478,9 +478,10 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         let light_z1 = 0.332;
         let light_y = 0.5488 - 0.0001;
         let light_geometry = scene.add_geometry(Geometry::Quad {
-            transform: Isometry3::new(
+            transform: Similarity3::new(
                 Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
                 Rotor3::from_rotation_yz(0.5 * PI),
+                1.0,
             ),
             size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
         });
@@ -492,9 +493,10 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         scene.add_instance(Instance::new(identity, light_geometry, light_shader));
     }
 
-    let camera_transform = scene.add_transform(Transform(Isometry3::new(
+    let camera_transform = scene.add_transform(Transform(Similarity3::new(
         Vec3::new(0.278, 0.273, -0.8),
         Rotor3::identity(),
+        1.0,
     )));
     scene.add_camera(Camera {
         transform_ref: camera_transform,
@@ -505,9 +507,10 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         let extra_transforms: Vec<_> = (1..10)
             .map(|i| {
                 let f = i as f32;
-                scene.add_transform(Transform(Isometry3::new(
+                scene.add_transform(Transform(Similarity3::new(
                     Vec3::new(-0.01 * f, 0.02 * f, 0.0),
                     Rotor3::from_rotation_xz(0.05 * f),
+                    1.0,
                 )))
             })
             .collect();

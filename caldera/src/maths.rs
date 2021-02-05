@@ -1,5 +1,4 @@
 use bytemuck::{Pod, Zeroable};
-use std::convert::TryInto;
 use std::ops::Mul;
 
 pub use std::f32::consts::PI;
@@ -56,18 +55,18 @@ pub struct Transform3 {
 }
 
 impl Transform3 {
-    fn new(col0: Vec3, col1: Vec3, col2: Vec3, col3: Vec3) -> Self {
+    pub fn new(col0: Vec3, col1: Vec3, col2: Vec3, col3: Vec3) -> Self {
         Self {
             cols: [col0, col1, col2, col3],
         }
     }
 
-    pub fn as_slice(&self) -> &[f32] {
-        unsafe { std::slice::from_raw_parts(self as *const Self as *const f32, 12) }
-    }
-
-    pub fn as_array(&self) -> [f32; 12] {
-        self.as_slice().try_into().unwrap()
+    pub fn transposed(&self) -> TransposedTransform3 {
+        TransposedTransform3::new(
+            Vec4::new(self.cols[0].x, self.cols[1].x, self.cols[2].x, self.cols[3].x),
+            Vec4::new(self.cols[0].y, self.cols[1].y, self.cols[2].y, self.cols[3].y),
+            Vec4::new(self.cols[0].z, self.cols[1].z, self.cols[2].z, self.cols[3].z),
+        )
     }
 }
 
@@ -85,6 +84,16 @@ impl IntoTransform for Mat4 {
         )
     }
 }
+impl IntoTransform for Isometry3 {
+    fn into_transform(&self) -> Transform3 {
+        self.into_homogeneous_matrix().into_transform()
+    }
+}
+impl IntoTransform for Similarity3 {
+    fn into_transform(&self) -> Transform3 {
+        self.into_homogeneous_matrix().into_transform()
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
@@ -97,25 +106,6 @@ impl TransposedTransform3 {
         Self {
             cols: [col0, col1, col2],
         }
-    }
-
-    pub fn as_slice(&self) -> &[f32] {
-        unsafe { std::slice::from_raw_parts(self as *const Self as *const f32, 12) }
-    }
-
-    pub fn as_array(&self) -> [f32; 12] {
-        self.as_slice().try_into().unwrap()
-    }
-}
-
-pub trait IntoTransposedTransform {
-    fn into_transposed_transform(&self) -> TransposedTransform3;
-}
-
-impl IntoTransposedTransform for Mat4 {
-    fn into_transposed_transform(&self) -> TransposedTransform3 {
-        let transposed = self.transposed();
-        TransposedTransform3::new(transposed.cols[0], transposed.cols[1], transposed.cols[2])
     }
 }
 

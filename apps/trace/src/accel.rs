@@ -633,7 +633,7 @@ impl SceneAccel {
                         let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
                         let transform = shared.scene.transform(transform_ref);
                         let instance = AccelerationStructureInstance {
-                            transform: transform.0.into_homogeneous_matrix().into_transposed_transform(),
+                            transform: transform.0.into_transform().transposed(),
                             instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
                             instance_shader_binding_table_record_offset_and_flags: record_offset,
                             acceleration_structure_reference,

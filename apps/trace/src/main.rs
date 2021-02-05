@@ -29,7 +29,7 @@ struct SamplePixel {
 
 #[derive(Clone, Copy)]
 pub struct QuadLight {
-    pub transform: Isometry3,
+    pub transform: Similarity3,
     pub size: Vec2,
     pub emission: Vec3,
 }
@@ -442,7 +442,7 @@ impl App {
                                     fov_size_at_unit_z,
                                     world_from_light: quad_light
                                         .map(|light| light.transform)
-                                        .unwrap_or_else(Isometry3::identity)
+                                        .unwrap_or_else(Similarity3::identity)
                                         .into_homogeneous_matrix()
                                         .into_transform(),
                                     light_size_ws: quad_light.map(|light| light.size).unwrap_or_else(Vec2::zero),
