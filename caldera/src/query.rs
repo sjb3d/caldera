@@ -92,10 +92,16 @@ impl QueryPool {
                 )
             }
             .unwrap();
-            for (i, name) in set.names.iter().enumerate().filter_map(|(i, name)| match name {
-                Some(name) => Some((i, name)),
-                None => None,
-            }) {
+            for (i, name) in set
+                .names
+                .iter()
+                .take(QuerySet::MAX_PER_FRAME as usize - 1)
+                .enumerate()
+                .filter_map(|(i, name)| match name {
+                    Some(name) => Some((i, name)),
+                    None => None,
+                })
+            {
                 let timestamp_delta = (query_results[i + 1] - query_results[i]) & self.timestamp_valid_mask;
                 self.last_us
                     .push((name, (timestamp_delta as f32) * self.timestamp_period_us));
