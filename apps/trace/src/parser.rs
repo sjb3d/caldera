@@ -148,7 +148,9 @@ pub fn parse_scene(i: &str) -> Scene {
         match element {
             Element::Transform { name, transform } => {
                 let transform_ref = scene.add_transform(transform);
-                transform_refs.insert(name, transform_ref);
+                if transform_refs.insert(name, transform_ref).is_some() {
+                    panic!("multiple transforms with name \"{}\"", name);
+                }
             }
             Element::Mesh {
                 name,
@@ -156,7 +158,9 @@ pub fn parse_scene(i: &str) -> Scene {
                 indices,
             } => {
                 let geometry_ref = scene.add_geometry(Geometry::TriangleMesh { positions, indices });
-                geometry_refs.insert(name, geometry_ref);
+                if geometry_refs.insert(name, geometry_ref).is_some() {
+                    panic!("multiple geometry with name \"{}\"", name);
+                }
             }
             Element::Instance { transform, geometry } => {
                 scene.add_instance(Instance {
