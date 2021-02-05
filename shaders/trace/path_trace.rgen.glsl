@@ -13,7 +13,8 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceData {
     mat4x3 world_from_camera;
     vec2 fov_size_at_unit_z;
     mat4x3 world_from_light;
-    vec2 light_size_ws;
+    vec2 light_size;
+    float light_area_ws;
     vec3 light_emission;
     uint sample_index;
     uint max_segment_count;
@@ -64,14 +65,14 @@ float sample_lights(
 {
     const vec2 light_rand_u01 = rand_u01(2*segment_index - 1);
 
-    light_position = g_data.world_from_light * vec4((light_rand_u01 - .5f) * g_data.light_size_ws, 0.f, 1.f);
+    light_position = g_data.world_from_light * vec4((light_rand_u01 - .5f) * g_data.light_size, 0.f, 1.f);
     light_normal = g_data.world_from_light[2];
-    light_epsilon = ldexp(max_element(abs(g_data.world_from_light[3])) + max_element(abs(g_data.light_size_ws)), LOG2_EPSILON_FACTOR);
+    light_epsilon = ldexp(max_element(abs(g_data.world_from_light[3])) + max_element(abs(g_data.light_size)), LOG2_EPSILON_FACTOR);
 
     const vec3 target_from_light = target_position - light_position;
     const float light_facing_term = dot(target_from_light, light_normal);
     light_emission = (light_facing_term > 0.f) ? sample_from_rec709(g_data.light_emission) : vec3(0.f);
-    light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
+    light_area_pdf = 1.f/g_data.light_area_ws;
 
     const float target_facing_term = dot(target_from_light, target_normal);
     const float distance_sq = dot(target_from_light, target_from_light);
@@ -89,7 +90,7 @@ float evaluate_hit_light(
     const vec3 prev_from_light = prev_position - light_position;
     const float light_facing_term = dot(prev_from_light, light_normal);
     light_emission = (light_facing_term > 0.f) ? sample_from_rec709(g_data.light_emission) : vec3(0.f);
-    light_area_pdf = 1.f/mul_elements(g_data.light_size_ws);
+    light_area_pdf = 1.f/g_data.light_area_ws;
 
     const float prev_facing_term = dot(prev_from_light, prev_normal);
     const float distance_sq = dot(prev_from_light, prev_from_light);
@@ -225,7 +226,7 @@ void main()
         const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
 
         // sample a light source
-        if (!hit_is_delta && g_data.light_size_ws.x != 0.f) {
+        if (!hit_is_delta && g_data.light_area_ws != 0.f) {
             // sample from all light sources
             vec3 light_position;
             vec3 light_normal;

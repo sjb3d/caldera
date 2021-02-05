@@ -32,7 +32,7 @@ enum Element<'a> {
     },
 }
 
-fn transform_matrix(i: &str) -> IResult<&str, Transform> {
+fn transform(i: &str) -> IResult<&str, Transform3> {
     map(
         tuple((
             float,
@@ -49,14 +49,12 @@ fn transform_matrix(i: &str) -> IResult<&str, Transform> {
             preceded(multispace1, float),
         )),
         |v| {
-            let col0 = Vec3::new(v.0, v.4, v.8);
-            let col1 = Vec3::new(v.1, v.5, v.9);
-            let col2 = Vec3::new(v.2, v.6, v.10);
-            let col3 = Vec3::new(v.3, v.7, v.11);
-            let scale = col0.cross(col1).dot(col2).powf(1.0 / 3.0);
-            let rotation = Mat3::new(col0 / scale, col1 / scale, col2 / scale).into_rotor3();
-            let translation = col3;
-            Transform(Similarity3::new(translation, rotation, scale))
+            Transform3::new(
+                Vec3::new(v.0, v.4, v.8),
+                Vec3::new(v.1, v.5, v.9),
+                Vec3::new(v.2, v.6, v.10),
+                Vec3::new(v.3, v.7, v.11),
+            )
         },
     )(i)
 }
@@ -67,7 +65,7 @@ fn quoted_name(i: &str) -> IResult<&str, &str> {
 
 fn element_transform(i: &str) -> IResult<&str, Element> {
     let (i, name) = quoted_name(i)?;
-    let (i, transform) = preceded(multispace0, transform_matrix)(i)?;
+    let (i, transform) = map(preceded(multispace0, transform), Transform)(i)?;
     Ok((i, Element::Transform { name, transform }))
 }
 

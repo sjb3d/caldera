@@ -29,9 +29,15 @@ struct SamplePixel {
 
 #[derive(Clone, Copy)]
 pub struct QuadLight {
-    pub transform: Similarity3,
+    pub transform: Transform3,
     pub size: Vec2,
     pub emission: Vec3,
+}
+
+impl QuadLight {
+    fn area_ws(&self) -> f32 {
+        self.transform.cols[0].cross(self.transform.cols[1]).mag() * self.size.x * self.size.y
+    }
 }
 
 #[repr(C)]
@@ -40,7 +46,8 @@ struct PathTraceData {
     world_from_camera: Transform3,
     fov_size_at_unit_z: Vec2,
     world_from_light: Transform3,
-    light_size_ws: Vec2,
+    light_size: Vec2,
+    light_area_ws: f32,
     light_emission: Vec3,
     sample_index: u32,
     max_segment_count: u32,
@@ -236,7 +243,10 @@ impl App {
 
         let scene = accel.scene();
         let camera_ref = CameraRef(0);
-        let rotation = scene.transform(scene.camera(camera_ref).transform_ref).0.rotation;
+        let rotation = scene
+            .transform(scene.camera(camera_ref).transform_ref)
+            .0
+            .extract_rotation();
 
         Self {
             context: Arc::clone(&context),
@@ -305,7 +315,7 @@ impl App {
                     for camera_ref in scene.camera_ref_iter() {
                         if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
                             let camera = scene.camera(camera_ref);
-                            let rotation = scene.transform(camera.transform_ref).0.rotation;
+                            let rotation = scene.transform(camera.transform_ref).0.extract_rotation();
                             self.camera_ref = camera_ref;
                             self.view_drag = ViewDrag::new(rotation);
                             needs_reset = true;
@@ -334,7 +344,7 @@ impl App {
             self.next_sample_index = 0;
         }
         let world_from_camera = Isometry3::new(
-            scene.transform(camera.transform_ref).0.translation,
+            scene.transform(camera.transform_ref).0.extract_translation(),
             self.view_drag.rotation,
         );
 
@@ -442,10 +452,9 @@ impl App {
                                     fov_size_at_unit_z,
                                     world_from_light: quad_light
                                         .map(|light| light.transform)
-                                        .unwrap_or_else(Similarity3::identity)
-                                        .into_homogeneous_matrix()
-                                        .into_transform(),
-                                    light_size_ws: quad_light.map(|light| light.size).unwrap_or_else(Vec2::zero),
+                                        .unwrap_or_else(Transform3::identity),
+                                    light_size: quad_light.map(|light| light.size).unwrap_or_else(Vec2::zero),
+                                    light_area_ws: quad_light.map(|light| light.area_ws()).unwrap_or(0.0),
                                     light_emission: quad_light
                                         .map(|light| light.emission)
                                         .or(dome_light.map(|light| light.emission))

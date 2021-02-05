@@ -49,16 +49,35 @@ impl DivRoundUp for UVec2 {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct Transform3 {
     pub cols: [Vec3; 4],
 }
 
 impl Transform3 {
+    pub fn identity() -> Self {
+        Transform3::new(Vec3::unit_x(), Vec3::unit_y(), Vec3::unit_z(), Vec3::zero())
+    }
+
     pub fn new(col0: Vec3, col1: Vec3, col2: Vec3, col3: Vec3) -> Self {
         Self {
             cols: [col0, col1, col2, col3],
         }
+    }
+
+    pub fn extract_rotation(&self) -> Rotor3 {
+        self.into_similarity().rotation
+    }
+
+    pub fn extract_translation(&self) -> Vec3 {
+        self.cols[3]
+    }
+
+    pub fn into_similarity(&self) -> Similarity3 {
+        let scale = self.cols[0].cross(self.cols[1]).dot(self.cols[2]).powf(1.0 / 3.0);
+        let rotation = Mat3::new(self.cols[0] / scale, self.cols[1] / scale, self.cols[2] / scale).into_rotor3();
+        let translation = self.cols[3];
+        Similarity3::new(translation, rotation, scale)
     }
 
     pub fn transposed(&self) -> TransposedTransform3 {
@@ -67,6 +86,37 @@ impl Transform3 {
             Vec4::new(self.cols[0].y, self.cols[1].y, self.cols[2].y, self.cols[3].y),
             Vec4::new(self.cols[0].z, self.cols[1].z, self.cols[2].z, self.cols[3].z),
         )
+    }
+
+    pub fn transform_vec(&self, vec: Vec3) -> Vec3 {
+        self.cols[0] * vec.x + self.cols[1] * vec.y + self.cols[2] * vec.z
+    }
+}
+
+impl Default for Transform3 {
+    fn default() -> Self {
+        Transform3::identity()
+    }
+}
+
+impl Mul for Transform3 {
+    type Output = Transform3;
+
+    fn mul(self, rhs: Transform3) -> Self::Output {
+        Transform3::new(
+            self.transform_vec(rhs.cols[0]),
+            self.transform_vec(rhs.cols[1]),
+            self.transform_vec(rhs.cols[2]),
+            self * rhs.cols[3],
+        )
+    }
+}
+
+impl Mul<Vec3> for Transform3 {
+    type Output = Vec3;
+
+    fn mul(self, rhs: Vec3) -> Self::Output {
+        self.cols[0] * rhs.x + self.cols[1] * rhs.y + self.cols[2] * rhs.z + self.cols[3]
     }
 }
 
