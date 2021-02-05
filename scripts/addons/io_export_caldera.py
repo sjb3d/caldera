@@ -67,11 +67,11 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
     filename_ext = ".caldera"
 
     meshes = list()
-    transform_count = 0
+    transforms = list()
 
     def reset(self):
         self.meshes.clear()
-        self.transform_count = 0
+        self.transforms.clear()
 
     def export_mesh_data(self, fw, ob):
         mesh = ob.to_mesh()
@@ -101,8 +101,12 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         return key
 
     def export_transform(self, fw, name, m):
-        key = '%i-%s' % (self.transform_count, name)
-        self.transform_count += 1
+        for (key, other) in self.transforms:
+            if m == other:
+                return key
+
+        key = '%i-%s' % (len(self.transforms), name)
+        self.transforms.append((key, m))
 
         fw('transform "%s"\n' % key)
         fw('%f %f %f %f\n' % m[0][:])
@@ -137,10 +141,11 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         dg = context.evaluated_depsgraph_get()
         for dup in dg.object_instances:
             ob = dup.instance_object if dup.is_instance else dup.object
+            m = mathutils.Matrix(dup.matrix_world)
             if ob.type == 'MESH':
-                self.export_mesh(fw, ob, dup.matrix_world)
+                self.export_mesh(fw, ob, m)
             elif ob.type == 'CAMERA':
-                self.export_camera(fw, ob, dup.matrix_world)
+                self.export_camera(fw, ob, m)
   
         file.close()
         self.reset()
