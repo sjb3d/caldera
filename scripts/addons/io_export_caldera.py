@@ -39,50 +39,53 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
     bl_label = "Export Caldera"
     filename_ext = ".caldera"
 
-    seen_meshes = set()
+    seen_meshes = dict()
 
     def reset_seen(self):
         self.seen_meshes.clear()
 
-    def export_mesh_data(self, fw, mesh):
+    def export_mesh_data(self, fw, ob):
         # only export once
-        if mesh.name in self.seen_meshes:
-            return
-        self.seen_meshes.add(mesh.name)
-        
-        fw('mesh "%s"\n' % mesh.name)
-        fw('{\n')
-        for v in mesh.vertices:
-            fw('%f %f %f\n' % v.co[:])
-        fw('}\n')
-        fw('{\n')
-        for p in mesh.polygons:
-            for idx in range(2, len(p.vertices)):
-                fw('%i %i %i\n' % (p.vertices[0], p.vertices[idx - 1], p.vertices[idx]))
-        fw('}\n')
-        fw('\n')
+        name = ob.data.name
+        is_valid = self.seen_meshes.get(name)
+        if is_valid is None:
+            mesh = ob.to_mesh()
+            is_valid = (len(mesh.polygons) > 0)
+            if is_valid:
+                fw('mesh "%s"\n' % name)
+                fw('{\n')
+                for v in mesh.vertices:
+                    fw('%f %f %f\n' % v.co[:])
+                fw('}\n')
+                fw('{\n')
+                for p in mesh.polygons:
+                    for idx in range(2, len(p.vertices)):
+                        fw('%i %i %i\n' % (p.vertices[0], p.vertices[idx - 1], p.vertices[idx]))
+                fw('}\n')
+                fw('\n')
+            ob.to_mesh_clear()
+            self.seen_meshes[name] = is_valid
+        return name if is_valid else None
 
-    def export_transform(self, fw, ob, m):
-        fw('transform "%s"\n' % ob.name)
+    def export_transform(self, fw, name, m):
+        fw('transform "%s"\n' % name)
         fw('%f %f %f %f\n' % m[0][:])
         fw('%f %f %f %f\n' % m[1][:])
         fw('%f %f %f %f\n' % m[2][:])
         fw('\n')
 
     def export_mesh(self, fw, ob, m):
-        if len(ob.data.polygons) == 0:
-            return
+        mesh_name = self.export_mesh_data(fw, ob)
+        if mesh_name is not None:
+            self.export_transform(fw, ob.name, m)
 
-        self.export_transform(fw, ob, m)
-        self.export_mesh_data(fw, ob.data)
-
-        fw('instance "%s" "%s"\n' % (ob.name, ob.data.name))
-        fw('\n')
+            fw('instance "%s" "%s"\n' % (ob.name, mesh_name))
+            fw('\n')
 
     def export_camera(self, fw, ob, m):
         # rotate to look down position z
         adjusted_m = m @ mathutils.Matrix.Rotation(math.pi, 4, 'Y')
-        self.export_transform(fw, ob, adjusted_m)
+        self.export_transform(fw, ob.name, adjusted_m)
 
         fw('camera "%s" %f\n' % (ob.name, ob.data.angle_y))
         fw('\n')
