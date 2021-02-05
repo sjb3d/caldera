@@ -178,5 +178,6 @@ pub fn parse_scene(i: &str) -> Scene {
         }
     }
 
+    scene.bake_unique_geometry();
     scene
 }

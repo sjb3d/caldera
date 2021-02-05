@@ -154,6 +154,30 @@ impl Scene {
     pub fn camera(&self, r: CameraRef) -> &Camera {
         self.cameras.get(r.0 as usize).unwrap()
     }
+
+    pub fn bake_unique_geometry(&mut self) {
+        let mut instance_counts = vec![0u32; self.geometries.len()];
+        for instance in self.instances.iter() {
+            instance_counts[instance.geometry_ref.0 as usize] += 1;
+        }
+        let identity_ref = self.add_transform(Transform::default());
+        for instance in self.instances.iter_mut() {
+            if instance_counts[instance.geometry_ref.0 as usize] == 1 {
+                let bake = self.transforms.get(instance.transform_ref.0 as usize).unwrap().0;
+                match self.geometries.get_mut(instance.geometry_ref.0 as usize).unwrap() {
+                    Geometry::TriangleMesh { positions, .. } => {
+                        for pos in positions.iter_mut() {
+                            *pos = bake * *pos;
+                        }
+                    }
+                    Geometry::Quad { transform, .. } => {
+                        *transform = bake * *transform;
+                    }
+                }
+                instance.transform_ref = identity_ref;
+            }
+        }
+    }
 }
 
 pub struct TriangleMeshBuilder {
