@@ -12,7 +12,7 @@ pub enum Geometry {
 #[derive(Debug)]
 pub enum Surface {
     Diffuse { reflectance: Vec3 },
-    Mirror,
+    Mirror { reflectance: f32 },
 }
 
 /*
@@ -224,9 +224,9 @@ impl ShaderBuilder {
         })
     }
 
-    pub fn new_mirror() -> Self {
+    pub fn new_mirror(reflectance: f32) -> Self {
         Self(Shader {
-            surface: Surface::Mirror,
+            surface: Surface::Mirror { reflectance },
             emission: None,
         })
     }
@@ -475,7 +475,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let red_shader = scene.add_shader(ShaderBuilder::new_diffuse(red_reflectance).build());
     let green_shader = scene.add_shader(ShaderBuilder::new_diffuse(green_reflectance).build());
     let tall_block_shader = if matches!(variant, CornellBoxVariant::Mirror) {
-        scene.add_shader(ShaderBuilder::new_mirror().build())
+        scene.add_shader(ShaderBuilder::new_mirror(1.0).build())
     } else {
         white_shader
     };

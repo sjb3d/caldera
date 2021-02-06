@@ -25,7 +25,7 @@ enum Element<'a> {
     Instance {
         transform: &'a str,
         geometry: &'a str,
-        diffuse_color: Vec3,
+        surface: Surface,
     },
     Camera {
         transform: &'a str,
@@ -116,16 +116,29 @@ fn element_camera(i: &str) -> IResult<&str, Element> {
     Ok((i, Element::Camera { transform, fov_y }))
 }
 
+fn surface(i: &str) -> IResult<&str, Surface> {
+    alt((
+        map(preceded(tag("diffuse"), preceded(multispace1, vec3)), |reflectance| {
+            Surface::Diffuse { reflectance }
+        }),
+        map(preceded(tag("mirror"), preceded(multispace1, vec3)), |reflectance| {
+            Surface::Mirror {
+                reflectance: reflectance.x,
+            }
+        }),
+    ))(i)
+}
+
 fn element_instance(i: &str) -> IResult<&str, Element> {
     let (i, transform) = quoted_name(i)?;
     let (i, geometry) = preceded(multispace0, quoted_name)(i)?;
-    let (i, diffuse_color) = preceded(multispace0, vec3)(i)?;
+    let (i, surface) = preceded(multispace0, surface)(i)?;
     Ok((
         i,
         Element::Instance {
             transform,
             geometry,
-            diffuse_color,
+            surface,
         },
     ))
 }
@@ -173,9 +186,12 @@ pub fn parse_scene(i: &str) -> Scene {
             Element::Instance {
                 transform,
                 geometry,
-                diffuse_color,
+                surface,
             } => {
-                let shader_ref = scene.add_shader(ShaderBuilder::new_diffuse(diffuse_color).build());
+                let shader_ref = scene.add_shader(Shader {
+                    surface,
+                    emission: None,
+                });
                 scene.add_instance(Instance {
                     transform_ref: *transform_refs.get(transform).unwrap(),
                     geometry_ref: *geometry_refs.get(geometry).unwrap(),

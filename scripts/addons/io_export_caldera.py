@@ -113,6 +113,25 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
 
         return key
 
+    def translate_material(self, material):
+        if not material:
+            return None
+        tree = material.node_tree
+        if not tree:
+            return None
+
+        input_nodes = dict([[link.to_socket, link.from_node] for link in tree.links])
+        for node in tree.nodes:
+            if node.bl_idname == 'ShaderNodeOutputMaterial':
+                surface_node = input_nodes[node.inputs['Surface']]
+                if surface_node:
+                    if surface_node.bl_idname == 'ShaderNodeBsdfGlossy':
+                        if surface_node.distribution == 'BECKMANN':
+                            return ("mirror", 0.5, 0.0, 0.0)
+                    
+        return ("diffuse",) + tuple(material.diffuse_color[:3])
+                
+
     def export_mesh(self, fw, ob, m):
         mesh = ob.to_mesh()
 
@@ -120,13 +139,14 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         if mesh_key is not None:
             transform_key = self.export_transform(fw, ob.name, m)
 
-            color = [0.8, 0.8, 0.8]
+            material = None
             if len(mesh.materials) > 0:
-                material = mesh.materials[0]
-                if material:
-                    color = material.diffuse_color
+                material = self.translate_material(mesh.materials[0])
+            if not material:
+                material = ("diffuse", 0.8, 0.8, 0.8)
 
-            fw('instance "%s" "%s" %f %f %f\n' % (transform_key, mesh_key, color[0], color[1], color[2]))
+            fw('instance "%s" "%s"\n' % (transform_key, mesh_key))
+            fw('%s %f %f %f' % material)
             fw('\n')
 
         ob.to_mesh_clear()

@@ -427,7 +427,9 @@ impl SceneAccel {
                             Surface::Diffuse { reflectance } => {
                                 (reflectance / PI, ExtendRecordFlags::BSDF_TYPE_DIFFUSE)
                             }
-                            Surface::Mirror => (Vec3::one(), ExtendRecordFlags::BSDF_TYPE_MIRROR),
+                            Surface::Mirror { reflectance } => {
+                                (Vec3::broadcast(reflectance), ExtendRecordFlags::BSDF_TYPE_MIRROR)
+                            }
                         };
                         if shader.emission.is_some() {
                             flags |= ExtendRecordFlags::IS_EMISSIVE;
