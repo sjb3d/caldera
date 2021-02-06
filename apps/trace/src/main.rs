@@ -429,13 +429,14 @@ impl App {
                             .iter()
                             .filter_map(|instance| {
                                 let emission = scene.shader(instance.shader_ref).emission?;
-                                match *scene.geometry(instance.geometry_ref) {
+                                match scene.geometry(instance.geometry_ref) {
                                     Geometry::TriangleMesh { .. } => None,
                                     Geometry::Quad { size, transform } => Some(QuadLight {
-                                        transform: scene.transform(instance.transform_ref).0 * transform,
-                                        size,
+                                        transform: scene.transform(instance.transform_ref).0 * *transform,
+                                        size: *size,
                                         emission,
                                     }),
+                                    Geometry::Sphere { .. } => None,
                                 }
                             })
                             .next();
@@ -611,6 +612,7 @@ fn main() {
                         "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::Mirror),
                         "cornell-instances" => SceneDesc::CornellBox(CornellBoxVariant::Instances),
                         "cornell-domelight" => SceneDesc::CornellBox(CornellBoxVariant::DomeLight),
+                        "cornell-sphere" => SceneDesc::CornellBox(CornellBoxVariant::Sphere),
                         s => panic!("unknown scene {:?}", s),
                     }
                 }

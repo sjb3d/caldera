@@ -7,6 +7,7 @@ pub struct Transform(pub Similarity3);
 pub enum Geometry {
     TriangleMesh { positions: Vec<Vec3>, indices: Vec<UVec3> },
     Quad { transform: Similarity3, size: Vec2 },
+    Sphere { centre: Vec3, radius: f32 },
 }
 
 #[derive(Debug)]
@@ -172,6 +173,10 @@ impl Scene {
                     }
                     Geometry::Quad { transform, .. } => {
                         *transform = bake * *transform;
+                    }
+                    Geometry::Sphere { centre, radius } => {
+                        *centre = bake * *centre;
+                        *radius = bake.scale.abs() * *radius;
                     }
                 }
                 instance.transform_ref = identity_ref;
@@ -341,6 +346,7 @@ pub enum CornellBoxVariant {
     Mirror,
     DomeLight,
     Instances,
+    Sphere,
 }
 
 #[allow(clippy::excessive_precision)]
@@ -487,7 +493,15 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     scene.add_instance(Instance::new(identity, grey_wall, white_shader));
     scene.add_instance(Instance::new(identity, red_wall, red_shader));
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
-    scene.add_instance(Instance::new(identity, short_block, white_shader));
+    if matches!(variant, CornellBoxVariant::Sphere) {
+        let sphere = scene.add_geometry(Geometry::Sphere {
+            centre: Vec3::new(0.15, 0.08, 0.15),
+            radius: 0.08,
+        });
+        scene.add_instance(Instance::new(identity, sphere, white_shader));
+    } else {
+        scene.add_instance(Instance::new(identity, short_block, white_shader));
+    }
     scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
 
     if matches!(variant, CornellBoxVariant::DomeLight) {

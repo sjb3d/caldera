@@ -14,6 +14,13 @@ float mul_elements(vec3 v)  { return v.x * v.y * v.z; }
 float max_element(vec2 v)   { return max(v.x, v.y); }
 float max_element(vec3 v)   { return max(max(v.x, v.y), v.z); }
 
+float copysign(float x, float s)
+{
+    const uint x_bits = floatBitsToUint(x);
+    const uint s_bits = floatBitsToUint(s);
+    const uint y_bits = (x_bits & 0x7fffffff) | (s_bits & 0x80000000);
+    return uintBitsToFloat(y_bits);
+}
 vec2 copysign(vec2 x, vec2 s)
 {
     const uvec2 x_bits = floatBitsToUint(x);

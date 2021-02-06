@@ -25,11 +25,13 @@ SRC=\
 	mesh/trace.rmiss.glsl \
 	trace/copy.frag.glsl \
 	trace/copy.vert.glsl \
-	trace/extend.rchit.glsl \
 	trace/extend.rmiss.glsl \
+	trace/extend_sphere.rchit.glsl \
+	trace/extend_triangle.rchit.glsl \
 	trace/occlusion.rchit.glsl \
 	trace/occlusion.rmiss.glsl \
-	trace/path_trace.rgen.glsl
+	trace/path_trace.rgen.glsl \
+	trace/sphere.rint.glsl
 
 APPS=compute mesh trace
 

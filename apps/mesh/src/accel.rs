@@ -356,7 +356,7 @@ impl AccelInfo {
             &[
                 RayTracingShaderGroupDesc::Raygen("mesh/trace.rgen.spv"),
                 RayTracingShaderGroupDesc::Miss("mesh/trace.rmiss.spv"),
-                RayTracingShaderGroupDesc::TrianglesHit {
+                RayTracingShaderGroupDesc::Hit {
                     closest_hit: "mesh/trace.rchit.spv",
                     any_hit: None,
                     intersection: None,

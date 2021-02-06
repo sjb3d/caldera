@@ -1,5 +1,5 @@
 use crate::scene::*;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use spark::{vk, Builder};
 use std::{mem, slice};
@@ -8,15 +8,31 @@ use std::{ops::BitOrAssign, sync::Arc};
 type PositionData = Vec3;
 type IndexData = UVec3;
 
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct AabbData {
+    min: Vec3,
+    max: Vec3,
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ExtendRecordFlags(u32);
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct ExtendHitRecord {
+struct ExtendTriangleHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
+    reflectance: Vec3,
+    flags: ExtendRecordFlags,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct SphereHitRecord {
+    centre: Vec3,
+    radius: f32,
     reflectance: Vec3,
     flags: ExtendRecordFlags,
 }
@@ -43,6 +59,18 @@ impl BitOrAssign for ExtendRecordFlags {
     }
 }
 
+#[repr(usize)]
+#[derive(Clone, Copy, Contiguous)]
+enum ShaderGroup {
+    RayGenerator,
+    ExtendMiss,
+    ExtendHitTriangle,
+    ExtendHitSphere,
+    OcclusionMiss,
+    OcclusionHitTriangle,
+    OcclusionHitSphere,
+}
+
 // vk::AccelerationStructureInstanceKHR with Pod trait
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
@@ -53,9 +81,23 @@ struct AccelerationStructureInstance {
     pub acceleration_structure_reference: u64,
 }
 
-struct TriangleMeshData {
-    index_buffer: StaticBufferHandle,
-    position_buffer: StaticBufferHandle,
+enum GeometryBufferData {
+    Triangles {
+        index_buffer: StaticBufferHandle,
+        position_buffer: StaticBufferHandle,
+    },
+    Sphere {
+        aabb_buffer: StaticBufferHandle,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum GeometryRecordData {
+    Triangles {
+        index_buffer_address: u64,
+        position_buffer_address: u64,
+    },
+    Sphere,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -65,9 +107,16 @@ struct ClusterElement {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum PrimitiveType {
+    Triangles,
+    AABBs,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Cluster {
     transform_refs: Vec<TransformRef>,
     elements: Vec<ClusterElement>,
+    primitive_type: PrimitiveType,
 }
 
 impl Cluster {
@@ -126,7 +175,7 @@ pub struct SceneAccel {
     shared: Arc<SceneShared>,
     context: Arc<Context>,
     path_trace_pipeline: vk::Pipeline,
-    geometry_data: Vec<Option<TriangleMeshData>>,
+    geometry_data: Vec<Option<GeometryBufferData>>,
     shader_binding_table: Option<ShaderBindingTable>,
     cluster_accel: Vec<BottomLevelAccel>,
     instance_buffer: Option<StaticBufferHandle>,
@@ -160,12 +209,17 @@ impl SceneAccel {
                     .collect();
                 pairs.sort_unstable();
                 let (transform_refs, instance_refs): (Vec<_>, Vec<_>) = pairs.drain(..).unzip();
+                let primitive_type = match scene.geometry(geometry_ref) {
+                    Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => PrimitiveType::Triangles,
+                    Geometry::Sphere { .. } => PrimitiveType::AABBs,
+                };
                 Cluster {
                     transform_refs,
                     elements: vec![ClusterElement {
                         geometry_ref,
                         instance_refs,
                     }],
+                    primitive_type,
                 }
             })
             .collect();
@@ -176,10 +230,9 @@ impl SceneAccel {
         // merge clusters that are used with the same set of transforms
         let mut merged = Vec::<Cluster>::new();
         for mut cluster in clusters.drain(..) {
-            if let Some(prev) = merged
-                .last_mut()
-                .filter(|prev| prev.transform_refs == cluster.transform_refs)
-            {
+            if let Some(prev) = merged.last_mut().filter(|prev| {
+                prev.transform_refs == cluster.transform_refs && prev.primitive_type == cluster.primitive_type
+            }) {
                 prev.elements.append(&mut cluster.elements);
             } else {
                 merged.push(cluster);
@@ -204,16 +257,26 @@ impl SceneAccel {
             &[
                 RayTracingShaderGroupDesc::Raygen("trace/path_trace.rgen.spv"),
                 RayTracingShaderGroupDesc::Miss("trace/extend.rmiss.spv"),
-                RayTracingShaderGroupDesc::TrianglesHit {
-                    closest_hit: "trace/extend.rchit.spv",
+                RayTracingShaderGroupDesc::Hit {
+                    closest_hit: "trace/extend_triangle.rchit.spv",
                     any_hit: None,
                     intersection: None,
                 },
+                RayTracingShaderGroupDesc::Hit {
+                    closest_hit: "trace/extend_sphere.rchit.spv",
+                    any_hit: None,
+                    intersection: Some("trace/sphere.rint.spv"),
+                },
                 RayTracingShaderGroupDesc::Miss("trace/occlusion.rmiss.spv"),
-                RayTracingShaderGroupDesc::TrianglesHit {
+                RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/occlusion.rchit.spv",
                     any_hit: None,
                     intersection: None,
+                },
+                RayTracingShaderGroupDesc::Hit {
+                    closest_hit: "trace/occlusion.rchit.spv",
+                    any_hit: None,
+                    intersection: Some("trace/sphere.rint.spv"),
                 },
             ],
             path_trace_pipeline_layout,
@@ -226,57 +289,88 @@ impl SceneAccel {
             .iter()
             .flat_map(|cluster| cluster.elements.iter().map(|element| element.geometry_ref))
         {
-            let index_buffer = resource_loader.create_buffer();
-            let position_buffer = resource_loader.create_buffer();
-            resource_loader.async_load({
-                let shared = Arc::clone(&shared);
-                move |allocator| {
-                    let mut mesh_builder = TriangleMeshBuilder::new();
-                    let (positions, indices) = match *shared.scene.geometry(geometry_ref) {
-                        Geometry::TriangleMesh {
-                            ref positions,
-                            ref indices,
-                        } => (positions.as_slice(), indices.as_slice()),
-                        Geometry::Quad { transform, size } => {
-                            let half_size = 0.5 * size;
-                            mesh_builder = mesh_builder.with_quad(
-                                transform * Vec3::new(-half_size.x, -half_size.y, 0.0),
-                                transform * Vec3::new(half_size.x, -half_size.y, 0.0),
-                                transform * Vec3::new(half_size.x, half_size.y, 0.0),
-                                transform * Vec3::new(-half_size.x, half_size.y, 0.0),
-                            );
-                            (mesh_builder.positions.as_slice(), mesh_builder.indices.as_slice())
+            let geometry = shared.scene.geometry(geometry_ref);
+            *geometry_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(match geometry {
+                Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => {
+                    let index_buffer = resource_loader.create_buffer();
+                    let position_buffer = resource_loader.create_buffer();
+                    resource_loader.async_load({
+                        let shared = Arc::clone(&shared);
+                        move |allocator| {
+                            let mut mesh_builder = TriangleMeshBuilder::new();
+                            let (positions, indices) = match *shared.scene.geometry(geometry_ref) {
+                                Geometry::TriangleMesh {
+                                    ref positions,
+                                    ref indices,
+                                } => (positions.as_slice(), indices.as_slice()),
+                                Geometry::Quad { transform, size } => {
+                                    let half_size = 0.5 * size;
+                                    mesh_builder = mesh_builder.with_quad(
+                                        transform * Vec3::new(-half_size.x, -half_size.y, 0.0),
+                                        transform * Vec3::new(half_size.x, -half_size.y, 0.0),
+                                        transform * Vec3::new(half_size.x, half_size.y, 0.0),
+                                        transform * Vec3::new(-half_size.x, half_size.y, 0.0),
+                                    );
+                                    (mesh_builder.positions.as_slice(), mesh_builder.indices.as_slice())
+                                }
+                                Geometry::Sphere { .. } => unreachable!(),
+                            };
+
+                            let index_buffer_desc = BufferDesc::new(indices.len() * mem::size_of::<IndexData>());
+                            let mut writer = allocator
+                                .map_buffer(
+                                    index_buffer,
+                                    &index_buffer_desc,
+                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
+                                        | BufferUsage::RAY_TRACING_STORAGE_READ,
+                                )
+                                .unwrap();
+                            for face in indices.iter() {
+                                writer.write(face);
+                            }
+
+                            let position_buffer_desc =
+                                BufferDesc::new(positions.len() * mem::size_of::<PositionData>());
+                            let mut writer = allocator
+                                .map_buffer(
+                                    position_buffer,
+                                    &position_buffer_desc,
+                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
+                                        | BufferUsage::RAY_TRACING_STORAGE_READ,
+                                )
+                                .unwrap();
+                            for pos in positions.iter() {
+                                writer.write(pos);
+                            }
                         }
-                    };
-
-                    let index_buffer_desc = BufferDesc::new(indices.len() * mem::size_of::<IndexData>());
-                    let mut writer = allocator
-                        .map_buffer(
-                            index_buffer,
-                            &index_buffer_desc,
-                            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
-                        )
-                        .unwrap();
-                    for face in indices.iter() {
-                        writer.write(face);
-                    }
-
-                    let position_buffer_desc = BufferDesc::new(positions.len() * mem::size_of::<PositionData>());
-                    let mut writer = allocator
-                        .map_buffer(
-                            position_buffer,
-                            &position_buffer_desc,
-                            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
-                        )
-                        .unwrap();
-                    for pos in positions.iter() {
-                        writer.write(pos);
+                    });
+                    GeometryBufferData::Triangles {
+                        position_buffer,
+                        index_buffer,
                     }
                 }
-            });
-            *geometry_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(TriangleMeshData {
-                position_buffer,
-                index_buffer,
+                Geometry::Sphere { centre, radius } => {
+                    let aabb_buffer = resource_loader.create_buffer();
+                    resource_loader.async_load({
+                        let centre = *centre;
+                        let radius = *radius;
+                        move |allocator| {
+                            let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
+                            let mut writer = allocator
+                                .map_buffer(
+                                    aabb_buffer,
+                                    &buffer_desc,
+                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT,
+                                )
+                                .unwrap();
+                            writer.write(&AabbData {
+                                min: centre - Vec3::broadcast(radius),
+                                max: centre + Vec3::broadcast(radius),
+                            });
+                        }
+                    });
+                    GeometryBufferData::Sphere { aabb_buffer }
+                }
             });
         }
 
@@ -294,7 +388,7 @@ impl SceneAccel {
 
     fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingTable> {
         // gather the data we need for records
-        let mut geometry_record = vec![(0u64, 0u64); self.shared.scene.geometries.len()];
+        let mut geometry_records = vec![None; self.shared.scene.geometries.len()];
         for geometry_ref in self
             .shared
             .clusters
@@ -302,12 +396,24 @@ impl SceneAccel {
             .flat_map(|cluster| cluster.elements.iter().map(|element| element.geometry_ref))
         {
             let geometry_data = self.geometry_data[geometry_ref.0 as usize].as_ref().unwrap();
-            let index_buffer = resource_loader.get_buffer(geometry_data.index_buffer)?;
-            let position_buffer = resource_loader.get_buffer(geometry_data.position_buffer)?;
-            geometry_record[geometry_ref.0 as usize] = (
-                unsafe { self.context.device.get_buffer_device_address_helper(index_buffer) },
-                unsafe { self.context.device.get_buffer_device_address_helper(position_buffer) },
-            );
+            geometry_records[geometry_ref.0 as usize] = match geometry_data {
+                GeometryBufferData::Triangles {
+                    index_buffer,
+                    position_buffer,
+                } => {
+                    let index_buffer = resource_loader.get_buffer(*index_buffer)?;
+                    let position_buffer = resource_loader.get_buffer(*position_buffer)?;
+                    let index_buffer_address =
+                        unsafe { self.context.device.get_buffer_device_address_helper(index_buffer) };
+                    let position_buffer_address =
+                        unsafe { self.context.device.get_buffer_device_address_helper(position_buffer) };
+                    Some(GeometryRecordData::Triangles {
+                        index_buffer_address,
+                        position_buffer_address,
+                    })
+                }
+                GeometryBufferData::Sphere { .. } => Some(GeometryRecordData::Sphere),
+            };
         }
 
         // figure out the layout
@@ -341,7 +447,7 @@ impl SceneAccel {
         };
         next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
 
-        let hit_record_size = mem::size_of::<ExtendHitRecord>() as u32;
+        let hit_record_size = mem::size_of::<ExtendTriangleHitRecord>().max(mem::size_of::<SphereHitRecord>()) as u32;
         let hit_stride = align_up(
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
@@ -364,25 +470,19 @@ impl SceneAccel {
             let shared = Arc::clone(&self.shared);
             move |allocator| {
                 let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
-                let shader_group_count = 1 + Self::MISS_GROUP_COUNT + Self::HIT_GROUP_COUNT_PER_INSTANCE;
                 let handle_size = rtpp.shader_group_handle_size as usize;
-                let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
+                let shader_group_count = 1 + ShaderGroup::MAX_VALUE;
+                let mut handle_data = vec![0u8; shader_group_count * handle_size];
                 unsafe {
                     context.device.get_ray_tracing_shader_group_handles_khr(
                         path_trace_pipeline,
                         0,
-                        shader_group_count,
+                        shader_group_count as u32,
                         &mut handle_data,
                     )
                 }
                 .unwrap();
-
-                let remain = handle_data.as_slice();
-                let (raygen_group_handle, remain) = remain.split_at(handle_size);
-                let (extend_miss_group_handle, remain) = remain.split_at(handle_size);
-                let (extend_hit_group_handle, remain) = remain.split_at(handle_size);
-                let (occlusion_miss_group_handle, remain) = remain.split_at(handle_size);
-                let (occlusion_hit_group_handle, _remain) = remain.split_at(handle_size);
+                let shader_group_handles: Vec<_> = handle_data.as_slice().chunks(handle_size).collect();
 
                 let desc = BufferDesc::new(total_size as usize);
                 let mut writer = allocator
@@ -394,7 +494,7 @@ impl SceneAccel {
                     .unwrap();
 
                 assert_eq!(raygen_region.offset, 0);
-                writer.write(raygen_group_handle);
+                writer.write(shader_group_handles[ShaderGroup::RayGenerator.into_integer()]);
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
                 {
@@ -406,12 +506,12 @@ impl SceneAccel {
                     let extend_miss_record = ExtendMissRecord { flags };
 
                     let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write(extend_miss_group_handle);
+                    writer.write(shader_group_handles[ShaderGroup::ExtendMiss.into_integer()]);
                     writer.write(&extend_miss_record);
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write(occlusion_miss_group_handle);
+                    writer.write(shader_group_handles[ShaderGroup::OcclusionMiss.into_integer()]);
                     writer.write_zeros(end_offset - writer.written());
                 }
 
@@ -419,8 +519,6 @@ impl SceneAccel {
                 for cluster in shared.clusters.iter() {
                     for instance_ref in cluster.instance_refs_grouped_by_transform_iter().cloned() {
                         let instance = shared.scene.instance(instance_ref);
-                        let (index_buffer_address, position_buffer_address) =
-                            geometry_record[instance.geometry_ref.0 as usize];
                         let shader = shared.scene.shader(instance.shader_ref);
 
                         let (reflectance, mut flags) = match shader.surface {
@@ -435,21 +533,50 @@ impl SceneAccel {
                             flags |= ExtendRecordFlags::IS_EMISSIVE;
                         }
 
-                        let extend_hit_record = ExtendHitRecord {
-                            index_buffer_address,
-                            position_buffer_address,
-                            reflectance: reflectance,
-                            flags,
-                        };
+                        match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
+                            GeometryRecordData::Triangles {
+                                index_buffer_address,
+                                position_buffer_address,
+                            } => {
+                                let extend_hit_record = ExtendTriangleHitRecord {
+                                    index_buffer_address,
+                                    position_buffer_address,
+                                    reflectance,
+                                    flags,
+                                };
 
-                        let end_offset = writer.written() + hit_region.stride as usize;
-                        writer.write(extend_hit_group_handle);
-                        writer.write(&extend_hit_record);
-                        writer.write_zeros(end_offset - writer.written());
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::ExtendHitTriangle.into_integer()]);
+                                writer.write(&extend_hit_record);
+                                writer.write_zeros(end_offset - writer.written());
 
-                        let end_offset = writer.written() + hit_region.stride as usize;
-                        writer.write(occlusion_hit_group_handle);
-                        writer.write_zeros(end_offset - writer.written());
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::OcclusionHitTriangle.into_integer()]);
+                                writer.write_zeros(end_offset - writer.written());
+                            }
+                            GeometryRecordData::Sphere => {
+                                let (centre, radius) = match shared.scene.geometry(instance.geometry_ref) {
+                                    Geometry::Sphere { centre, radius } => (centre, radius),
+                                    _ => unreachable!(),
+                                };
+                                let hit_record = SphereHitRecord {
+                                    centre: *centre,
+                                    radius: *radius,
+                                    reflectance,
+                                    flags,
+                                };
+
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::ExtendHitSphere.into_integer()]);
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
+
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::OcclusionHitSphere.into_integer()]);
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
+                            }
+                        }
                     }
                 }
             }
@@ -477,44 +604,80 @@ impl SceneAccel {
             let geometry = self.shared.scene.geometry(geometry_ref);
             let geometry_data = self.geometry_data[geometry_ref.0 as usize].as_ref().unwrap();
 
-            let position_buffer = resource_loader.get_buffer(geometry_data.position_buffer)?;
-            let index_buffer = resource_loader.get_buffer(geometry_data.index_buffer)?;
+            match geometry_data {
+                GeometryBufferData::Triangles {
+                    index_buffer,
+                    position_buffer,
+                } => {
+                    let position_buffer = resource_loader.get_buffer(*position_buffer)?;
+                    let index_buffer = resource_loader.get_buffer(*index_buffer)?;
 
-            let position_buffer_address = unsafe { context.device.get_buffer_device_address_helper(position_buffer) };
-            let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
+                    let position_buffer_address =
+                        unsafe { context.device.get_buffer_device_address_helper(position_buffer) };
+                    let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
 
-            let (vertex_count, triangle_count) = match geometry {
-                Geometry::TriangleMesh { positions, indices } => (positions.len() as u32, indices.len() as u32),
-                Geometry::Quad { .. } => (4, 2),
-            };
+                    let (vertex_count, triangle_count) = match geometry {
+                        Geometry::TriangleMesh { positions, indices } => (positions.len() as u32, indices.len() as u32),
+                        Geometry::Quad { .. } => (4, 2),
+                        Geometry::Sphere { .. } => unimplemented!(),
+                    };
 
-            accel_geometry.push(vk::AccelerationStructureGeometryKHR {
-                geometry_type: vk::GeometryTypeKHR::TRIANGLES,
-                geometry: vk::AccelerationStructureGeometryDataKHR {
-                    triangles: vk::AccelerationStructureGeometryTrianglesDataKHR {
-                        vertex_format: vk::Format::R32G32B32_SFLOAT,
-                        vertex_data: vk::DeviceOrHostAddressConstKHR {
-                            device_address: position_buffer_address,
+                    accel_geometry.push(vk::AccelerationStructureGeometryKHR {
+                        geometry_type: vk::GeometryTypeKHR::TRIANGLES,
+                        geometry: vk::AccelerationStructureGeometryDataKHR {
+                            triangles: vk::AccelerationStructureGeometryTrianglesDataKHR {
+                                vertex_format: vk::Format::R32G32B32_SFLOAT,
+                                vertex_data: vk::DeviceOrHostAddressConstKHR {
+                                    device_address: position_buffer_address,
+                                },
+                                vertex_stride: mem::size_of::<PositionData>() as vk::DeviceSize,
+                                max_vertex: vertex_count,
+                                index_type: vk::IndexType::UINT32,
+                                index_data: vk::DeviceOrHostAddressConstKHR {
+                                    device_address: index_buffer_address,
+                                },
+                                ..Default::default()
+                            },
                         },
-                        vertex_stride: mem::size_of::<PositionData>() as vk::DeviceSize,
-                        max_vertex: vertex_count,
-                        index_type: vk::IndexType::UINT32,
-                        index_data: vk::DeviceOrHostAddressConstKHR {
-                            device_address: index_buffer_address,
-                        },
+                        flags: vk::GeometryFlagsKHR::empty(),
                         ..Default::default()
-                    },
-                },
-                flags: vk::GeometryFlagsKHR::empty(),
-                ..Default::default()
-            });
-            max_primitive_counts.push(triangle_count);
-            build_range_info.push(vk::AccelerationStructureBuildRangeInfoKHR {
-                primitive_count: triangle_count,
-                primitive_offset: 0,
-                first_vertex: 0,
-                transform_offset: 0,
-            });
+                    });
+                    max_primitive_counts.push(triangle_count);
+                    build_range_info.push(vk::AccelerationStructureBuildRangeInfoKHR {
+                        primitive_count: triangle_count,
+                        primitive_offset: 0,
+                        first_vertex: 0,
+                        transform_offset: 0,
+                    });
+                }
+                GeometryBufferData::Sphere { aabb_buffer } => {
+                    let aabb_buffer = resource_loader.get_buffer(*aabb_buffer)?;
+
+                    let aabb_buffer_address = unsafe { context.device.get_buffer_device_address_helper(aabb_buffer) };
+
+                    accel_geometry.push(vk::AccelerationStructureGeometryKHR {
+                        geometry_type: vk::GeometryTypeKHR::AABBS,
+                        geometry: vk::AccelerationStructureGeometryDataKHR {
+                            aabbs: vk::AccelerationStructureGeometryAabbsDataKHR {
+                                data: vk::DeviceOrHostAddressConstKHR {
+                                    device_address: aabb_buffer_address,
+                                },
+                                stride: mem::size_of::<AabbData>() as vk::DeviceSize,
+                                ..Default::default()
+                            },
+                        },
+                        flags: vk::GeometryFlagsKHR::empty(),
+                        ..Default::default()
+                    });
+                    max_primitive_counts.push(1);
+                    build_range_info.push(vk::AccelerationStructureBuildRangeInfoKHR {
+                        primitive_count: 1,
+                        primitive_offset: 0,
+                        first_vertex: 0,
+                        transform_offset: 0,
+                    });
+                }
+            }
         }
 
         let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
