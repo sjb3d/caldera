@@ -33,30 +33,26 @@ enum Element<'a> {
     },
 }
 
-fn transform(i: &str) -> IResult<&str, Transform3> {
+fn rotor3_from_quaternion(q: Vec4) -> Rotor3 {
+    Rotor3::new(q.x, Bivec3::new(-q.w, q.z, -q.y))
+}
+
+fn vec4(i: &str) -> IResult<&str, Vec4> {
     map(
         tuple((
             float,
             preceded(multispace1, float),
             preceded(multispace1, float),
             preceded(multispace1, float),
-            preceded(multispace1, float),
-            preceded(multispace1, float),
-            preceded(multispace1, float),
-            preceded(multispace1, float),
-            preceded(multispace1, float),
-            preceded(multispace1, float),
-            preceded(multispace1, float),
-            preceded(multispace1, float),
         )),
-        |v| {
-            Transform3::new(
-                Vec3::new(v.0, v.4, v.8),
-                Vec3::new(v.1, v.5, v.9),
-                Vec3::new(v.2, v.6, v.10),
-                Vec3::new(v.3, v.7, v.11),
-            )
-        },
+        |(x, y, z, w)| Vec4::new(x, y, z, w),
+    )(i)
+}
+
+fn similarity3(i: &str) -> IResult<&str, Similarity3> {
+    map(
+        tuple((vec3, preceded(multispace1, vec4), preceded(multispace1, float))),
+        |(translation, rotation, scale)| Similarity3::new(translation, rotor3_from_quaternion(rotation), scale),
     )(i)
 }
 
@@ -66,7 +62,7 @@ fn quoted_name(i: &str) -> IResult<&str, &str> {
 
 fn element_transform(i: &str) -> IResult<&str, Element> {
     let (i, name) = quoted_name(i)?;
-    let (i, transform) = map(preceded(multispace0, transform), Transform)(i)?;
+    let (i, transform) = map(preceded(multispace0, similarity3), Transform)(i)?;
     Ok((i, Element::Transform { name, transform }))
 }
 

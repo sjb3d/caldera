@@ -29,14 +29,15 @@ struct SamplePixel {
 
 #[derive(Clone, Copy)]
 pub struct QuadLight {
-    pub transform: Transform3,
+    pub transform: Similarity3,
     pub size: Vec2,
     pub emission: Vec3,
 }
 
 impl QuadLight {
     fn area_ws(&self) -> f32 {
-        self.transform.cols[0].cross(self.transform.cols[1]).mag() * self.size.x * self.size.y
+        let scale = self.transform.scale;
+        scale * scale * self.size.x * self.size.y
     }
 }
 
@@ -247,10 +248,7 @@ impl App {
 
         let scene = accel.scene();
         let camera_ref = CameraRef(0);
-        let rotation = scene
-            .transform(scene.camera(camera_ref).transform_ref)
-            .0
-            .extract_rotation();
+        let rotation = scene.transform(scene.camera(camera_ref).transform_ref).0.rotation;
 
         Self {
             context: Arc::clone(&context),
@@ -319,7 +317,7 @@ impl App {
                     for camera_ref in scene.camera_ref_iter() {
                         if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
                             let camera = scene.camera(camera_ref);
-                            let rotation = scene.transform(camera.transform_ref).0.extract_rotation();
+                            let rotation = scene.transform(camera.transform_ref).0.rotation;
                             self.camera_ref = camera_ref;
                             self.view_drag = ViewDrag::new(rotation);
                             needs_reset = true;
@@ -348,7 +346,7 @@ impl App {
             self.next_sample_index = 0;
         }
         let world_from_camera = Isometry3::new(
-            scene.transform(camera.transform_ref).0.extract_translation(),
+            scene.transform(camera.transform_ref).0.translation,
             self.view_drag.rotation,
         );
 
@@ -450,7 +448,7 @@ impl App {
                                     world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
                                     fov_size_at_unit_z,
                                     world_from_light: quad_light
-                                        .map(|light| light.transform)
+                                        .map(|light| light.transform.into_transform())
                                         .unwrap_or_else(Transform3::identity),
                                     light_size: quad_light.map(|light| light.size).unwrap_or_else(Vec2::zero),
                                     light_area_ws: quad_light.map(|light| light.area_ws()).unwrap_or(0.0),

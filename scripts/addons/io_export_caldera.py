@@ -34,11 +34,14 @@ import mathutils
 from bpy_extras.io_utils import ExportHelper
 
 class Mesh:
-    def __init__(self, mesh):
+    def __init__(self, mesh, bake_scale):
         self.positions = list()
         self.indices = list()
         for v in mesh.vertices:
-            self.positions.append(v.co[:])
+            if bake_scale:
+                self.positions.append((v.co * bake_scale)[:])
+            else:
+                self.positions.append(v.co[:])
         for p in mesh.polygons:
             for idx in range(2, len(p.vertices)):
                 tri = (p.vertices[0], p.vertices[idx - 1], p.vertices[idx])
@@ -73,8 +76,8 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         self.meshes.clear()
         self.transforms.clear()
 
-    def export_mesh_data(self, fw, ob, mesh):
-        check = Mesh(mesh)
+    def export_mesh_data(self, fw, ob, mesh, bake_scale):
+        check = Mesh(mesh, bake_scale)
         if len(check.indices) == 0:
             return None
 
@@ -94,24 +97,53 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         for t in check.indices:
             fw('%i %i %i\n' % t)
         fw('}\n')
+        fw('\n')
 
         return key
 
     def export_transform(self, fw, name, m):
+        (translation, rotation, nu_scale) = m.decompose()
+
+        sign_match = lambda x, y : (x * y) > 0.0
+
+        if sign_match(nu_scale.y, nu_scale.z) and not sign_match(nu_scale.x, nu_scale.y):
+            rotation = rotation @ mathutils.Quaternion((1.0, 0.0, 0.0), math.pi)
+            nu_scale.y = -nu_scale.y
+            nu_scale.z = -nu_scale.z
+        if sign_match(nu_scale.z, nu_scale.x) and not sign_match(nu_scale.y, nu_scale.z):
+            rotation = rotation @ mathutils.Quaternion((0.0, 1.0, 0.0), math.pi)
+            nu_scale.z = -nu_scale.z
+            nu_scale.x = -nu_scale.x
+        if sign_match(nu_scale.x, nu_scale.y) and not sign_match(nu_scale.z, nu_scale.x):
+            rotation = rotation @ mathutils.Quaternion((0.0, 0.0, 1.0), math.pi)
+            nu_scale.x = -nu_scale.x
+            nu_scale.y = -nu_scale.y
+
+        #check = mathutils.Matrix.Translation(translation) @ rotation.to_matrix().to_4x4() @ mathutils.Matrix.Diagonal(nu_scale).to_4x4()
+        #print(m - check)
+
+        scale = nu_scale.x
+        nu_scale = nu_scale/scale
+
+        bake_scale = None
+        if abs(1.0 - nu_scale.y) > 0.01 or abs(1.0 - nu_scale.z) > 0.01:
+            bake_scale = nu_scale
+
         for (key, other) in self.transforms:
-            if m == other:
-                return key
+            if (translation, rotation, scale) == other:
+                return (key, bake_scale)
 
         key = '%i-%s' % (len(self.transforms), name)
-        self.transforms.append((key, m))
+        self.transforms.append((key, (translation, rotation, scale)))
 
         fw('transform "%s"\n' % key)
-        fw('%f %f %f %f\n' % m[0][:])
-        fw('%f %f %f %f\n' % m[1][:])
-        fw('%f %f %f %f\n' % m[2][:])
+        fw('%f %f %f\n' % translation[:])
+        fw('%f %f %f %f\n' % rotation[:])
+        fw('%f\n' % scale)
+
         fw('\n')
 
-        return key
+        return (key, bake_scale)
 
     def translate_material(self, material):
         if not material:
@@ -135,10 +167,10 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
     def export_mesh(self, fw, ob, m):
         mesh = ob.to_mesh()
 
-        mesh_key = self.export_mesh_data(fw, ob, mesh)
-        if mesh_key is not None:
-            transform_key = self.export_transform(fw, ob.name, m)
+        (transform_key, bake_scale) = self.export_transform(fw, ob.name, m)
+        mesh_key = self.export_mesh_data(fw, ob, mesh, bake_scale)
 
+        if mesh_key is not None:
             material = None
             if len(mesh.materials) > 0:
                 material = self.translate_material(mesh.materials[0])
@@ -154,7 +186,7 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
     def export_camera(self, fw, ob, m):
         # rotate to look down position z
         adjusted_m = m @ mathutils.Matrix.Rotation(math.pi, 4, 'Y')
-        transform_key = self.export_transform(fw, ob.name, adjusted_m)
+        (transform_key, bake_scale) = self.export_transform(fw, ob.name, adjusted_m)
 
         fw('camera "%s" %f\n' % (transform_key, ob.data.angle_y))
         fw('\n')
