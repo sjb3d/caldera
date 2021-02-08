@@ -6,6 +6,7 @@ const CIE_WAVELENGTH_STEP_SIZE: f32 = 1.0;
 macro_rules! cie_samples {
     ($(($x:literal, $y:literal, $z:literal)),+) => { [ $( Vec3::new($x, $y, $z), )+ ] }
 }
+#[allow(clippy::excessive_precision)]
 const CIE_SAMPLES: &[Vec3] = &cie_samples!(
     (0.000129900000, 0.000003917000, 0.000606100000),
     (0.000145847000, 0.000004393581, 0.000680879200),

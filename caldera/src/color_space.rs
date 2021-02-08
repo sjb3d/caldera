@@ -4,6 +4,7 @@ fn lerp_mat3(a: &Mat3, b: &Mat3, t: f32) -> Mat3 {
     (*a) * (1.0 - t) + (*b) * t
 }
 
+#[allow(clippy::excessive_precision)]
 pub fn xyz_from_rec709_matrix() -> Mat3 {
     // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
     Mat3::new(
@@ -13,6 +14,7 @@ pub fn xyz_from_rec709_matrix() -> Mat3 {
     )
 }
 
+#[allow(clippy::excessive_precision)]
 pub fn aces_from_d65_matrix() -> Mat3 {
     // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
     Mat3::new(
@@ -23,6 +25,7 @@ pub fn aces_from_d65_matrix() -> Mat3 {
     .inversed()
 }
 
+#[allow(clippy::excessive_precision)]
 pub fn ap1_from_xyz_matrix() -> Mat3 {
     // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
     Mat3::new(
@@ -32,6 +35,7 @@ pub fn ap1_from_xyz_matrix() -> Mat3 {
     )
 }
 
+#[allow(clippy::excessive_precision)]
 pub fn d65_from_e_matrix() -> Mat3 {
     // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
     Mat3::new(
