@@ -6,15 +6,17 @@
 #include "maths.glsl"
 #include "sphere_common.glsl"
 
-SPHERE_HIT_RECORD(g_record);
+layout(shaderRecordEXT, scalar) buffer IntersectSphereRecord {
+    SphereGeomData geom;
+} g_sphere;
 
 hitAttributeEXT SphereHitAttribute g_attrib;
 
 void main()
 {
-    const vec3 p = gl_ObjectRayOriginEXT - g_record.centre;
+    const vec3 p = gl_ObjectRayOriginEXT - g_sphere.geom.centre;
     const vec3 d = gl_ObjectRayDirectionEXT;
-    const float r = g_record.radius;
+    const float r = g_sphere.geom.radius;
 
     /*
         |p + t*d|^2 = r^2

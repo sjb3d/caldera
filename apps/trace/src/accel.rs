@@ -119,6 +119,13 @@ impl SceneClusters {
             .flat_map(|cluster| cluster.elements.iter().map(|element| &element.geometry_ref))
     }
 
+    pub fn instance_iter(&self) -> impl Iterator<Item = &InstanceRef> {
+        self.0
+            .iter()
+            .flat_map(|cluster| cluster.elements.iter())
+            .flat_map(|element| element.instance_refs.iter())
+    }
+
     pub fn instances_grouped_by_transform_iter(&self) -> impl Iterator<Item = &InstanceRef> {
         self.0.iter().flat_map(|cluster| {
             (0..cluster.transform_refs.len()).flat_map({

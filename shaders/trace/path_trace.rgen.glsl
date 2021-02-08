@@ -29,7 +29,7 @@ layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_r;
 layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result_g;
 layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_b;
 
-#define SEQUENCE_COUNT          256
+#define LOG2_SEQUENCE_COUNT     8
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -42,11 +42,11 @@ vec3 sample_from_rec709(vec3 c)
     }
 }
 
-vec2 rand_u01(uint ray_index)
+vec2 rand_u01(uint seq_index)
 {
     // hash the pixel coordinate and ray index to pick a sequence
-    const uint seq_hash = hash((ray_index << 20) | (gl_LaunchIDEXT.y << 10) | gl_LaunchIDEXT.x);
-    const ivec2 sample_coord = ivec2(g_data.sample_index, seq_hash & (SEQUENCE_COUNT - 1));
+    const uint seq_hash = hash((seq_index << 24) ^ (gl_LaunchIDEXT.y << 12) ^ gl_LaunchIDEXT.x);
+    const ivec2 sample_coord = ivec2(g_data.sample_index, seq_hash >> (32 - LOG2_SEQUENCE_COUNT));
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
 }
@@ -173,11 +173,13 @@ void main()
         if (have_seen_non_delta && get_bsdf_type(g_extend.hit) == BSDF_TYPE_MIRROR) {
             const vec3 mirror_reflectance = get_reflectance(g_extend.hit);
             const bool is_emissive = has_light(g_extend.hit);
+            const uint light_index = get_light_index(g_extend.hit);
             const int max_exponent = get_max_exponent(g_extend.hit);
             g_extend.hit = create_hit_data(
                 BSDF_TYPE_DIFFUSE,
                 mirror_reflectance/PI,
                 is_emissive,
+                light_index,
                 max_exponent);
         }
 

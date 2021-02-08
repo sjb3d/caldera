@@ -217,7 +217,7 @@ enum PipelineCacheKey {
     },
     RayTracing {
         pipeline_layout: vk::PipelineLayout,
-        shader_groups: ArrayVec<[RayTracingShaderGroup; PipelineCache::RAY_TRACING_MAX_SHADER_GROUPS]>,
+        shader_groups: Vec<RayTracingShaderGroup>,
     },
 }
 
@@ -230,9 +230,6 @@ pub struct PipelineCache {
 }
 
 impl PipelineCache {
-    const RAY_TRACING_MAX_MODULES: usize = 10;
-    const RAY_TRACING_MAX_SHADER_GROUPS: usize = 10;
-
     pub fn new<P: AsRef<Path>>(context: &Arc<Context>, path: P) -> Self {
         let pipeline_cache = {
             // TODO: load from file
@@ -420,8 +417,7 @@ impl PipelineCache {
         group_desc: &[RayTracingShaderGroupDesc],
         pipeline_layout: vk::PipelineLayout,
     ) -> vk::Pipeline {
-        assert!(group_desc.len() <= Self::RAY_TRACING_MAX_SHADER_GROUPS);
-        let shader_groups: ArrayVec<[_; Self::RAY_TRACING_MAX_SHADER_GROUPS]> = group_desc
+        let shader_groups: Vec<_> = group_desc
             .iter()
             .map(|desc| match desc {
                 RayTracingShaderGroupDesc::Raygen(raygen) => {
@@ -453,7 +449,7 @@ impl PipelineCache {
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let mut shader_stage_create_info = ArrayVec::<[_; Self::RAY_TRACING_MAX_MODULES]>::new();
+                let mut shader_stage_create_info = Vec::new();
                 let mut get_stage_index = |stage, module| {
                     if let Some(i) = shader_stage_create_info.iter().enumerate().find_map(
                         |(i, info): (usize, &vk::PipelineShaderStageCreateInfo)| {
@@ -476,7 +472,7 @@ impl PipelineCache {
                     }
                 };
 
-                let shader_group_create_info: ArrayVec<[_; Self::RAY_TRACING_MAX_SHADER_GROUPS]> = shader_groups
+                let shader_group_create_info: Vec<_> = shader_groups
                     .iter()
                     .map(|group| match group {
                         RayTracingShaderGroup::Raygen(raygen) => vk::RayTracingShaderGroupCreateInfoKHR {

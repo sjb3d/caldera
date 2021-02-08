@@ -53,6 +53,19 @@ float get_hemisphere_cosine_weighted_psa_pdf()
     return 1.f/PI;
 }
 
+vec3 dir_from_phi_cos_theta(float phi, float cos_theta)
+{
+    const float sin_theta = sqrt(max(0.f, 1.f - cos_theta*cos_theta));
+    return vec3(cos(phi)*sin_theta, sin(phi)*sin_theta, cos_theta);
+}
+
+vec3 sample_sphere_uniform(vec2 u)
+{
+    const float phi = 2.f*PI*u.x;
+    const float cos_theta = 2.f*u.y - 1.f;
+    return dir_from_phi_cos_theta(phi, cos_theta);
+}
+
 vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
 {
     // transforming the view direction to the hemisphere configuration

@@ -344,9 +344,9 @@ fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
 pub enum CornellBoxVariant {
     Original,
     Mirror,
-    DomeLight,
     Instances,
-    Sphere,
+    DomeLight,
+    SphereLight,
 }
 
 #[allow(clippy::excessive_precision)]
@@ -493,15 +493,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     scene.add_instance(Instance::new(identity, grey_wall, white_shader));
     scene.add_instance(Instance::new(identity, red_wall, red_shader));
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
-    if matches!(variant, CornellBoxVariant::Sphere) {
-        let sphere = scene.add_geometry(Geometry::Sphere {
-            centre: Vec3::new(0.15, 0.08, 0.15),
-            radius: 0.08,
-        });
-        scene.add_instance(Instance::new(identity, sphere, white_shader));
-    } else {
-        scene.add_instance(Instance::new(identity, short_block, white_shader));
-    }
+    scene.add_instance(Instance::new(identity, short_block, white_shader));
     scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
 
     if matches!(variant, CornellBoxVariant::DomeLight) {
@@ -515,14 +507,26 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         let light_z0 = 0.227;
         let light_z1 = 0.332;
         let light_y = 0.5488 - 0.0001;
-        let light_geometry = scene.add_geometry(Geometry::Quad {
-            transform: Similarity3::new(
-                Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
-                Rotor3::from_rotation_yz(0.5 * PI),
-                1.0,
-            ),
-            size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
-        });
+        let light_geometry = if matches!(variant, CornellBoxVariant::SphereLight) {
+            let radius = 0.036;
+            scene.add_geometry(Geometry::Sphere {
+                centre: Vec3::new(
+                    0.5 * (light_x1 + light_x0),
+                    light_y - radius,
+                    0.5 * (light_z1 + light_z0),
+                ),
+                radius,
+            })
+        } else {
+            scene.add_geometry(Geometry::Quad {
+                transform: Similarity3::new(
+                    Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
+                    Rotor3::from_rotation_yz(0.5 * PI),
+                    1.0,
+                ),
+                size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
+            })
+        };
         let light_shader = scene.add_shader(
             ShaderBuilder::new_diffuse(Vec3::broadcast(0.78))
                 .with_emission(light_emission)

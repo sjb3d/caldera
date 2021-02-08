@@ -35,7 +35,9 @@ SRC=\
 	trace/path_trace.rgen.glsl \
 	trace/quad_light_eval.rcall.glsl \
 	trace/quad_light_sample.rcall.glsl \
-	trace/sphere.rint.glsl
+	trace/sphere.rint.glsl \
+	trace/sphere_light_eval.rcall.glsl \
+	trace/sphere_light_sample.rcall.glsl
 
 APPS=compute mesh trace
 

@@ -21,6 +21,16 @@ struct QuadLightRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+struct SphereLightRecord {
+    emission: Vec3,
+    unit_value: f32,
+    area_pdf: f32,
+    centre_ws: Vec3,
+    radius_ws: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct PathTraceData {
     world_from_camera: Transform3,
     fov_size_at_unit_z: Vec2,
@@ -49,47 +59,56 @@ enum GeometryRecordData {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct ExtendRecordFlags(u32);
+#[derive(Clone, Copy, Zeroable, Pod, Default)]
+struct ExtendShaderFlags(u32);
+
+impl ExtendShaderFlags {
+    const BSDF_TYPE_DIFFUSE: ExtendShaderFlags = ExtendShaderFlags(0x0);
+    const BSDF_TYPE_MIRROR: ExtendShaderFlags = ExtendShaderFlags(0x1);
+    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x2);
+}
+
+impl BitOrAssign for ExtendShaderFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod, Default)]
+struct ExtendShader {
+    flags: ExtendShaderFlags,
+    reflectance: Vec3,
+    light_index: u32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ExtendTriangleHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
-    reflectance: Vec3,
-    flags: ExtendRecordFlags,
+    shader: ExtendShader,
+    _pad: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct SphereHitRecord {
+struct SphereGeomData {
     centre: Vec3,
     radius: f32,
-    reflectance: Vec3,
-    flags: ExtendRecordFlags,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct ExtendSphereHitRecord {
+    geom: SphereGeomData,
+    shader: ExtendShader,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ExtendMissRecord {
-    flags: ExtendRecordFlags,
-}
-
-impl ExtendRecordFlags {
-    const BSDF_TYPE_DIFFUSE: ExtendRecordFlags = ExtendRecordFlags(0x0);
-    const BSDF_TYPE_MIRROR: ExtendRecordFlags = ExtendRecordFlags(0x1);
-    const IS_EMISSIVE: ExtendRecordFlags = ExtendRecordFlags(0x2);
-
-    fn empty() -> Self {
-        Self(0)
-    }
-}
-
-impl BitOrAssign for ExtendRecordFlags {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
+    shader: ExtendShader,
 }
 
 #[repr(usize)]
@@ -104,6 +123,8 @@ enum ShaderGroup {
     OcclusionHitSphere,
     QuadLightEval,
     QuadLightSample,
+    SphereLightEval,
+    SphereLightSample,
 }
 
 #[derive(Clone, Copy)]
@@ -160,36 +181,44 @@ impl Renderer {
             descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
 
         // make pipeline
-        let path_trace_pipeline = pipeline_cache.get_ray_tracing(
-            &[
-                RayTracingShaderGroupDesc::Raygen("trace/path_trace.rgen.spv"),
-                RayTracingShaderGroupDesc::Miss("trace/extend.rmiss.spv"),
-                RayTracingShaderGroupDesc::Hit {
+        let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
+            .map(|i| match ShaderGroup::from_integer(i).unwrap() {
+                ShaderGroup::RayGenerator => RayTracingShaderGroupDesc::Raygen("trace/path_trace.rgen.spv"),
+                ShaderGroup::ExtendMiss => RayTracingShaderGroupDesc::Miss("trace/extend.rmiss.spv"),
+                ShaderGroup::ExtendHitTriangle => RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/extend_triangle.rchit.spv",
                     any_hit: None,
                     intersection: None,
                 },
-                RayTracingShaderGroupDesc::Hit {
+                ShaderGroup::ExtendHitSphere => RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/extend_sphere.rchit.spv",
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
                 },
-                RayTracingShaderGroupDesc::Miss("trace/occlusion.rmiss.spv"),
-                RayTracingShaderGroupDesc::Hit {
+                ShaderGroup::OcclusionMiss => RayTracingShaderGroupDesc::Miss("trace/occlusion.rmiss.spv"),
+                ShaderGroup::OcclusionHitTriangle => RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/occlusion.rchit.spv",
                     any_hit: None,
                     intersection: None,
                 },
-                RayTracingShaderGroupDesc::Hit {
+                ShaderGroup::OcclusionHitSphere => RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/occlusion.rchit.spv",
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
                 },
-                RayTracingShaderGroupDesc::Callable("trace/quad_light_eval.rcall.spv"),
-                RayTracingShaderGroupDesc::Callable("trace/quad_light_sample.rcall.spv"),
-            ],
-            path_trace_pipeline_layout,
-        );
+                ShaderGroup::QuadLightEval => RayTracingShaderGroupDesc::Callable("trace/quad_light_eval.rcall.spv"),
+                ShaderGroup::QuadLightSample => {
+                    RayTracingShaderGroupDesc::Callable("trace/quad_light_sample.rcall.spv")
+                }
+                ShaderGroup::SphereLightEval => {
+                    RayTracingShaderGroupDesc::Callable("trace/sphere_light_eval.rcall.spv")
+                }
+                ShaderGroup::SphereLightSample => {
+                    RayTracingShaderGroupDesc::Callable("trace/sphere_light_sample.rcall.spv")
+                }
+            })
+            .collect();
+        let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
         Self {
             context: Arc::clone(context),
@@ -227,6 +256,21 @@ impl Renderer {
             };
         }
 
+        // gather all the lights
+        // TODO: light objects too
+        let emissive_instance_count = self
+            .accel
+            .clusters()
+            .instance_iter()
+            .cloned()
+            .filter(|&instance_ref| {
+                let shader_ref = self.scene.instance(instance_ref).shader_ref;
+                self.scene.shader(shader_ref).emission.is_some()
+            })
+            .count();
+        let total_light_count = emissive_instance_count;
+        assert_eq!(total_light_count, 1);
+
         // figure out the layout
         let rtpp = self.context.ray_tracing_pipeline_properties.as_ref().unwrap();
 
@@ -261,7 +305,8 @@ impl Renderer {
         next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
 
         // hit shaders
-        let hit_record_size = mem::size_of::<ExtendTriangleHitRecord>().max(mem::size_of::<SphereHitRecord>()) as u32;
+        let hit_record_size =
+            mem::size_of::<ExtendTriangleHitRecord>().max(mem::size_of::<ExtendSphereHitRecord>()) as u32;
         let hit_stride = align_up(
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
@@ -275,12 +320,12 @@ impl Renderer {
         next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
 
         // callable shaders
-        let callable_record_size = mem::size_of::<QuadLightRecord>() as u32;
+        let callable_record_size = mem::size_of::<QuadLightRecord>().max(mem::size_of::<SphereLightRecord>()) as u32;
         let callable_stride = align_up(
             rtpp.shader_group_handle_size + callable_record_size,
             rtpp.shader_group_handle_alignment,
         );
-        let callable_entry_count = Self::CALLABLE_ENTRY_COUNT_PER_LIGHT;
+        let callable_entry_count = (total_light_count as u32) * Self::CALLABLE_ENTRY_COUNT_PER_LIGHT;
         let callable_region = ShaderBindingRegion {
             offset: next_offset,
             stride: callable_stride,
@@ -327,16 +372,8 @@ impl Renderer {
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
                 {
-                    let mut flags = ExtendRecordFlags::empty();
-                    if !scene.lights.is_empty() {
-                        flags |= ExtendRecordFlags::IS_EMISSIVE;
-                    }
-
-                    let extend_miss_record = ExtendMissRecord { flags };
-
                     let end_offset = writer.written() + miss_region.stride as usize;
                     writer.write(shader_group_handles[ShaderGroup::ExtendMiss.into_integer()]);
-                    writer.write(&extend_miss_record);
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + miss_region.stride as usize;
@@ -344,19 +381,27 @@ impl Renderer {
                     writer.write_zeros(end_offset - writer.written());
                 }
 
+                let mut light_indexer = 0u32..;
                 writer.write_zeros(hit_region.offset as usize - writer.written());
                 for instance_ref in clusters.instances_grouped_by_transform_iter().cloned() {
                     let instance = scene.instance(instance_ref);
-                    let shader = scene.shader(instance.shader_ref);
+                    let shader_desc = scene.shader(instance.shader_ref);
 
-                    let (reflectance, mut flags) = match shader.surface {
-                        Surface::Diffuse { reflectance } => (reflectance / PI, ExtendRecordFlags::BSDF_TYPE_DIFFUSE),
-                        Surface::Mirror { reflectance } => {
-                            (Vec3::broadcast(reflectance), ExtendRecordFlags::BSDF_TYPE_MIRROR)
-                        }
+                    let mut shader = match shader_desc.surface {
+                        Surface::Diffuse { reflectance } => ExtendShader {
+                            flags: ExtendShaderFlags::BSDF_TYPE_DIFFUSE,
+                            reflectance: reflectance / PI,
+                            ..Default::default()
+                        },
+                        Surface::Mirror { reflectance } => ExtendShader {
+                            flags: ExtendShaderFlags::BSDF_TYPE_MIRROR,
+                            reflectance: Vec3::broadcast(reflectance),
+                            ..Default::default()
+                        },
                     };
-                    if shader.emission.is_some() {
-                        flags |= ExtendRecordFlags::IS_EMISSIVE;
+                    if shader_desc.emission.is_some() {
+                        shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
+                        shader.light_index = light_indexer.next().unwrap();
                     }
 
                     match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
@@ -364,16 +409,16 @@ impl Renderer {
                             index_buffer_address,
                             position_buffer_address,
                         } => {
-                            let extend_hit_record = ExtendTriangleHitRecord {
+                            let hit_record = ExtendTriangleHitRecord {
                                 index_buffer_address,
                                 position_buffer_address,
-                                reflectance,
-                                flags,
+                                shader,
+                                _pad: 0,
                             };
 
                             let end_offset = writer.written() + hit_region.stride as usize;
                             writer.write(shader_group_handles[ShaderGroup::ExtendHitTriangle.into_integer()]);
-                            writer.write(&extend_hit_record);
+                            writer.write(&hit_record);
                             writer.write_zeros(end_offset - writer.written());
 
                             let end_offset = writer.written() + hit_region.stride as usize;
@@ -381,16 +426,14 @@ impl Renderer {
                             writer.write_zeros(end_offset - writer.written());
                         }
                         GeometryRecordData::Sphere => {
-                            let (centre, radius) = match scene.geometry(instance.geometry_ref) {
-                                Geometry::Sphere { centre, radius } => (centre, radius),
+                            let geom = match scene.geometry(instance.geometry_ref) {
+                                Geometry::Sphere { centre, radius } => SphereGeomData {
+                                    centre: *centre,
+                                    radius: *radius,
+                                },
                                 _ => unreachable!(),
                             };
-                            let hit_record = SphereHitRecord {
-                                centre: *centre,
-                                radius: *radius,
-                                reflectance,
-                                flags,
-                            };
+                            let hit_record = ExtendSphereHitRecord { geom, shader };
 
                             let end_offset = writer.written() + hit_region.stride as usize;
                             writer.write(shader_group_handles[ShaderGroup::ExtendHitSphere.into_integer()]);
@@ -404,53 +447,78 @@ impl Renderer {
                         }
                     }
                 }
+                assert_eq!(light_indexer.next().unwrap(), total_light_count as u32);
 
                 writer.write_zeros(callable_region.offset as usize - writer.written());
-                {
-                    let light_record = scene
-                        .instances
-                        .iter()
-                        .filter_map(|instance| {
-                            let emission = scene.shader(instance.shader_ref).emission?;
-                            match scene.geometry(instance.geometry_ref) {
-                                Geometry::TriangleMesh { .. } => None,
-                                Geometry::Quad { size, transform } => {
-                                    let world_from_local = scene.transform(instance.transform_ref).0 * *transform;
+                for instance_ref in clusters.instances_grouped_by_transform_iter().cloned() {
+                    let instance = scene.instance(instance_ref);
+                    let shader = scene.shader(instance.shader_ref);
+                    if let Some(emission) = shader.emission {
+                        let world_from_local = scene.transform(instance.transform_ref).0;
+                        match scene.geometry(instance.geometry_ref) {
+                            Geometry::TriangleMesh { .. } => unimplemented!(),
+                            Geometry::Quad {
+                                size,
+                                transform: quad_from_local,
+                            } => {
+                                let world_from_quad = world_from_local * *quad_from_local;
 
-                                    let centre_ws = world_from_local.translation;
-                                    let edge0_ws = world_from_local.transform_vec3(Vec3::new(size.x, 0.0, 0.0));
-                                    let edge1_ws = world_from_local.transform_vec3(Vec3::new(0.0, size.y, 0.0));
-                                    let normal_ws = world_from_local.transform_vec3(Vec3::unit_z()).normalized();
+                                let centre_ws = world_from_quad.translation;
+                                let edge0_ws = world_from_quad.transform_vec3(Vec3::new(size.x, 0.0, 0.0));
+                                let edge1_ws = world_from_quad.transform_vec3(Vec3::new(0.0, size.y, 0.0));
+                                let normal_ws = world_from_quad.transform_vec3(Vec3::unit_z()).normalized();
 
-                                    let unit_value =
-                                        (centre_ws.abs() + 0.5 * (edge0_ws.abs() + edge1_ws.abs())).component_max();
-                                    let area_ws = world_from_local.scale * world_from_local.scale * size.x * size.y;
+                                let unit_value =
+                                    (centre_ws.abs() + 0.5 * (edge0_ws.abs() + edge1_ws.abs())).component_max();
+                                let area_ws = world_from_quad.scale * world_from_quad.scale * size.x * size.y;
 
-                                    Some(QuadLightRecord {
-                                        emission,
-                                        unit_value,
-                                        area_pdf: 1.0 / area_ws,
-                                        normal_ws,
-                                        corner_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
-                                        edge0_ws,
-                                        edge1_ws,
-                                    })
-                                }
-                                Geometry::Sphere { .. } => None,
+                                let light_record = QuadLightRecord {
+                                    emission,
+                                    unit_value,
+                                    area_pdf: 1.0 / area_ws,
+                                    normal_ws,
+                                    corner_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
+                                    edge0_ws,
+                                    edge1_ws,
+                                };
+
+                                let end_offset = writer.written() + callable_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::QuadLightEval.into_integer()]);
+                                writer.write(&light_record);
+                                writer.write_zeros(end_offset - writer.written());
+
+                                let end_offset = writer.written() + callable_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::QuadLightSample.into_integer()]);
+                                writer.write(&light_record);
+                                writer.write_zeros(end_offset - writer.written());
                             }
-                        })
-                        .next()
-                        .unwrap();
+                            Geometry::Sphere { centre, radius } => {
+                                let centre_ws = world_from_local * *centre;
+                                let radius_ws = world_from_local.scale.abs() * *radius;
 
-                    let end_offset = writer.written() + callable_region.stride as usize;
-                    writer.write(shader_group_handles[ShaderGroup::QuadLightEval.into_integer()]);
-                    writer.write(&light_record);
-                    writer.write_zeros(end_offset - writer.written());
+                                let area_ws = 4.0 * PI * radius_ws * radius_ws;
+                                let unit_value = centre_ws.abs().component_max() + radius_ws;
 
-                    let end_offset = writer.written() + callable_region.stride as usize;
-                    writer.write(shader_group_handles[ShaderGroup::QuadLightSample.into_integer()]);
-                    writer.write(&light_record);
-                    writer.write_zeros(end_offset - writer.written());
+                                let light_record = SphereLightRecord {
+                                    emission,
+                                    unit_value,
+                                    area_pdf: 1.0 / area_ws,
+                                    centre_ws,
+                                    radius_ws,
+                                };
+
+                                let end_offset = writer.written() + callable_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::SphereLightEval.into_integer()]);
+                                writer.write(&light_record);
+                                writer.write_zeros(end_offset - writer.written());
+
+                                let end_offset = writer.written() + callable_region.stride as usize;
+                                writer.write(shader_group_handles[ShaderGroup::SphereLightSample.into_integer()]);
+                                writer.write(&light_record);
+                                writer.write_zeros(end_offset - writer.written());
+                            }
+                        }
+                    }
                 }
             }
         });

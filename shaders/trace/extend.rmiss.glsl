@@ -5,14 +5,9 @@
 #extension GL_GOOGLE_include_directive : require
 #include "extend_common.glsl"
 
-layout(shaderRecordEXT, scalar) buffer ExtendMissRecord {
-    uint flags;
-} g_record;
-
 EXTEND_PAYLOAD_IN(g_extend);
 
 void main()
 {
-    const bool is_emissive = ((g_record.flags & EXTEND_RECORD_FLAGS_IS_EMISSIVE_BIT) != 0);
-    g_extend.hit = create_miss_data(is_emissive);
+    g_extend.hit = create_miss_data();
 }

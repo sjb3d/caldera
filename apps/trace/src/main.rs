@@ -521,7 +521,7 @@ fn main() {
                         "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::Mirror),
                         "cornell-instances" => SceneDesc::CornellBox(CornellBoxVariant::Instances),
                         "cornell-domelight" => SceneDesc::CornellBox(CornellBoxVariant::DomeLight),
-                        "cornell-sphere" => SceneDesc::CornellBox(CornellBoxVariant::Sphere),
+                        "cornell-spherelight" => SceneDesc::CornellBox(CornellBoxVariant::SphereLight),
                         s => panic!("unknown scene {:?}", s),
                     }
                 }

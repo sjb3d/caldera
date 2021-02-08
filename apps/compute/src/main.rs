@@ -90,7 +90,8 @@ struct App {
 }
 
 impl App {
-    const SEQUENCE_COUNT: u32 = 4096;
+    const LOG2_SEQUENCE_COUNT: u32 = 12;
+    const SEQUENCE_COUNT: u32 = 1 << Self::LOG2_SEQUENCE_COUNT;
     const SAMPLES_PER_SEQUENCE: u32 = 256;
     const MAX_PASS_COUNT: u32 = Self::SAMPLES_PER_SEQUENCE / 4;
 

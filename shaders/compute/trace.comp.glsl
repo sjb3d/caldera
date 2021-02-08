@@ -23,7 +23,7 @@ layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_b;
 
 layout(set = 0, binding = 4, rg16ui) uniform restrict readonly uimage2D g_samples;
 
-#define SEQUENCE_COUNT        4096
+#define LOG2_SEQUENCE_COUNT         12
 
 vec3 sample_from_rec709(vec3 c)
 {
@@ -97,11 +97,11 @@ bool intersect_sphere(
     return is_hit;
 }
 
-vec2 rand_u01(uvec2 pixel_coord, uint ray_index, uint sample_index)
+vec2 rand_u01(uvec2 pixel_coord, uint seq_index, uint sample_index)
 {
     // hash the pixel coordinate and ray index to pick a sequence
-    const uint seq_hash = hash((ray_index << 20) | (pixel_coord.y << 10) | pixel_coord.x);
-    const ivec2 sample_coord = ivec2(sample_index, seq_hash & (SEQUENCE_COUNT - 1));
+    const uint seq_hash = hash((seq_index << 24) ^ (pixel_coord.y << 12) ^ pixel_coord.x);
+    const ivec2 sample_coord = ivec2(sample_index, seq_hash >> (32 - LOG2_SEQUENCE_COUNT));
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
 }
