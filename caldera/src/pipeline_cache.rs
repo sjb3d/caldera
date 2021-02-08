@@ -183,6 +183,7 @@ pub enum RayTracingShaderGroupDesc<'a> {
         any_hit: Option<&'a str>,
         intersection: Option<&'a str>,
     },
+    Callable(&'a str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -194,6 +195,7 @@ enum RayTracingShaderGroup {
         any_hit: Option<vk::ShaderModule>,
         intersection: Option<vk::ShaderModule>,
     },
+    Callable(vk::ShaderModule),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -228,8 +230,8 @@ pub struct PipelineCache {
 }
 
 impl PipelineCache {
-    const RAY_TRACING_MAX_MODULES: usize = 8;
-    const RAY_TRACING_MAX_SHADER_GROUPS: usize = 8;
+    const RAY_TRACING_MAX_MODULES: usize = 10;
+    const RAY_TRACING_MAX_SHADER_GROUPS: usize = 10;
 
     pub fn new<P: AsRef<Path>>(context: &Arc<Context>, path: P) -> Self {
         let pipeline_cache = {
@@ -437,6 +439,9 @@ impl PipelineCache {
                     any_hit: any_hit.map(|name| self.shader_loader.get_shader(name).unwrap()),
                     intersection: intersection.map(|name| self.shader_loader.get_shader(name).unwrap()),
                 },
+                RayTracingShaderGroupDesc::Callable(callable) => {
+                    RayTracingShaderGroup::Callable(self.shader_loader.get_shader(callable).unwrap())
+                }
             })
             .collect();
         let key = PipelineCacheKey::RayTracing {
@@ -508,6 +513,14 @@ impl PipelineCache {
                             intersection_shader: intersection.map_or(vk::SHADER_UNUSED_KHR, |module| {
                                 get_stage_index(vk::ShaderStageFlags::INTERSECTION_KHR, module)
                             }),
+                            ..Default::default()
+                        },
+                        RayTracingShaderGroup::Callable(callable) => vk::RayTracingShaderGroupCreateInfoKHR {
+                            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                            general_shader: get_stage_index(vk::ShaderStageFlags::CALLABLE_KHR, *callable),
+                            closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                            any_hit_shader: vk::SHADER_UNUSED_KHR,
+                            intersection_shader: vk::SHADER_UNUSED_KHR,
                             ..Default::default()
                         },
                     })

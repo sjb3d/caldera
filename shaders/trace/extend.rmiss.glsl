@@ -3,14 +3,13 @@
 #extension GL_EXT_scalar_block_layout : require
 
 #extension GL_GOOGLE_include_directive : require
-#include "record.glsl"
-#include "payload.glsl"
+#include "extend_common.glsl"
 
 layout(shaderRecordEXT, scalar) buffer ExtendMissRecord {
     uint flags;
 } g_record;
 
-EXTEND_PAYLOAD_WRITE(g_extend);
+EXTEND_PAYLOAD_IN(g_extend);
 
 void main()
 {

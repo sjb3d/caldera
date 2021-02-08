@@ -4,16 +4,11 @@
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
-#include "record.glsl"
+#include "sphere_common.glsl"
 
-layout(shaderRecordEXT, scalar) buffer SphereHitRecord {
-    vec3 centre;
-    float radius;
-    vec3 reflectance;
-    uint flags;
-} g_record;
+SPHERE_HIT_RECORD(g_record);
 
-hitAttributeEXT vec3 g_hit_from_centre;
+hitAttributeEXT SphereHitAttribute g_attrib;
 
 void main()
 {
@@ -37,9 +32,9 @@ void main()
         const float t2 = (2.f*c)/k;
         const float t_min = min(t1, t2);
         const float t_max = max(t1, t2);
-        g_hit_from_centre = p + t_min*d;
+        g_attrib.hit_from_centre = p + t_min*d;
         if (!reportIntersectionEXT(t_min, 1)) {
-            g_hit_from_centre = p + t_max*d;
+            g_attrib.hit_from_centre = p + t_max*d;
             reportIntersectionEXT(t_max, 0);
         }
     }

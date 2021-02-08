@@ -4,21 +4,19 @@ use crate::RenderColorSpace;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use spark::vk;
-use std::{mem, ops::Deref, slice};
+use std::{mem, slice};
 use std::{ops::BitOrAssign, sync::Arc};
 
-#[derive(Clone, Copy)]
-struct QuadLight {
-    transform: Similarity3,
-    size: Vec2,
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct QuadLightRecord {
     emission: Vec3,
-}
-
-impl QuadLight {
-    fn area_ws(&self) -> f32 {
-        let scale = self.transform.scale;
-        scale * scale * self.size.x * self.size.y
-    }
+    unit_value: f32,
+    area_pdf: f32,
+    normal_ws: Vec3,
+    corner_ws: Vec3,
+    edge0_ws: Vec3,
+    edge1_ws: Vec3,
 }
 
 #[repr(C)]
@@ -26,10 +24,6 @@ impl QuadLight {
 struct PathTraceData {
     world_from_camera: Transform3,
     fov_size_at_unit_z: Vec2,
-    world_from_light: Transform3,
-    light_size: Vec2,
-    light_area_ws: f32,
-    light_emission: Vec3,
     sample_index: u32,
     max_segment_count: u32,
     render_color_space: u32,
@@ -108,6 +102,8 @@ enum ShaderGroup {
     OcclusionMiss,
     OcclusionHitTriangle,
     OcclusionHitSphere,
+    QuadLightEval,
+    QuadLightSample,
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +127,7 @@ struct ShaderBindingTable {
     raygen_region: ShaderBindingRegion,
     miss_region: ShaderBindingRegion,
     hit_region: ShaderBindingRegion,
+    callable_region: ShaderBindingRegion,
     buffer: StaticBufferHandle,
 }
 
@@ -145,8 +142,9 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    const HIT_GROUP_COUNT_PER_INSTANCE: u32 = 2;
-    const MISS_GROUP_COUNT: u32 = 2;
+    const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
+    const MISS_ENTRY_COUNT: u32 = 2;
+    const CALLABLE_ENTRY_COUNT_PER_LIGHT: u32 = 2;
 
     pub fn new(
         context: &Arc<Context>,
@@ -187,6 +185,8 @@ impl Renderer {
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
                 },
+                RayTracingShaderGroupDesc::Callable("trace/quad_light_eval.rcall.spv"),
+                RayTracingShaderGroupDesc::Callable("trace/quad_light_sample.rcall.spv"),
             ],
             path_trace_pipeline_layout,
         );
@@ -233,6 +233,7 @@ impl Renderer {
         let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
         let mut next_offset = 0;
 
+        // ray generation
         let raygen_record_size = 0;
         let raygen_stride = align_up(
             rtpp.shader_group_handle_size + raygen_record_size,
@@ -245,12 +246,13 @@ impl Renderer {
         };
         next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
 
+        // miss shaders
         let miss_record_size = mem::size_of::<ExtendMissRecord>() as u32;
         let miss_stride = align_up(
             rtpp.shader_group_handle_size + miss_record_size,
             rtpp.shader_group_handle_alignment,
         );
-        let miss_entry_count = Self::MISS_GROUP_COUNT;
+        let miss_entry_count = Self::MISS_ENTRY_COUNT;
         let miss_region = ShaderBindingRegion {
             offset: next_offset,
             stride: miss_stride,
@@ -258,18 +260,33 @@ impl Renderer {
         };
         next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
 
+        // hit shaders
         let hit_record_size = mem::size_of::<ExtendTriangleHitRecord>().max(mem::size_of::<SphereHitRecord>()) as u32;
         let hit_stride = align_up(
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
         );
-        let hit_entry_count = (self.scene.instances.len() as u32) * Self::HIT_GROUP_COUNT_PER_INSTANCE;
+        let hit_entry_count = (self.scene.instances.len() as u32) * Self::HIT_ENTRY_COUNT_PER_INSTANCE;
         let hit_region = ShaderBindingRegion {
             offset: next_offset,
             stride: hit_stride,
             size: hit_stride * hit_entry_count,
         };
         next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
+
+        // callable shaders
+        let callable_record_size = mem::size_of::<QuadLightRecord>() as u32;
+        let callable_stride = align_up(
+            rtpp.shader_group_handle_size + callable_record_size,
+            rtpp.shader_group_handle_alignment,
+        );
+        let callable_entry_count = Self::CALLABLE_ENTRY_COUNT_PER_LIGHT;
+        let callable_region = ShaderBindingRegion {
+            offset: next_offset,
+            stride: callable_stride,
+            size: callable_stride * callable_entry_count,
+        };
+        next_offset += align_up(callable_region.size, rtpp.shader_group_base_alignment);
 
         let total_size = next_offset;
 
@@ -387,12 +404,61 @@ impl Renderer {
                         }
                     }
                 }
+
+                writer.write_zeros(callable_region.offset as usize - writer.written());
+                {
+                    let light_record = scene
+                        .instances
+                        .iter()
+                        .filter_map(|instance| {
+                            let emission = scene.shader(instance.shader_ref).emission?;
+                            match scene.geometry(instance.geometry_ref) {
+                                Geometry::TriangleMesh { .. } => None,
+                                Geometry::Quad { size, transform } => {
+                                    let world_from_local = scene.transform(instance.transform_ref).0 * *transform;
+
+                                    let centre_ws = world_from_local.translation;
+                                    let edge0_ws = world_from_local.transform_vec3(Vec3::new(size.x, 0.0, 0.0));
+                                    let edge1_ws = world_from_local.transform_vec3(Vec3::new(0.0, size.y, 0.0));
+                                    let normal_ws = world_from_local.transform_vec3(Vec3::unit_z()).normalized();
+
+                                    let unit_value =
+                                        (centre_ws.abs() + 0.5 * (edge0_ws.abs() + edge1_ws.abs())).component_max();
+                                    let area_ws = world_from_local.scale * world_from_local.scale * size.x * size.y;
+
+                                    Some(QuadLightRecord {
+                                        emission,
+                                        unit_value,
+                                        area_pdf: 1.0 / area_ws,
+                                        normal_ws,
+                                        corner_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
+                                        edge0_ws,
+                                        edge1_ws,
+                                    })
+                                }
+                                Geometry::Sphere { .. } => None,
+                            }
+                        })
+                        .next()
+                        .unwrap();
+
+                    let end_offset = writer.written() + callable_region.stride as usize;
+                    writer.write(shader_group_handles[ShaderGroup::QuadLightEval.into_integer()]);
+                    writer.write(&light_record);
+                    writer.write_zeros(end_offset - writer.written());
+
+                    let end_offset = writer.written() + callable_region.stride as usize;
+                    writer.write(shader_group_handles[ShaderGroup::QuadLightSample.into_integer()]);
+                    writer.write(&light_record);
+                    writer.write_zeros(end_offset - writer.written());
+                }
             }
         });
         Some(ShaderBindingTable {
             raygen_region,
             miss_region,
             hit_region,
+            callable_region,
             buffer: shader_binding_table,
         })
     }
@@ -410,7 +476,7 @@ impl Renderer {
             resource_loader,
             global_allocator,
             schedule,
-            Self::HIT_GROUP_COUNT_PER_INSTANCE,
+            Self::HIT_ENTRY_COUNT_PER_INSTANCE,
         );
 
         // make shader binding table
@@ -451,40 +517,12 @@ impl Renderer {
         let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
         let fov_size_at_unit_z = 2.0 * (0.5 * camera.fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
-        let scene = self.scene.deref();
-        let quad_light = scene
-            .instances
-            .iter()
-            .filter_map(|instance| {
-                let emission = scene.shader(instance.shader_ref).emission?;
-                match scene.geometry(instance.geometry_ref) {
-                    Geometry::TriangleMesh { .. } => None,
-                    Geometry::Quad { size, transform } => Some(QuadLight {
-                        transform: scene.transform(instance.transform_ref).0 * *transform,
-                        size: *size,
-                        emission,
-                    }),
-                    Geometry::Sphere { .. } => None,
-                }
-            })
-            .next();
-        let dome_light = scene.lights.first();
-
         let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
             descriptor_pool,
             |buf: &mut PathTraceData| {
                 *buf = PathTraceData {
                     world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
                     fov_size_at_unit_z,
-                    world_from_light: quad_light
-                        .map(|light| light.transform.into_transform())
-                        .unwrap_or_else(Transform3::identity),
-                    light_size: quad_light.map(|light| light.size).unwrap_or_else(Vec2::zero),
-                    light_area_ws: quad_light.map(|light| light.area_ws()).unwrap_or(0.0),
-                    light_emission: quad_light
-                        .map(|light| light.emission)
-                        .or_else(|| dome_light.map(|light| light.emission))
-                        .unwrap_or_else(Vec3::zero),
                     sample_index,
                     max_segment_count: max_bounces + 2,
                     render_color_space: render_color_space.into_integer(),
@@ -526,7 +564,9 @@ impl Renderer {
         let hit_shader_binding_table = shader_binding_table
             .hit_region
             .into_device_address_region(shader_binding_table_address);
-        let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
+        let callable_shader_binding_table = shader_binding_table
+            .callable_region
+            .into_device_address_region(shader_binding_table_address);
         unsafe {
             device.cmd_trace_rays_khr(
                 cmd,

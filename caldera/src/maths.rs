@@ -48,6 +48,22 @@ impl DivRoundUp for UVec2 {
     }
 }
 
+pub trait TransformVec3 {
+    fn transform_vec3(&self, vec: Vec3) -> Vec3;
+}
+
+impl TransformVec3 for Isometry3 {
+    fn transform_vec3(&self, vec: Vec3) -> Vec3 {
+        self.rotation * vec
+    }
+}
+
+impl TransformVec3 for Similarity3 {
+    fn transform_vec3(&self, vec: Vec3) -> Vec3 {
+        self.rotation * (self.scale * vec)
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct Transform3 {
@@ -87,10 +103,6 @@ impl Transform3 {
             Vec4::new(self.cols[0].z, self.cols[1].z, self.cols[2].z, self.cols[3].z),
         )
     }
-
-    pub fn transform_vec(&self, vec: Vec3) -> Vec3 {
-        self.cols[0] * vec.x + self.cols[1] * vec.y + self.cols[2] * vec.z
-    }
 }
 
 impl Default for Transform3 {
@@ -104,9 +116,9 @@ impl Mul for Transform3 {
 
     fn mul(self, rhs: Transform3) -> Self::Output {
         Transform3::new(
-            self.transform_vec(rhs.cols[0]),
-            self.transform_vec(rhs.cols[1]),
-            self.transform_vec(rhs.cols[2]),
+            self.transform_vec3(rhs.cols[0]),
+            self.transform_vec3(rhs.cols[1]),
+            self.transform_vec3(rhs.cols[2]),
             self * rhs.cols[3],
         )
     }
@@ -117,6 +129,12 @@ impl Mul<Vec3> for Transform3 {
 
     fn mul(self, rhs: Vec3) -> Self::Output {
         self.cols[0] * rhs.x + self.cols[1] * rhs.y + self.cols[2] * rhs.z + self.cols[3]
+    }
+}
+
+impl TransformVec3 for Transform3 {
+    fn transform_vec3(&self, vec: Vec3) -> Vec3 {
+        self.cols[0] * vec.x + self.cols[1] * vec.y + self.cols[2] * vec.z
     }
 }
 

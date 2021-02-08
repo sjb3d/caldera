@@ -4,25 +4,21 @@
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
-#include "record.glsl"
-#include "payload.glsl"
+#include "extend_common.glsl"
 #include "normal_pack.glsl"
+#include "sphere_common.glsl"
 
-layout(shaderRecordEXT, scalar) buffer SphereHitRecord {
-    vec3 centre;
-    float radius;
-    vec3 reflectance;
-    uint flags;
-} g_record;
+SPHERE_HIT_RECORD(g_record);
 
-hitAttributeEXT vec3 g_hit_from_centre;
+hitAttributeEXT SphereHitAttribute g_attrib;
 
-EXTEND_PAYLOAD_WRITE(g_extend);
+EXTEND_PAYLOAD_IN(g_extend);
 
 void main()
 {   
-    const vec3 hit_pos_ls = g_record.centre + g_hit_from_centre;
-    const vec3 hit_normal_vec_ls = (gl_HitKindEXT != 0) ? g_hit_from_centre : -g_hit_from_centre;
+    const vec3 hit_from_centre = g_attrib.hit_from_centre;
+    const vec3 hit_pos_ls = g_record.centre + hit_from_centre;
+    const vec3 hit_normal_vec_ls = (gl_HitKindEXT != 0) ? hit_from_centre : -hit_from_centre;
 
     // transform normal vector to world space
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);

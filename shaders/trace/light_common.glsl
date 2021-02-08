@@ -1,0 +1,34 @@
+
+#define QUAD_LIGHT_RECORD(NAME)                                 \
+    layout(shaderRecordEXT, scalar) buffer QuadLightRecord {    \
+        vec3 emission;                                          \
+        float unit_value;                                       \
+        float area_pdf;                                         \
+        vec3 normal_ws;                                         \
+        vec3 corner_ws;                                         \
+        vec3 edge0_ws;                                          \
+        vec3 edge1_ws;                                          \
+    } NAME
+
+struct LightEvalData {
+    vec3 position;          // input only
+    vec3 normal;            // input: target normal
+    vec3 emission;          // input: target position
+    float area_pdf;
+};
+
+#define LIGHT_EVAL_CALLABLE_INDEX       0
+#define LIGHT_EVAL_DATA(NAME)           layout(location = 0) callableDataEXT LightEvalData NAME
+#define LIGHT_EVAL_DATA_IN(NAME)        layout(location = 0) callableDataInEXT LightEvalData NAME
+
+struct LightSampleData {
+    vec3 position;          // input: target position
+    vec3 normal;            // input: target normal
+    vec3 emission;          // input: random numbers
+    float area_pdf;
+    float unit_value;
+};
+
+#define LIGHT_SAMPLE_CALLABLE_INDEX     1
+#define LIGHT_SAMPLE_DATA(NAME)         layout(location = 1) callableDataEXT LightSampleData NAME
+#define LIGHT_SAMPLE_DATA_IN(NAME)      layout(location = 1) callableDataInEXT LightSampleData NAME

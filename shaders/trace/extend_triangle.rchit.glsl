@@ -5,8 +5,7 @@
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
-#include "record.glsl"
-#include "payload.glsl"
+#include "extend_common.glsl"
 #include "normal_pack.glsl"
 
 layout(buffer_reference, scalar) buffer IndexBuffer {
@@ -26,7 +25,7 @@ layout(shaderRecordEXT, scalar) buffer ExtendTriangleHitRecord {
 
 hitAttributeEXT vec2 g_bary_coord;
 
-EXTEND_PAYLOAD_WRITE(g_extend);
+EXTEND_PAYLOAD_IN(g_extend);
 
 void main()
 {   

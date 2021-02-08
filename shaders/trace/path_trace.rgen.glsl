@@ -4,18 +4,16 @@
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
-#include "payload.glsl"
+#include "extend_common.glsl"
+#include "occlusion_common.glsl"
 #include "normal_pack.glsl"
 #include "sampler.glsl"
 #include "color_space.glsl"
+#include "light_common.glsl"
 
 layout(set = 0, binding = 0, scalar) uniform PathTraceData {
     mat4x3 world_from_camera;
     vec2 fov_size_at_unit_z;
-    mat4x3 world_from_light;
-    vec2 light_size;
-    float light_area_ws;
-    vec3 light_emission;
     uint sample_index;
     uint max_segment_count;
     uint render_color_space;
@@ -53,52 +51,10 @@ vec2 rand_u01(uint ray_index)
     return (vec2(sample_bits) + .5f)/65536.f;
 }
 
-float sample_lights(
-    uint segment_index,
-    vec3 target_position,
-    vec3 target_normal,
-    out vec3 light_position,
-    out vec3 light_normal,
-    out float light_epsilon,
-    out vec3 light_emission,
-    out float light_area_pdf)
-{
-    const vec2 light_rand_u01 = rand_u01(2*segment_index - 1);
-
-    light_position = g_data.world_from_light * vec4((light_rand_u01 - .5f) * g_data.light_size, 0.f, 1.f);
-    light_normal = g_data.world_from_light[2];
-    light_epsilon = ldexp(max_element(abs(g_data.world_from_light[3])) + max_element(abs(g_data.light_size)), LOG2_EPSILON_FACTOR);
-
-    const vec3 target_from_light = target_position - light_position;
-    const float light_facing_term = dot(target_from_light, light_normal);
-    light_emission = (light_facing_term > 0.f) ? sample_from_rec709(g_data.light_emission) : vec3(0.f);
-    light_area_pdf = 1.f/g_data.light_area_ws;
-
-    const float target_facing_term = dot(target_from_light, target_normal);
-    const float distance_sq = dot(target_from_light, target_from_light);
-    return abs(light_facing_term * target_facing_term) / (distance_sq * distance_sq);
-}
-
-float evaluate_hit_light(
-    vec3 prev_position,
-    vec3 prev_normal,
-    vec3 light_position,
-    vec3 light_normal,
-    out vec3 light_emission,
-    out float light_area_pdf)
-{
-    const vec3 prev_from_light = prev_position - light_position;
-    const float light_facing_term = dot(prev_from_light, light_normal);
-    light_emission = (light_facing_term > 0.f) ? sample_from_rec709(g_data.light_emission) : vec3(0.f);
-    light_area_pdf = 1.f/g_data.light_area_ws;
-
-    const float prev_facing_term = dot(prev_from_light, prev_normal);
-    const float distance_sq = dot(prev_from_light, prev_from_light);
-    return abs(light_facing_term * prev_facing_term) / (distance_sq * distance_sq);
-}
-
-EXTEND_PAYLOAD_READ(g_extend);
-OCCLUSION_PAYLOAD_READ(g_occlusion);
+EXTEND_PAYLOAD(g_extend);
+OCCLUSION_PAYLOAD(g_occlusion);
+LIGHT_EVAL_DATA(g_light_eval);
+LIGHT_SAMPLE_DATA(g_light_sample);
 
 void main()
 {
@@ -159,27 +115,40 @@ void main()
         // handle ray hitting a light source
         if (has_light(g_extend.hit)) {
             // evaluate the light here
+            const vec3 light_position = g_extend.position;
+            vec3 light_normal;
             vec3 light_emission;
             float light_area_pdf;
             float geometry_term;
             bool light_can_be_sampled;
             if (has_surface(g_extend.hit)) {
-                // we hit some surface
-                geometry_term = evaluate_hit_light(
-                    prev_position,
-                    prev_normal,
-                    g_extend.position,
-                    g_data.world_from_light[2],
-                    light_emission,
-                    light_area_pdf);
+                // evaluate the light where we hit
+                g_light_eval.position = light_position;
+                g_light_eval.normal = prev_normal;
+                g_light_eval.emission = prev_position;
+                executeCallableEXT(0, LIGHT_EVAL_CALLABLE_INDEX);
+                light_normal = g_light_eval.normal;
+                light_emission = sample_from_rec709(g_light_eval.emission);
+                light_area_pdf = g_light_eval.area_pdf;
                 light_can_be_sampled = true;
+
+                // compute the geometry term between the last hit and the light sample
+                const vec3 prev_from_light = prev_position - light_position;
+                const float light_facing_term = dot(prev_from_light, light_normal);
+                const float prev_facing_term = dot(prev_from_light, prev_normal);
+                const float distance_sq = dot(prev_from_light, prev_from_light);
+                geometry_term = abs(light_facing_term * prev_facing_term) / (distance_sq * distance_sq);
             } else {
-                // external light from miss shader
-                light_emission = g_data.light_emission;
+                // evaluate the light where we hit
+                light_emission = vec3(0.f);
                 light_area_pdf = 1.f/(4.f*PI);
-                geometry_term = abs(dot(prev_in_dir, prev_normal));
                 light_can_be_sampled = false; // not currently sampling external lights
+
+                // compute the geometry term between the last hit and the light sample
+                geometry_term = abs(dot(prev_in_dir, prev_normal));
             }
+
+            // compute the sample from this hit
             const vec3 unweighted_sample = alpha * light_emission;
 
             // apply MIS weight
@@ -226,22 +195,24 @@ void main()
         const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
 
         // sample a light source
-        if (!hit_is_delta && g_data.light_area_ws != 0.f) {
+        if (!hit_is_delta) {
             // sample from all light sources
-            vec3 light_position;
-            vec3 light_normal;
-            float light_epsilon;
-            vec3 light_emission;
-            float light_area_pdf;
-            const float geometry_term = sample_lights(
-                segment_index,
-                hit_position,
-                hit_normal,
-                light_position,
-                light_normal,
-                light_epsilon,
-                light_emission,
-                light_area_pdf);
+            g_light_sample.position = hit_position;
+            g_light_sample.normal = hit_normal;
+            g_light_sample.emission = vec3(rand_u01(2*segment_index - 1), 0.f);
+            executeCallableEXT(1, LIGHT_SAMPLE_CALLABLE_INDEX);
+            const vec3 light_position = g_light_sample.position;
+            const vec3 light_normal = g_light_sample.normal;
+            const vec3 light_emission = sample_from_rec709(g_light_sample.emission);
+            const float light_area_pdf = g_light_sample.area_pdf;
+            const float light_epsilon = ldexp(g_light_sample.unit_value, LOG2_EPSILON_FACTOR);
+
+            // compute the geometry term between the last hit and the light sample
+            const vec3 hit_from_light = hit_position - light_position;
+            const float light_facing_term = dot(hit_from_light, light_normal);
+            const float hit_facing_term = dot(hit_from_light, hit_normal);
+            const float distance_sq = dot(hit_from_light, hit_from_light);
+            const float geometry_term = abs(light_facing_term * hit_facing_term) / (distance_sq * distance_sq);
 
             // evaluate the BRDF
             const vec3 hit_f = (dot(light_position - hit_position, hit_normal) > 0.f) ? hit_reflectance : vec3(0.f);

@@ -73,15 +73,8 @@ struct ExtendPayload {
 #define EXTEND_HIT_SHADER_OFFSET        0
 #define EXTEND_MISS_SHADER_OFFSET       0
 #define EXTEND_PAYLOAD_INDEX            0
-#define EXTEND_PAYLOAD_READ(NAME)       layout(location = 0) rayPayloadEXT ExtendPayload NAME
-#define EXTEND_PAYLOAD_WRITE(NAME)      layout(location = 0) rayPayloadInEXT ExtendPayload NAME
+#define EXTEND_PAYLOAD(NAME)            layout(location = 0) rayPayloadEXT ExtendPayload NAME
+#define EXTEND_PAYLOAD_IN(NAME)         layout(location = 0) rayPayloadInEXT ExtendPayload NAME
 
-struct OcclusionPayload {
-    uint is_occluded;
-};
-
-#define OCCLUSION_HIT_SHADER_OFFSET     1
-#define OCCLUSION_MISS_SHADER_OFFSET    1
-#define OCCLUSION_PAYLOAD_INDEX         1
-#define OCCLUSION_PAYLOAD_READ(NAME)    layout(location = 1) rayPayloadEXT OcclusionPayload NAME
-#define OCCLUSION_PAYLOAD_WRITE(NAME)   layout(location = 1) rayPayloadInEXT OcclusionPayload NAME
+#define EXTEND_RECORD_FLAGS_BSDF_TYPE_MASK    0x1
+#define EXTEND_RECORD_FLAGS_IS_EMISSIVE_BIT   0x2

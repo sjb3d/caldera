@@ -9,8 +9,10 @@ INC=\
 	common/maths.glsl \
 	common/normal_pack.glsl \
 	common/sampler.glsl \
-	trace/payload.glsl \
-	trace/record.glsl
+	trace/light_common.glsl \
+	trace/occlusion_common.glsl \
+	trace/extend_common.glsl \
+	trace/sphere_common.glsl
 
 SRC=\
 	compute/trace.comp.glsl \
@@ -31,6 +33,8 @@ SRC=\
 	trace/occlusion.rchit.glsl \
 	trace/occlusion.rmiss.glsl \
 	trace/path_trace.rgen.glsl \
+	trace/quad_light_eval.rcall.glsl \
+	trace/quad_light_sample.rcall.glsl \
 	trace/sphere.rint.glsl
 
 APPS=compute mesh trace
