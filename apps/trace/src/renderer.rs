@@ -24,7 +24,6 @@ struct QuadLightRecord {
 struct SphereLightRecord {
     emission: Vec3,
     unit_value: f32,
-    area_pdf: f32,
     centre_ws: Vec3,
     radius_ws: f32,
 }
@@ -495,14 +494,11 @@ impl Renderer {
                             Geometry::Sphere { centre, radius } => {
                                 let centre_ws = world_from_local * *centre;
                                 let radius_ws = world_from_local.scale.abs() * *radius;
-
-                                let area_ws = 4.0 * PI * radius_ws * radius_ws;
                                 let unit_value = centre_ws.abs().component_max() + radius_ws;
 
                                 let light_record = SphereLightRecord {
                                     emission,
                                     unit_value,
-                                    area_pdf: 1.0 / area_ws,
                                     centre_ws,
                                     radius_ws,
                                 };

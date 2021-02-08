@@ -14,7 +14,6 @@
     layout(shaderRecordEXT, scalar) buffer SphereLightRecord {  \
         vec3 emission;                                          \
         float unit_value;                                       \
-        float area_pdf;                                         \
         vec3 centre_ws;                                         \
         float radius_ws;                                        \
     } NAME
@@ -23,7 +22,7 @@ struct LightEvalData {
     vec3 position;          // input only
     vec3 normal;            // input: target normal
     vec3 emission;          // input: target position
-    float area_pdf;
+    float solid_angle_pdf;
 };
 
 #define LIGHT_EVAL_CALLABLE_INDEX       0
@@ -34,7 +33,7 @@ struct LightSampleData {
     vec3 position;          // input: target position
     vec3 normal;            // input: target normal
     vec3 emission;          // input: random numbers
-    float area_pdf;
+    float solid_angle_pdf;
     float unit_value;
 };
 

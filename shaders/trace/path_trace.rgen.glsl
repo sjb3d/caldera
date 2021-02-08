@@ -64,7 +64,7 @@ void main()
     bool have_seen_non_delta;
     float prev_epsilon;
     vec3 prev_in_dir;
-    float prev_psa_pdf_in;
+    float prev_in_proj_solid_angle_pdf;
     vec3 alpha;
 
     // sample the camera
@@ -78,7 +78,7 @@ void main()
         const float cos_theta = ray_dir_ls.z;
         const float cos_theta2 = cos_theta*cos_theta;
         const float cos_theta4 = cos_theta2*cos_theta2;
-        const float psa_pdf_in = 1.f/(fov_area_at_unit_z*cos_theta4);
+        const float proj_solid_angle_pdf = 1.f/(fov_area_at_unit_z*cos_theta4);
 
         const vec3 importance = vec3(1.f/fov_area_at_unit_z);
         const float sensor_area_pdf = 1.f;
@@ -89,7 +89,7 @@ void main()
         have_seen_non_delta = false;
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
-        prev_psa_pdf_in = psa_pdf_in;
+        prev_in_proj_solid_angle_pdf = proj_solid_angle_pdf;
         alpha = importance/sensor_area_pdf;
     }
 
@@ -118,8 +118,7 @@ void main()
             const vec3 light_position = g_extend.position;
             vec3 light_normal;
             vec3 light_emission;
-            float light_area_pdf;
-            float geometry_term;
+            float light_solid_angle_pdf;
             bool light_can_be_sampled;
             if (has_surface(g_extend.hit)) {
                 // evaluate the light where we hit
@@ -129,23 +128,13 @@ void main()
                 executeCallableEXT(0, LIGHT_EVAL_CALLABLE_INDEX);
                 light_normal = g_light_eval.normal;
                 light_emission = sample_from_rec709(g_light_eval.emission);
-                light_area_pdf = g_light_eval.area_pdf;
+                light_solid_angle_pdf = g_light_eval.solid_angle_pdf;
                 light_can_be_sampled = true;
-
-                // compute the geometry term between the last hit and the light sample
-                const vec3 prev_from_light = prev_position - light_position;
-                const float light_facing_term = dot(prev_from_light, light_normal);
-                const float prev_facing_term = dot(prev_from_light, prev_normal);
-                const float distance_sq = dot(prev_from_light, prev_from_light);
-                geometry_term = abs(light_facing_term * prev_facing_term) / (distance_sq * distance_sq);
             } else {
                 // evaluate the light where we hit
                 light_emission = vec3(0.f);
-                light_area_pdf = 1.f/(4.f*PI);
+                light_solid_angle_pdf = 1.f/(4.f*PI);
                 light_can_be_sampled = false; // not currently sampling external lights
-
-                // compute the geometry term between the last hit and the light sample
-                geometry_term = abs(dot(prev_in_dir, prev_normal));
             }
 
             // compute the sample from this hit
@@ -153,7 +142,9 @@ void main()
 
             // apply MIS weight
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
-            const float other_ratio = can_be_sampled ? (light_area_pdf / (geometry_term * prev_psa_pdf_in)) : 0.f;
+            const float prev_in_cos_theta = abs(dot(prev_in_dir, prev_normal));
+            const float prev_in_solid_angle_pdf = prev_in_cos_theta*prev_in_proj_solid_angle_pdf;
+            const float other_ratio = can_be_sampled ? (light_solid_angle_pdf / prev_in_solid_angle_pdf) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
 
@@ -206,27 +197,22 @@ void main()
             const vec3 light_position = g_light_sample.position;
             const vec3 light_normal = g_light_sample.normal;
             const vec3 light_emission = sample_from_rec709(g_light_sample.emission);
-            const float light_area_pdf = g_light_sample.area_pdf;
+            const float light_solid_angle_pdf = g_light_sample.solid_angle_pdf;
             const float light_epsilon = ldexp(g_light_sample.unit_value, LOG2_EPSILON_FACTOR);
 
-            // compute the geometry term between the last hit and the light sample
-            const vec3 hit_from_light = hit_position - light_position;
-            const float light_facing_term = dot(hit_from_light, light_normal);
-            const float hit_facing_term = dot(hit_from_light, hit_normal);
-            const float distance_sq = dot(hit_from_light, hit_from_light);
-            const float geometry_term = abs(light_facing_term * hit_facing_term) / (distance_sq * distance_sq);
-
             // evaluate the BRDF
-            const vec3 hit_f = (dot(light_position - hit_position, hit_normal) > 0.f) ? hit_reflectance : vec3(0.f);
-            const float hit_psa_pdf_in = get_hemisphere_cosine_weighted_psa_pdf();
+            const vec3 light_from_hit_dir = normalize(light_position - hit_position);
+            const float cos_theta = dot(light_from_hit_dir, hit_normal);
+            const vec3 hit_f = (cos_theta > 0.f) ? hit_reflectance : vec3(0.f);
+            const float hit_proj_solid_angle_pdf = get_hemisphere_cosine_weighted_proj_pdf();
             
             // compute the sample assuming the ray is not occluded
-            const vec3 light_alpha_f = light_emission/light_area_pdf;
-            const vec3 unweighted_sample = alpha * hit_f * geometry_term * light_alpha_f;
+            const float rcp_light_proj_solid_angle_pdf = abs(cos_theta)/light_solid_angle_pdf;
+            const vec3 unweighted_sample = alpha * hit_f * rcp_light_proj_solid_angle_pdf * light_emission;
 
             // apply MIS weight
             const bool light_can_be_hit = true;
-            const float other_ratio = light_can_be_hit ? (geometry_term * hit_psa_pdf_in / light_area_pdf) : 0.f;
+            const float other_ratio = light_can_be_hit ? (hit_proj_solid_angle_pdf * rcp_light_proj_solid_angle_pdf) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
 
@@ -264,18 +250,18 @@ void main()
         // sample BSDF
         {
             vec3 in_dir_ls;
-            float psa_pdf_in;
+            float in_proj_solid_angle_pdf;
             switch (get_bsdf_type(g_extend.hit)) {
                 default:
                 case BSDF_TYPE_DIFFUSE: {
                     const vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
                     in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
-                    psa_pdf_in = get_hemisphere_cosine_weighted_psa_pdf();
+                    in_proj_solid_angle_pdf = get_hemisphere_cosine_weighted_proj_pdf();
                 } break;
 
                 case BSDF_TYPE_MIRROR: {
                     in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
-                    psa_pdf_in = 1.f;
+                    in_proj_solid_angle_pdf = 1.f;
                 } break;
             }
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
@@ -288,8 +274,8 @@ void main()
             }
             prev_epsilon = hit_epsilon;
             prev_in_dir = in_dir;
-            prev_psa_pdf_in = psa_pdf_in;
-            alpha *= hit_reflectance/psa_pdf_in;
+            prev_in_proj_solid_angle_pdf = in_proj_solid_angle_pdf;
+            alpha *= hit_reflectance/in_proj_solid_angle_pdf;
         }
     }
 

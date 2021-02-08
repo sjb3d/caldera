@@ -16,6 +16,11 @@ uint hash(uint a)
     return a;
 }
 
+float solid_angle_pdf_from_area_pdf(float area_pdf, float cos_theta, float distance_sq)
+{
+    return area_pdf * distance_sq / abs(cos_theta);
+}
+
 vec2 sample_disc_uniform(vec2 u)
 {
     // remap to [-1,1]
@@ -48,7 +53,12 @@ vec3 sample_hemisphere_cosine_weighted(vec2 u)
     return vec3(disc_pos, z);
 }
 
-float get_hemisphere_cosine_weighted_psa_pdf()
+float get_hemisphere_cosine_weighted_pdf(float cos_theta)
+{
+    return abs(cos_theta)/PI;
+}
+
+float get_hemisphere_cosine_weighted_proj_pdf()
 {
     return 1.f/PI;
 }
