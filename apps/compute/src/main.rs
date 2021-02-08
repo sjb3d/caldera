@@ -272,7 +272,7 @@ impl App {
                                 let dims_rcp = Vec2::broadcast(1.0) / trace_image_size.as_float();
                                 *buf = TraceData {
                                     dims: trace_image_size,
-                                    dims_rcp: dims_rcp,
+                                    dims_rcp,
                                     pass_index: next_pass_index,
                                     render_color_space: render_color_space.into_integer(),
                                 };

@@ -1,8 +1,9 @@
 mod accel;
 mod parser;
+mod renderer;
 mod scene;
 
-use crate::accel::*;
+use crate::renderer::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
@@ -12,8 +13,8 @@ use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
 use spark::vk;
-use std::env;
 use std::sync::Arc;
+use std::{env, ops::Deref};
 use winit::{
     dpi::{LogicalSize, Size},
     event_loop::EventLoop,
@@ -27,35 +28,6 @@ struct SamplePixel {
     y: u16,
 }
 
-#[derive(Clone, Copy)]
-pub struct QuadLight {
-    pub transform: Similarity3,
-    pub size: Vec2,
-    pub emission: Vec3,
-}
-
-impl QuadLight {
-    fn area_ws(&self) -> f32 {
-        let scale = self.transform.scale;
-        scale * scale * self.size.x * self.size.y
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct PathTraceData {
-    world_from_camera: Transform3,
-    fov_size_at_unit_z: Vec2,
-    world_from_light: Transform3,
-    light_size: Vec2,
-    light_area_ws: f32,
-    light_emission: Vec3,
-    sample_index: u32,
-    max_segment_count: u32,
-    render_color_space: u32,
-    use_max_roughness: u32,
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct CopyData {
@@ -66,7 +38,7 @@ struct CopyData {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
-enum RenderColorSpace {
+pub enum RenderColorSpace {
     Rec709 = 0,
     ACEScg = 1,
 }
@@ -79,15 +51,6 @@ enum ToneMapMethod {
     AcesFit = 2,
 }
 
-descriptor_set_layout!(PathTraceDescriptorSetLayout {
-    data: UniformData<PathTraceData>,
-    accel: AccelerationStructure,
-    samples: StorageImage,
-    result_r: StorageImage,
-    result_g: StorageImage,
-    result_b: StorageImage,
-});
-
 descriptor_set_layout!(CopyDescriptorSetLayout {
     data: UniformData<CopyData>,
     result_r: StorageImage,
@@ -96,7 +59,7 @@ descriptor_set_layout!(CopyDescriptorSetLayout {
 });
 
 struct ViewDrag {
-    pub rotation: Rotor3,
+    rotation: Rotor3,
     drag_start: Option<(Vec2, Rotor3, Vec3)>,
 }
 
@@ -148,9 +111,6 @@ impl ViewDrag {
 struct App {
     context: Arc<Context>,
 
-    path_trace_pipeline_layout: vk::PipelineLayout,
-    path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
-
     copy_descriptor_set_layout: CopyDescriptorSetLayout,
     copy_pipeline_layout: vk::PipelineLayout,
 
@@ -158,7 +118,8 @@ struct App {
     result_images: (ImageHandle, ImageHandle, ImageHandle),
     next_sample_index: u32,
 
-    accel: SceneAccel,
+    scene: Arc<Scene>,
+    renderer: Renderer,
     camera_ref: CameraRef,
 
     log2_exposure_scale: f32,
@@ -180,10 +141,6 @@ impl App {
     fn new(base: &mut AppBase, params: &AppParams) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
-
-        let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let path_trace_pipeline_layout =
-            descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
 
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
         let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
@@ -231,35 +188,33 @@ impl App {
             )
         };
 
-        let scene = match &params.scene_desc {
+        let scene = Arc::new(match &params.scene_desc {
             SceneDesc::CornellBox(variant) => create_cornell_box_scene(variant),
             SceneDesc::File(filename) => {
                 let contents = std::fs::read_to_string(filename.as_str()).unwrap();
                 parser::parse_scene(&contents)
             }
-        };
-        let accel = SceneAccel::new(
-            scene,
+        });
+        let renderer = Renderer::new(
             &context,
-            path_trace_pipeline_layout,
+            &scene,
+            &mut base.systems.descriptor_set_layout_cache,
             &base.systems.pipeline_cache,
             &mut base.systems.resource_loader,
         );
 
-        let scene = accel.scene();
         let camera_ref = CameraRef(0);
         let rotation = scene.transform(scene.camera(camera_ref).transform_ref).0.rotation;
 
         Self {
             context: Arc::clone(&context),
-            path_trace_descriptor_set_layout,
-            path_trace_pipeline_layout,
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             sample_image,
             result_images,
             next_sample_index: 0,
-            accel,
+            scene,
+            renderer,
             camera_ref,
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
@@ -312,8 +267,8 @@ impl App {
                     Drag::new(im_str!("Exposure"))
                         .speed(0.05f32)
                         .build(&ui, &mut self.log2_exposure_scale);
+                    let scene = self.scene.deref();
                     ui.text("Cameras:");
-                    let scene = self.accel.scene();
                     for camera_ref in scene.camera_ref_iter() {
                         if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
                             let camera = scene.camera(camera_ref);
@@ -339,14 +294,13 @@ impl App {
                 }
             });
 
-        let scene = self.accel.scene();
-        let camera = scene.camera(self.camera_ref);
+        let camera = self.scene.camera(self.camera_ref);
         let fov_y = camera.fov_y;
         if self.view_drag.update(ui.io(), fov_y) {
             self.next_sample_index = 0;
         }
         let world_from_camera = Isometry3::new(
-            scene.transform(camera.transform_ref).0.translation,
+            self.scene.transform(camera.transform_ref).0.translation,
             self.view_drag.rotation,
         );
 
@@ -359,7 +313,7 @@ impl App {
 
         let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
 
-        self.accel.update(
+        self.renderer.update(
             &base.context,
             &mut base.systems.resource_loader,
             &mut base.systems.global_allocator,
@@ -380,18 +334,14 @@ impl App {
             self.next_sample_index
         } else if let (Some(sample_image_view), true) = (
             base.systems.resource_loader.get_image_view(self.sample_image),
-            self.accel.is_ready(&base.systems.resource_loader),
+            self.renderer.is_ready(&base.systems.resource_loader),
         ) {
-            let top_level_accel = self.accel.top_level_accel().unwrap();
-
             let trace_size = Self::trace_size();
-            let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
-            let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
             schedule.add_compute(
                 command_name!("trace"),
                 |params| {
-                    self.accel.declare_parameters(params);
+                    self.renderer.declare_parameters(params);
                     params.add_image(
                         self.result_images.0,
                         ImageUsage::RAY_TRACING_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_WRITE,
@@ -408,14 +358,13 @@ impl App {
                 {
                     let descriptor_pool = &base.systems.descriptor_pool;
                     let resource_loader = &base.systems.resource_loader;
-                    let path_trace_descriptor_set_layout = &self.path_trace_descriptor_set_layout;
-                    let path_trace_pipeline_layout = self.path_trace_pipeline_layout;
-                    let result_images = &self.result_images;
-                    let next_sample_index = self.next_sample_index;
-                    let accel = &self.accel;
-                    let max_bounces = self.max_bounces;
-                    let use_max_roughness = self.use_max_roughness;
                     let render_color_space = self.render_color_space;
+                    let renderer = &self.renderer;
+                    let max_bounces = self.max_bounces;
+                    let next_sample_index = self.next_sample_index;
+                    let camera_ref = self.camera_ref;
+                    let result_images = &self.result_images;
+                    let use_max_roughness = self.use_max_roughness;
                     move |params, cmd| {
                         let result_image_views = (
                             params.get_image_view(result_images.0),
@@ -423,58 +372,18 @@ impl App {
                             params.get_image_view(result_images.2),
                         );
 
-                        let scene = accel.scene();
-                        let quad_light = scene
-                            .instances
-                            .iter()
-                            .filter_map(|instance| {
-                                let emission = scene.shader(instance.shader_ref).emission?;
-                                match scene.geometry(instance.geometry_ref) {
-                                    Geometry::TriangleMesh { .. } => None,
-                                    Geometry::Quad { size, transform } => Some(QuadLight {
-                                        transform: scene.transform(instance.transform_ref).0 * *transform,
-                                        size: *size,
-                                        emission,
-                                    }),
-                                    Geometry::Sphere { .. } => None,
-                                }
-                            })
-                            .next();
-                        let dome_light = scene.lights.first();
-
-                        let path_trace_descriptor_set = path_trace_descriptor_set_layout.write(
-                            descriptor_pool,
-                            |buf: &mut PathTraceData| {
-                                *buf = PathTraceData {
-                                    world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
-                                    fov_size_at_unit_z,
-                                    world_from_light: quad_light
-                                        .map(|light| light.transform.into_transform())
-                                        .unwrap_or_else(Transform3::identity),
-                                    light_size: quad_light.map(|light| light.size).unwrap_or_else(Vec2::zero),
-                                    light_area_ws: quad_light.map(|light| light.area_ws()).unwrap_or(0.0),
-                                    light_emission: quad_light
-                                        .map(|light| light.emission)
-                                        .or(dome_light.map(|light| light.emission))
-                                        .unwrap_or_else(Vec3::zero),
-                                    sample_index: next_sample_index,
-                                    max_segment_count: max_bounces + 2,
-                                    render_color_space: render_color_space.into_integer(),
-                                    use_max_roughness: if use_max_roughness { 1 } else { 0 },
-                                }
-                            },
-                            top_level_accel,
-                            sample_image_view,
-                            result_image_views.0,
-                            result_image_views.1,
-                            result_image_views.2,
-                        );
-
-                        accel.emit_trace(
+                        renderer.emit_trace(
                             cmd,
+                            descriptor_pool,
                             resource_loader,
-                            path_trace_pipeline_layout,
-                            path_trace_descriptor_set,
+                            render_color_space,
+                            max_bounces,
+                            use_max_roughness,
+                            sample_image_view,
+                            next_sample_index,
+                            camera_ref,
+                            world_from_camera,
+                            &result_image_views,
                             trace_size,
                         );
                     }

@@ -1,9 +1,8 @@
-mod loader;
-use crate::loader::*;
-
 mod accel;
-use crate::accel::*;
+mod loader;
 
+use crate::accel::*;
+use crate::loader::*;
 use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use imgui::im_str;

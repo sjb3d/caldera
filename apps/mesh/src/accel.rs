@@ -29,20 +29,20 @@ descriptor_set_layout!(TraceDescriptorSetLayout {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct AccelerationStructureInstance {
-    pub transform: TransposedTransform3,
-    pub instance_custom_index_and_mask: u32,
-    pub instance_shader_binding_table_record_offset_and_flags: u32,
-    pub acceleration_structure_reference: u64,
+    transform: TransposedTransform3,
+    instance_custom_index_and_mask: u32,
+    instance_shader_binding_table_record_offset_and_flags: u32,
+    acceleration_structure_reference: u64,
 }
 
 struct AccelLevel {
-    pub context: Arc<Context>,
-    pub accel: vk::AccelerationStructureKHR,
-    pub buffer: BufferHandle,
+    context: Arc<Context>,
+    accel: vk::AccelerationStructureKHR,
+    buffer: BufferHandle,
 }
 
 impl AccelLevel {
-    pub fn new_bottom_level<'a>(
+    fn new_bottom_level<'a>(
         context: &'a Arc<Context>,
         mesh_info: &MeshInfo,
         resource_loader: &ResourceLoader,
@@ -176,7 +176,7 @@ impl AccelLevel {
         }
     }
 
-    pub fn new_top_level<'a>(
+    fn new_top_level<'a>(
         context: &'a Arc<Context>,
         bottom_level_buffer: BufferHandle,
         instance_buffer: vk::Buffer,

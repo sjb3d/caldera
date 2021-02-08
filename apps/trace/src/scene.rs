@@ -176,7 +176,7 @@ impl Scene {
                     }
                     Geometry::Sphere { centre, radius } => {
                         *centre = bake * *centre;
-                        *radius = bake.scale.abs() * *radius;
+                        *radius *= bake.scale.abs();
                     }
                 }
                 instance.transform_ref = identity_ref;
