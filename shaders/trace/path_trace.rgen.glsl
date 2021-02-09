@@ -148,7 +148,7 @@ void main()
     bool have_seen_non_delta;
     float prev_epsilon;
     vec3 prev_in_dir;
-    float prev_in_proj_solid_angle_pdf;
+    float prev_in_solid_angle_pdf;
     vec3 alpha;
 
     // sample the camera
@@ -161,8 +161,8 @@ void main()
         const float fov_area_at_unit_z = mul_elements(g_path_trace.fov_size_at_unit_z);
         const float cos_theta = ray_dir_ls.z;
         const float cos_theta2 = cos_theta*cos_theta;
-        const float cos_theta4 = cos_theta2*cos_theta2;
-        const float proj_solid_angle_pdf = 1.f/(fov_area_at_unit_z*cos_theta4);
+        const float cos_theta3 = cos_theta2*cos_theta;
+        const float solid_angle_pdf = 1.f/(fov_area_at_unit_z*cos_theta3);
 
         const vec3 importance = vec3(1.f/fov_area_at_unit_z);
         const float sensor_area_pdf = 1.f;
@@ -173,7 +173,7 @@ void main()
         have_seen_non_delta = false;
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
-        prev_in_proj_solid_angle_pdf = proj_solid_angle_pdf;
+        prev_in_solid_angle_pdf = solid_angle_pdf;
         alpha = importance/sensor_area_pdf;
     }
 
@@ -220,8 +220,6 @@ void main()
 
             // apply MIS weight
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
-            const float prev_in_cos_theta = abs(dot(prev_in_dir, prev_normal));
-            const float prev_in_solid_angle_pdf = prev_in_cos_theta*prev_in_proj_solid_angle_pdf;
             const float other_ratio = can_be_sampled ? (light_solid_angle_pdf / prev_in_solid_angle_pdf) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
@@ -283,18 +281,42 @@ void main()
                 light_epsilon);
 
             // evaluate the BRDF
-            const vec3 light_from_hit_dir = normalize(light_position - hit_position);
-            const float cos_theta = dot(light_from_hit_dir, hit_normal);
-            const vec3 hit_f = (cos_theta > 0.f) ? hit_reflectance : vec3(0.f);
-            const float hit_proj_solid_angle_pdf = get_hemisphere_cosine_weighted_proj_pdf();
+            const vec3 in_dir_ls = normalize((light_position - hit_position)*hit_basis);
+            const float cos_theta = in_dir_ls.z;
+            vec3 hit_f = vec3(0.f);
+            float hit_solid_angle_pdf = 0.f;
+            if (in_dir_ls.z*out_dir_ls.z > 0.f) {
+                if (get_bsdf_type(g_extend.hit) == BSDF_TYPE_GGX) {
+                    const float roughness = hit_reflectance.x;
+                    const vec2 alpha = vec2(roughness*roughness);
+                    const vec3 h = normalize(in_dir_ls + out_dir_ls);
+
+                    const float g1v = smith_g1(out_dir_ls, alpha);
+                    const float dh = ggx_d(h, alpha);
+
+                    const float h_dot_o = dot(h, out_dir_ls);
+                    const float n_dot_o = out_dir_ls.z;
+                    const float n_dot_i = in_dir_ls.z;
+
+                    const float r0 = .5f;
+                    const float f 
+                        = schlick_fresnel(r0, abs(h_dot_o))*dh*smith_g2(out_dir_ls, in_dir_ls, alpha)
+                        / (4.f*abs(n_dot_o*n_dot_i));
+
+                    hit_f = vec3(f);                        
+                    hit_solid_angle_pdf = g1v*max(0.f, h_dot_o)*dh/(4.f*abs(n_dot_o*h.z));
+                } else {
+                    hit_f = hit_reflectance;
+                    hit_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(cos_theta);
+                }
+            }
             
             // compute the sample assuming the ray is not occluded
-            const float rcp_light_proj_solid_angle_pdf = abs(cos_theta)/light_solid_angle_pdf;
-            const vec3 unweighted_sample = alpha * hit_f * rcp_light_proj_solid_angle_pdf * light_emission;
+            const vec3 unweighted_sample = alpha * hit_f * (abs(cos_theta)/light_solid_angle_pdf) * light_emission;
 
             // apply MIS weight
             const bool light_can_be_hit = allow_bsdf_sampling;
-            const float other_ratio = light_can_be_hit ? (hit_proj_solid_angle_pdf * rcp_light_proj_solid_angle_pdf) : 0.f;
+            const float other_ratio = light_can_be_hit ? (hit_solid_angle_pdf / light_solid_angle_pdf) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
 
@@ -331,19 +353,39 @@ void main()
 
         // sample BSDF
         {
+            const vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
             vec3 in_dir_ls;
-            float in_proj_solid_angle_pdf;
+            vec3 estimator;
+            float in_solid_angle_pdf;
             switch (get_bsdf_type(g_extend.hit)) {
                 default:
                 case BSDF_TYPE_DIFFUSE: {
-                    const vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
                     in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
-                    in_proj_solid_angle_pdf = get_hemisphere_cosine_weighted_proj_pdf();
+                    estimator = hit_reflectance/get_hemisphere_cosine_weighted_proj_pdf();
+                    in_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_dir_ls.z);
+                } break;
+
+                case BSDF_TYPE_GGX: {
+                    const float roughness = hit_reflectance.x;
+                    const vec2 alpha = vec2(roughness*roughness);
+                    const vec3 h = sample_ggx_vndf(out_dir_ls, alpha, bsdf_rand_u01);
+                    in_dir_ls = reflect(-out_dir_ls, h);
+
+                    const float g1v = smith_g1(out_dir_ls, alpha);
+                    const float dh = ggx_d(h, alpha);
+                    const float h_dot_o = dot(h, out_dir_ls);
+                    const float n_dot_o = out_dir_ls.z;
+
+                    const float r0 = .5f;
+                    estimator = vec3(schlick_fresnel(r0, abs(h_dot_o))*smith_g2(out_dir_ls, in_dir_ls, alpha)/g1v);
+
+                    in_solid_angle_pdf = g1v*max(0.f, h_dot_o)*dh/(4.f*abs(n_dot_o*h.z));
                 } break;
 
                 case BSDF_TYPE_MIRROR: {
                     in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
-                    in_proj_solid_angle_pdf = 1.f;
+                    estimator = hit_reflectance;
+                    in_solid_angle_pdf = 1.f/abs(in_dir_ls.z);
                 } break;
             }
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
@@ -356,8 +398,8 @@ void main()
             }
             prev_epsilon = hit_epsilon;
             prev_in_dir = in_dir;
-            prev_in_proj_solid_angle_pdf = in_proj_solid_angle_pdf;
-            alpha *= hit_reflectance/in_proj_solid_angle_pdf;
+            prev_in_solid_angle_pdf = in_solid_angle_pdf;
+            alpha *= estimator;
         }
     }
 

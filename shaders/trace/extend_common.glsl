@@ -9,8 +9,9 @@ struct HitData {
 #define HIT_DATA_Y_BSDF_TYPE_SHIFT      20
 #define HIT_DATA_Y_BSDF_TYPE_MASK       0x00300000
 
-#define BSDF_TYPE_DIFFUSE    0
-#define BSDF_TYPE_MIRROR     1
+#define BSDF_TYPE_DIFFUSE       0
+#define BSDF_TYPE_GGX           1
+#define BSDF_TYPE_MIRROR        2
 
 HitData create_hit_data(
     uint bsdf_type,
@@ -89,5 +90,5 @@ struct ExtendShader {
 #define EXTEND_PAYLOAD(NAME)            layout(location = 0) rayPayloadEXT ExtendPayload NAME
 #define EXTEND_PAYLOAD_IN(NAME)         layout(location = 0) rayPayloadInEXT ExtendPayload NAME
 
-#define EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK      0x1
-#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x2
+#define EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK      0x3
+#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x4

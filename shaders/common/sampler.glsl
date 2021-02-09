@@ -83,6 +83,7 @@ vec3 sample_solid_angle_uniform(float cos_theta_min, vec2 u)
     return dir_from_phi_cos_theta(phi, cos_theta);
 }
 
+// reference: http://jcgt.org/published/0007/04/01/
 vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
 {
     // transforming the view direction to the hemisphere configuration
@@ -98,6 +99,44 @@ vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
     const vec3 Nh = p.x*T1 + p.y*T2 + sqrt(max(0.f, 1.f - dot(p, p)))*Vh;
     // transforming the normal back to the ellipsoid configuration
     return normalize(vec3(alpha.x*Nh.x, alpha.y*Nh.y, max(0.f, Nh.z)));
+}
+
+float smith_lambda(vec3 v, vec2 alpha)
+{
+    const vec3 va = vec3(v.x*alpha.x, v.y*alpha.y, v.z);
+    const vec3 va2 = va*va;
+    return .5f*(sqrt(1.f + (va2.x + va2.y)/va2.z) - 1.f);
+}
+
+float smith_g1(vec3 v, vec2 alpha)
+{
+    return 1.f/(1.f + smith_lambda(v, alpha));
+}
+float smith_g2(vec3 v, vec3 l, vec2 alpha)
+{
+    return 1.f/(1.f + smith_lambda(v, alpha) + smith_lambda(l, alpha));
+}
+
+float pow5(float x)
+{
+    const float x2 = x*x;
+    const float x4 = x2*x2;
+    return x4*x;
+}
+float schlick_fresnel(float r0, float v_dot_h)
+{
+    return r0 + (1.f - r0)*pow5(1.f - v_dot_h);
+}
+vec3 schlick_fresnel(vec3 r0, float v_dot_h)
+{
+    return r0 + (vec3(1.f) - r0)*pow5(1.f - v_dot_h);
+}
+
+float ggx_d(vec3 v, vec2 alpha)
+{
+    const vec3 va = vec3(v.x/alpha.x, v.y/alpha.y, v.z);
+    const float m = sum_elements(va*va);
+    return 1.f/(PI*alpha.x*alpha.y*m*m);
 }
 
 #endif

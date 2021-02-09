@@ -108,8 +108,9 @@ struct ExtendShaderFlags(u32);
 
 impl ExtendShaderFlags {
     const BSDF_TYPE_DIFFUSE: ExtendShaderFlags = ExtendShaderFlags(0x0);
-    const BSDF_TYPE_MIRROR: ExtendShaderFlags = ExtendShaderFlags(0x1);
-    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x2);
+    const BSDF_TYPE_GGX: ExtendShaderFlags = ExtendShaderFlags(0x1);
+    const BSDF_TYPE_MIRROR: ExtendShaderFlags = ExtendShaderFlags(0x2);
+    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x4);
 }
 
 impl BitOrAssign for ExtendShaderFlags {
@@ -466,6 +467,11 @@ impl Renderer {
                         Surface::Diffuse { reflectance } => ExtendShader {
                             flags: ExtendShaderFlags::BSDF_TYPE_DIFFUSE,
                             reflectance: reflectance / PI,
+                            ..Default::default()
+                        },
+                        Surface::GGX { roughness } => ExtendShader {
+                            flags: ExtendShaderFlags::BSDF_TYPE_GGX,
+                            reflectance: Vec3::new(roughness, 0.0, 0.0),
                             ..Default::default()
                         },
                         Surface::Mirror { reflectance } => ExtendShader {

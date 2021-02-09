@@ -73,24 +73,23 @@ bool intersect_sphere(
     const float b = 2.f*dot(rd, o);
     const float c = dot(o, o) - sr*sr;
 
-    const float q = b*b - 4.f*a*c;
+    const float Q = b*b - 4.f*a*c;
     bool is_hit = false;
-    if (q > 0.f) {
-        const float s = .5f/a;
-        const float ta = -b*s;
-        const float tb = sqrt(q)*s;
-
-        const float t0 = ta - tb;
-        const float t1 = ta + tb;
-
-        if (0.f < t0 && t0 < d) {
-            gnv = o + t0*rd;
-            d = t0;
+    if (Q > 0.f) {
+        const float q = sqrt(Q);
+        const float k = -b - copysign(q, b);
+        const float t1 = k/(2.f*a);
+        const float t2 = (2.f*c)/k;
+        const float t_min = min(t1, t2);
+        const float t_max = max(t1, t2);
+        if (0.f < t_min && t_min < d) {
+            gnv = o + t_min*rd;
+            d = t_min;
             is_hit = true;
         }
-        if (0.f < t1 && t1 < d) {
-            gnv = o + t1*rd;
-            d = t1;
+        if (0.f < t_max && t_max < d) {
+            gnv = o + t_max*rd;
+            d = t_max;
             is_hit = true;
         }
     }
@@ -104,26 +103,6 @@ vec2 rand_u01(uvec2 pixel_coord, uint seq_index, uint sample_index)
     const ivec2 sample_coord = ivec2(sample_index, seq_hash >> (32 - LOG2_SEQUENCE_COUNT));
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
-}
-
-float smith_lambda(vec3 v, vec2 alpha)
-{
-    return .5f*(sqrt(1.f + (alpha.x*alpha.x*v.x*v.x + alpha.y*alpha.y*v.y*v.y)/(v.z*v.z)) - 1.f);
-}
-
-float smith_g1(vec3 v, vec2 alpha)
-{
-    return 1.f/(1.f + smith_lambda(v, alpha));
-}
-
-float smith_g2(vec3 v, vec3 l, vec2 alpha)
-{
-    return 1.f/(1.f + smith_lambda(v, alpha) + smith_lambda(l, alpha));
-}
-
-vec3 schlick_fresnel(vec3 r0, float v_dot_h)
-{
-    return r0 + (vec3(1.f) - r0)*pow(1.f - v_dot_h, 5.f);
 }
 
 #define HIT_NONE    0
@@ -243,7 +222,11 @@ void main()
             const vec3 in_dir = reflect(-out_dir, h);
 
             // compute weight
-            const vec3 weight = schlick_fresnel(r0, abs(dot(out_dir, h)))*smith_g2(out_dir, in_dir, alpha)/smith_g1(out_dir, alpha);
+            const vec3 weight
+                = schlick_fresnel(r0, abs(dot(out_dir, h)))
+                * smith_g2(out_dir, in_dir, alpha)
+                / smith_g1(out_dir, alpha)
+                ;
             sample_value *= weight;
 
             // continue ray
