@@ -20,7 +20,7 @@ layout(shaderRecordEXT, scalar) buffer ExtendTriangleHitRecord {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
     ExtendShader shader;
-} g_triangles;
+} g_record;
 
 hitAttributeEXT vec2 g_bary_coord;
 
@@ -28,10 +28,10 @@ EXTEND_PAYLOAD_IN(g_extend);
 
 void main()
 {   
-    const uvec3 tri = g_triangles.index_buffer.tri[gl_PrimitiveID];
-    const vec3 p0 = g_triangles.position_buffer.pos[tri[0]];
-    const vec3 p1 = g_triangles.position_buffer.pos[tri[1]];
-    const vec3 p2 = g_triangles.position_buffer.pos[tri[2]];
+    const uvec3 tri = g_record.index_buffer.tri[gl_PrimitiveID];
+    const vec3 p0 = g_record.position_buffer.pos[tri[0]];
+    const vec3 p1 = g_record.position_buffer.pos[tri[1]];
+    const vec3 p2 = g_record.position_buffer.pos[tri[2]];
 
     const vec3 face_normal_vec_ls = cross(p1 - p0, p2 - p0);
     const vec3 hit_pos_ls
@@ -48,8 +48,8 @@ void main()
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
-    const uint bsdf_type = g_triangles.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
-    const bool is_emissive = ((g_triangles.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
+    const uint bsdf_type = g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
+    const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
     // estimate floating point number size for local and world space
     // TODO: handle scale
@@ -64,8 +64,8 @@ void main()
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
     g_extend.hit = create_hit_data(
         bsdf_type,
-        g_triangles.shader.reflectance,
+        g_record.shader.reflectance,
         is_emissive,
-        g_triangles.shader.light_index,
+        g_record.shader.light_index,
         max_exponent);
 }

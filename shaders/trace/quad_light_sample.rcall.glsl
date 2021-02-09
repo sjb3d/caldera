@@ -7,7 +7,7 @@
 #include "sampler.glsl"
 #include "light_common.glsl"
 
-QUAD_LIGHT_RECORD(g_quad);
+QUAD_LIGHT_RECORD(g_record);
 
 LIGHT_SAMPLE_DATA_IN(g_sample);
 
@@ -17,19 +17,19 @@ void main()
     //const vec3 target_normal = g_sample.normal;
     const vec2 rand_u01 = g_sample.emission.xy;
 
-    const vec3 light_position = g_quad.corner_ws + rand_u01.x*g_quad.edge0_ws + rand_u01.y*g_quad.edge1_ws;
-    const vec3 light_normal = g_quad.normal_ws;
+    const vec3 light_position = g_record.corner_ws + rand_u01.x*g_record.edge0_ws + rand_u01.y*g_record.edge1_ws;
+    const vec3 light_normal = g_record.normal_ws;
     const vec3 target_from_light = target_position - light_position;
     const vec3 connection_dir = normalize(target_from_light);
     const float facing_term = dot(connection_dir, light_normal);
-    const vec3 emission = (facing_term > 0.f) ? g_quad.emission : vec3(0.f);
+    const vec3 emission = (facing_term > 0.f) ? g_record.emission : vec3(0.f);
 
     const float distance_sq = dot(target_from_light, target_from_light);
-    const float solid_angle_pdf = solid_angle_pdf_from_area_pdf(g_quad.area_pdf, facing_term, distance_sq);
+    const float solid_angle_pdf = solid_angle_pdf_from_area_pdf(g_record.area_pdf, facing_term, distance_sq);
 
     g_sample.position = light_position;
     g_sample.normal = light_normal;
     g_sample.emission = emission;
     g_sample.solid_angle_pdf = solid_angle_pdf;
-    g_sample.unit_value = g_quad.unit_value;   
+    g_sample.unit_value = g_record.unit_value;   
 }

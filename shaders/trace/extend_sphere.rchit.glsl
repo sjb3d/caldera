@@ -11,7 +11,7 @@
 layout(shaderRecordEXT, scalar) buffer ExtendSphereHitRecord {
     SphereGeomData geom;
     ExtendShader shader;
-} g_sphere;
+} g_record;
 
 hitAttributeEXT SphereHitAttribute g_attrib;
 
@@ -20,22 +20,22 @@ EXTEND_PAYLOAD_IN(g_extend);
 void main()
 {   
     const vec3 hit_from_centre = g_attrib.hit_from_centre;
-    const vec3 hit_pos_ls = g_sphere.geom.centre + hit_from_centre;
+    const vec3 hit_pos_ls = g_record.geom.centre + hit_from_centre;
     const vec3 hit_normal_vec_ls = (gl_HitKindEXT != 0) ? hit_from_centre : -hit_from_centre;
 
     // transform normal vector to world space
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
-    const uint bsdf_type = g_sphere.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
-    const bool is_emissive = ((g_sphere.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
+    const uint bsdf_type = g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
+    const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
     // estimate floating point number size for local and world space
     // TODO: handle scale
     const float max_position_value = max_element(
-        abs(g_sphere.geom.centre)
+        abs(g_record.geom.centre)
         + abs(gl_ObjectToWorldEXT[3])
-    ) + abs(g_sphere.geom.radius);
+    ) + abs(g_record.geom.radius);
     int max_exponent = 0;
     frexp(max_position_value, max_exponent);
 
@@ -43,8 +43,8 @@ void main()
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
     g_extend.hit = create_hit_data(
         bsdf_type,
-        g_sphere.shader.reflectance,
+        g_record.shader.reflectance,
         is_emissive,
-        g_sphere.shader.light_index,
+        g_record.shader.light_index,
         max_exponent);
 }
