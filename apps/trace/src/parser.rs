@@ -118,9 +118,7 @@ fn surface(i: &str) -> IResult<&str, Surface> {
             Surface::Diffuse { reflectance }
         }),
         map(preceded(tag("mirror"), preceded(multispace1, vec3)), |reflectance| {
-            Surface::Mirror {
-                reflectance: reflectance.x,
-            }
+            Surface::Mirror { reflectance }
         }),
     ))(i)
 }

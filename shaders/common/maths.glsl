@@ -29,6 +29,13 @@ vec2 copysign(vec2 x, vec2 s)
     return uintBitsToFloat(y_bits);
 }
 
+bool sign_bits_match(float x, float y)
+{
+    const uint x_bits = floatBitsToUint(x);
+    const uint y_bits = floatBitsToUint(y);
+    return (((x_bits ^ y_bits) & 0x80000000) == 0);
+}
+
 // reference: https://blog.selfshadow.com/2011/10/17/perp-vectors/
 vec3 perp(vec3 u)
 {

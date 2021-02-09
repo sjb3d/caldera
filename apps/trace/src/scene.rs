@@ -13,8 +13,8 @@ pub enum Geometry {
 #[derive(Debug)]
 pub enum Surface {
     Diffuse { reflectance: Vec3 },
-    GGX { roughness: f32 },
-    Mirror { reflectance: f32 },
+    GGX { reflectance: Vec3, roughness: f32 },
+    Mirror { reflectance: Vec3 },
 }
 
 /*
@@ -230,14 +230,14 @@ impl ShaderBuilder {
         })
     }
 
-    pub fn new_ggx(roughness: f32) -> Self {
+    pub fn new_ggx(reflectance: Vec3, roughness: f32) -> Self {
         Self(Shader {
-            surface: Surface::GGX { roughness } ,
+            surface: Surface::GGX { reflectance, roughness },
             emission: None,
         })
     }
 
-    pub fn new_mirror(reflectance: f32) -> Self {
+    pub fn new_mirror(reflectance: Vec3) -> Self {
         Self(Shader {
             surface: Surface::Mirror { reflectance },
             emission: None,
@@ -490,8 +490,8 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let red_shader = scene.add_shader(ShaderBuilder::new_diffuse(red_reflectance).build());
     let green_shader = scene.add_shader(ShaderBuilder::new_diffuse(green_reflectance).build());
     let tall_block_shader = match variant {
-        CornellBoxVariant::Mirror => scene.add_shader(ShaderBuilder::new_mirror(1.0).build()),
-        CornellBoxVariant::GGX => scene.add_shader(ShaderBuilder::new_ggx(0.2).build()),
+        CornellBoxVariant::Mirror => scene.add_shader(ShaderBuilder::new_mirror(Vec3::broadcast(1.0)).build()),
+        CornellBoxVariant::GGX => scene.add_shader(ShaderBuilder::new_ggx(Vec3::broadcast(1.0), 0.2).build()),
         _ => white_shader,
     };
 

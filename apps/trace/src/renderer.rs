@@ -124,6 +124,7 @@ impl BitOrAssign for ExtendShaderFlags {
 struct ExtendShader {
     flags: ExtendShaderFlags,
     reflectance: Vec3,
+    roughness: f32,
     light_index: u32,
 }
 
@@ -133,7 +134,6 @@ struct ExtendTriangleHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
     shader: ExtendShader,
-    _pad: u32,
 }
 
 #[repr(C)]
@@ -440,8 +440,8 @@ impl Renderer {
                         shader: match scene.lights.first() {
                             Some(_) => ExtendShader {
                                 flags: ExtendShaderFlags::IS_EMISSIVE,
-                                reflectance: Vec3::zero(),
                                 light_index: sampled_light_count, // first external light
+                                ..Default::default()
                             },
                             None => ExtendShader::default(),
                         },
@@ -466,17 +466,18 @@ impl Renderer {
                     let mut shader = match shader_desc.surface {
                         Surface::Diffuse { reflectance } => ExtendShader {
                             flags: ExtendShaderFlags::BSDF_TYPE_DIFFUSE,
-                            reflectance: reflectance / PI,
+                            reflectance: reflectance,
                             ..Default::default()
                         },
-                        Surface::GGX { roughness } => ExtendShader {
+                        Surface::GGX { reflectance, roughness } => ExtendShader {
                             flags: ExtendShaderFlags::BSDF_TYPE_GGX,
-                            reflectance: Vec3::new(roughness, 0.0, 0.0),
+                            reflectance: reflectance,
+                            roughness: roughness,
                             ..Default::default()
                         },
                         Surface::Mirror { reflectance } => ExtendShader {
                             flags: ExtendShaderFlags::BSDF_TYPE_MIRROR,
-                            reflectance: Vec3::broadcast(reflectance),
+                            reflectance,
                             ..Default::default()
                         },
                     };
@@ -494,7 +495,6 @@ impl Renderer {
                                 index_buffer_address,
                                 position_buffer_address,
                                 shader,
-                                _pad: 0,
                             };
 
                             let end_offset = writer.written() + hit_region.stride as usize;

@@ -89,7 +89,8 @@ vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
     // transforming the view direction to the hemisphere configuration
     const vec3 Vh = normalize(vec3(alpha.x*Ve.x, alpha.y*Ve.y, Ve.z));
     // orthonormal basis
-    const vec3 T1 = (Vh.z < .9999f) ? normalize(cross(vec3(0.f, 0.f, 1.f), Vh)) : vec3(1.f, 0.f, 0.f);
+    const float lensq = dot(Vh.xy, Vh.xy);
+    const vec3 T1 = (lensq > 0.f) ? (vec3(-Vh.y, Vh.x, 0.f)/sqrt(lensq)) : vec3(1.f, 0.f, 0.f);
     const vec3 T2 = cross(Vh, T1);
     // parameterization of the projected area
     vec2 p = sample_disc_uniform(u);
@@ -103,7 +104,7 @@ vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
 
 float smith_lambda(vec3 v, vec2 alpha)
 {
-    const vec3 va = vec3(v.x*alpha.x, v.y*alpha.y, v.z);
+    const vec3 va = vec3(v.xy*alpha, v.z);
     const vec3 va2 = va*va;
     return .5f*(sqrt(1.f + (va2.x + va2.y)/va2.z) - 1.f);
 }
@@ -134,7 +135,7 @@ vec3 schlick_fresnel(vec3 r0, float v_dot_h)
 
 float ggx_d(vec3 v, vec2 alpha)
 {
-    const vec3 va = vec3(v.x/alpha.x, v.y/alpha.y, v.z);
+    const vec3 va = vec3(v.xy/alpha, v.z);
     const float m = sum_elements(va*va);
     return 1.f/(PI*alpha.x*alpha.y*m*m);
 }

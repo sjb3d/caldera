@@ -44,6 +44,7 @@ void main()
     g_extend.hit = create_hit_data(
         bsdf_type,
         g_record.shader.reflectance,
+        g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
         max_exponent);
