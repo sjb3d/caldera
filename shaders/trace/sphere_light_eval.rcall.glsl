@@ -17,7 +17,6 @@ void main()
 {
     const vec3 light_position = g_eval.position;
     const vec3 target_position = g_eval.emission;
-    //const vec3 target_normal = g_eval.normal;
 
     const vec3 light_normal = normalize(light_position - g_record.centre_ws);
     const vec3 target_from_light = target_position - light_position;
@@ -25,7 +24,6 @@ void main()
     const float facing_term = dot(connection_dir, light_normal);
     const vec3 emission = (facing_term > 0.f) ? g_record.emission : vec3(0.f);
 
-    g_eval.normal = light_normal;
     g_eval.emission = emission;
     
     if (g_light.sample_sphere_solid_angle != 0) {

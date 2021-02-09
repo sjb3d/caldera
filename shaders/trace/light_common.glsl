@@ -23,11 +23,15 @@
         float radius_ws;                                        \
     } NAME
 
+#define EXTERNAL_LIGHT_RECORD(NAME)                                 \
+    layout(shaderRecordEXT, scalar) buffer ExternalLightRecord {    \
+        vec3 emission;                                              \
+    } NAME
+
 #define CALLABLE_SHADER_COUNT_PER_LIGHT       2
 
 struct LightEvalData {
     vec3 position;          // input only
-    vec3 normal;            // input: target normal
     vec3 emission;          // input: target position
     float solid_angle_pdf;
 };

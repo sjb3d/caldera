@@ -31,6 +31,12 @@ struct SphereLightRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+struct ExternalLightRecord {
+    emission: Vec3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct PathTraceUniforms {
     world_from_camera: Transform3,
     fov_size_at_unit_z: Vec2,
@@ -133,6 +139,7 @@ enum ShaderGroup {
     QuadLightSample,
     SphereLightEval,
     SphereLightSample,
+    ExternalLightEval,
 }
 
 #[derive(Clone, Copy)]
@@ -229,6 +236,9 @@ impl Renderer {
                 ShaderGroup::SphereLightSample => {
                     RayTracingShaderGroupDesc::Callable("trace/sphere_light_sample.rcall.spv")
                 }
+                ShaderGroup::ExternalLightEval => {
+                    RayTracingShaderGroupDesc::Callable("trace/external_light_eval.rcall.spv")
+                }
             })
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
@@ -298,8 +308,10 @@ impl Renderer {
                 self.scene.shader(shader_ref).emission.is_some()
             })
             .count() as u32;
+        let external_light_count = self.scene.lights.len() as u32;
+        assert!(external_light_count < 2, "multiple external lights not supported yet");
         let sampled_light_count = emissive_instance_count;
-        let total_light_count = emissive_instance_count; // TODO: light objects too
+        let total_light_count = emissive_instance_count + external_light_count;
 
         // figure out the layout
         let rtpp = self.context.ray_tracing_pipeline_properties.as_ref().unwrap();
@@ -391,8 +403,20 @@ impl Renderer {
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
                 {
+                    let extend_record = ExtendMissRecord {
+                        shader: match scene.lights.first() {
+                            Some(_) => ExtendShader {
+                                flags: ExtendShaderFlags::IS_EMISSIVE,
+                                reflectance: Vec3::zero(),
+                                light_index: sampled_light_count, // first external light
+                            },
+                            None => ExtendShader::default(),
+                        },
+                    };
+
                     let end_offset = writer.written() + miss_region.stride as usize;
                     writer.write(shader_group_handle(ShaderGroup::ExtendMiss));
+                    writer.write(&extend_record);
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + miss_region.stride as usize;
@@ -535,6 +559,19 @@ impl Renderer {
                             }
                         }
                     }
+                }
+                for light in scene.lights.iter() {
+                    let light_record = ExternalLightRecord {
+                        emission: light.emission,
+                    };
+
+                    let end_offset = writer.written() + callable_region.stride as usize;
+                    writer.write(shader_group_handle(ShaderGroup::ExternalLightEval));
+                    writer.write(&light_record);
+                    writer.write_zeros(end_offset - writer.written());
+
+                    let end_offset = writer.written() + callable_region.stride as usize;
+                    writer.write_zeros(end_offset - writer.written());
                 }
             }
         });

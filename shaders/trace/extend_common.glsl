@@ -33,10 +33,12 @@ HitData create_hit_data(
     hit.bits.z = light_index;
     return hit;
 }
-HitData create_miss_data()
+HitData create_miss_data(bool is_emissive, uint light_index)
 {
     HitData hit;
-    hit.bits = uvec3(0);
+    hit.bits.x = 0;
+    hit.bits.y = is_emissive ? HIT_DATA_Y_HAS_LIGHT_BIT : 0;
+    hit.bits.z = light_index;
     return hit;
 }
 

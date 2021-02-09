@@ -30,6 +30,7 @@ SRC=\
 	trace/extend.rmiss.glsl \
 	trace/extend_sphere.rchit.glsl \
 	trace/extend_triangle.rchit.glsl \
+	trace/external_light_eval.rcall.glsl \
 	trace/occlusion.rchit.glsl \
 	trace/occlusion.rmiss.glsl \
 	trace/path_trace.rgen.glsl \
