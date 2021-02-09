@@ -1,5 +1,3 @@
-#define HIT_SHADER_COUNT_PER_INSTANCE       2
-
 struct HitData {
     uvec3 bits;
 };
@@ -80,6 +78,8 @@ struct ExtendShader {
     vec3 reflectance;
     uint light_index;
 };
+
+#define HIT_SHADER_COUNT_PER_INSTANCE       2
 
 #define EXTEND_HIT_SHADER_OFFSET        0
 #define EXTEND_MISS_SHADER_OFFSET       0

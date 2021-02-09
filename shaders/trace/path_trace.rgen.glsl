@@ -20,6 +20,8 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     uint use_max_roughness;
 } g_path_trace;
 
+LIGHT_UNIFORM_DATA(g_light);
+
 #define RENDER_COLOR_SPACE_REC709   0
 #define RENDER_COLOR_SPACE_ACESCG   1
 
@@ -55,6 +57,57 @@ EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
 LIGHT_EVAL_DATA(g_light_eval);
 LIGHT_SAMPLE_DATA(g_light_sample);
+
+void sample_all_lights(
+    vec3 target_position,
+    vec3 target_normal,
+    vec2 rand_u01,
+    out vec3 light_position,
+    out vec3 light_normal,
+    out vec3 light_emission,
+    out float light_solid_angle_pdf,
+    out float light_epsilon)
+{
+    // pick a light source
+    const float sampled_light_count_flt = float(g_light.sampled_light_count);
+    const uint light_index = min(uint(rand_u01.x*sampled_light_count_flt), g_light.sampled_light_count - 1);
+    rand_u01.x = fract(rand_u01.x*sampled_light_count_flt);
+    const float selection_pdf = 1.f/sampled_light_count_flt;
+
+    // call the sampling function for the picked light
+    g_light_sample.position = target_position;
+    g_light_sample.normal = target_normal;
+    g_light_sample.emission = vec3(rand_u01, 0.f);
+    executeCallableEXT(LIGHT_SAMPLE_SHADER_INDEX(light_index), LIGHT_SAMPLE_CALLABLE_INDEX);
+    light_position = g_light_sample.position;
+    light_normal = g_light_sample.normal;
+    light_emission = sample_from_rec709(g_light_sample.emission);
+    light_solid_angle_pdf = g_light_sample.solid_angle_pdf * selection_pdf;
+    light_epsilon = ldexp(g_light_sample.unit_value, LOG2_EPSILON_FACTOR);
+}
+
+void evaluate_single_light(
+    uint light_index,
+    vec3 prev_position,
+    vec3 prev_normal,
+    vec3 light_position,
+    out vec3 light_normal,
+    out vec3 light_emission,
+    out float light_solid_angle_pdf)
+{
+    // check the pdf for picking this light
+    const float sampled_light_count_flt = float(g_light.sampled_light_count);
+    const float selection_pdf = 1.f/sampled_light_count_flt;
+
+    // call the evaluation function for this light
+    g_light_eval.position = light_position;
+    g_light_eval.normal = prev_normal;
+    g_light_eval.emission = prev_position;
+    executeCallableEXT(LIGHT_EVAL_SHADER_INDEX(light_index), LIGHT_EVAL_CALLABLE_INDEX);
+    light_normal = g_light_eval.normal;
+    light_emission = sample_from_rec709(g_light_eval.emission);
+    light_solid_angle_pdf = g_light_eval.solid_angle_pdf * selection_pdf;
+}
 
 void main()
 {
@@ -122,16 +175,17 @@ void main()
             bool light_can_be_sampled;
             if (has_surface(g_extend.hit)) {
                 // evaluate the light where we hit
-                g_light_eval.position = light_position;
-                g_light_eval.normal = prev_normal;
-                g_light_eval.emission = prev_position;
-                executeCallableEXT(0, LIGHT_EVAL_CALLABLE_INDEX);
-                light_normal = g_light_eval.normal;
-                light_emission = sample_from_rec709(g_light_eval.emission);
-                light_solid_angle_pdf = g_light_eval.solid_angle_pdf;
+                evaluate_single_light(
+                    get_light_index(g_extend.hit),
+                    prev_position,
+                    prev_normal,
+                    light_position,
+                    light_normal,
+                    light_emission,
+                    light_solid_angle_pdf);
                 light_can_be_sampled = true;
             } else {
-                // evaluate the light where we hit
+                // evaluate the external light
                 light_emission = vec3(0.f);
                 light_solid_angle_pdf = 1.f/(4.f*PI);
                 light_can_be_sampled = false; // not currently sampling external lights
@@ -188,17 +242,22 @@ void main()
         const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
 
         // sample a light source
-        if (!hit_is_delta) {
+        if (g_light.sampled_light_count != 0 && !hit_is_delta) {
             // sample from all light sources
-            g_light_sample.position = hit_position;
-            g_light_sample.normal = hit_normal;
-            g_light_sample.emission = vec3(rand_u01(2*segment_index - 1), 0.f);
-            executeCallableEXT(1, LIGHT_SAMPLE_CALLABLE_INDEX);
-            const vec3 light_position = g_light_sample.position;
-            const vec3 light_normal = g_light_sample.normal;
-            const vec3 light_emission = sample_from_rec709(g_light_sample.emission);
-            const float light_solid_angle_pdf = g_light_sample.solid_angle_pdf;
-            const float light_epsilon = ldexp(g_light_sample.unit_value, LOG2_EPSILON_FACTOR);
+            vec3 light_position;
+            vec3 light_normal;
+            vec3 light_emission;
+            float light_solid_angle_pdf;
+            float light_epsilon;
+            sample_all_lights(
+                hit_position,
+                hit_normal,
+                rand_u01(2*segment_index - 1),
+                light_position,
+                light_normal,
+                light_emission,
+                light_solid_angle_pdf,
+                light_epsilon);
 
             // evaluate the BRDF
             const vec3 light_from_hit_dir = normalize(light_position - hit_position);

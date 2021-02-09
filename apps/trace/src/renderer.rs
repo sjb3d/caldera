@@ -44,6 +44,7 @@ struct PathTraceUniforms {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct LightUniforms {
     sample_sphere_solid_angle: u32,
+    sampled_light_count: u32,
 }
 
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
@@ -157,6 +158,7 @@ struct ShaderBindingTable {
     hit_region: ShaderBindingRegion,
     callable_region: ShaderBindingRegion,
     buffer: StaticBufferHandle,
+    sampled_light_count: u32,
 }
 
 pub struct Renderer {
@@ -270,8 +272,22 @@ impl Renderer {
             };
         }
 
-        // gather all the lights
-        // TODO: light objects too
+        // grab the shader group handles
+        let rtpp = self.context.ray_tracing_pipeline_properties.as_ref().unwrap();
+        let handle_size = rtpp.shader_group_handle_size as usize;
+        let shader_group_count = 1 + ShaderGroup::MAX_VALUE;
+        let mut shader_group_handle_data = vec![0u8; shader_group_count * handle_size];
+        unsafe {
+            self.context.device.get_ray_tracing_shader_group_handles_khr(
+                self.path_trace_pipeline,
+                0,
+                shader_group_count as u32,
+                &mut shader_group_handle_data,
+            )
+        }
+        .unwrap();
+
+        // count the number of lights we need callable shaders for
         let emissive_instance_count = self
             .accel
             .clusters()
@@ -281,9 +297,9 @@ impl Renderer {
                 let shader_ref = self.scene.instance(instance_ref).shader_ref;
                 self.scene.shader(shader_ref).emission.is_some()
             })
-            .count();
-        let total_light_count = emissive_instance_count;
-        assert_eq!(total_light_count, 1);
+            .count() as u32;
+        let sampled_light_count = emissive_instance_count;
+        let total_light_count = emissive_instance_count; // TODO: light objects too
 
         // figure out the layout
         let rtpp = self.context.ray_tracing_pipeline_properties.as_ref().unwrap();
@@ -352,25 +368,14 @@ impl Renderer {
         // write the table
         let shader_binding_table = resource_loader.create_buffer();
         resource_loader.async_load({
-            let path_trace_pipeline = self.path_trace_pipeline;
-            let context = Arc::clone(&self.context);
             let scene = Arc::clone(&self.scene);
             let clusters = Arc::clone(self.accel.clusters());
             move |allocator| {
-                let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
-                let handle_size = rtpp.shader_group_handle_size as usize;
-                let shader_group_count = 1 + ShaderGroup::MAX_VALUE;
-                let mut handle_data = vec![0u8; shader_group_count * handle_size];
-                unsafe {
-                    context.device.get_ray_tracing_shader_group_handles_khr(
-                        path_trace_pipeline,
-                        0,
-                        shader_group_count as u32,
-                        &mut handle_data,
-                    )
-                }
-                .unwrap();
-                let shader_group_handles: Vec<_> = handle_data.as_slice().chunks(handle_size).collect();
+                let shader_group_handle = |group: ShaderGroup| {
+                    let begin = (group.into_integer() as usize) * handle_size;
+                    let end = begin + handle_size;
+                    &shader_group_handle_data[begin..end]
+                };
 
                 let desc = BufferDesc::new(total_size as usize);
                 let mut writer = allocator
@@ -382,22 +387,22 @@ impl Renderer {
                     .unwrap();
 
                 assert_eq!(raygen_region.offset, 0);
-                writer.write(shader_group_handles[ShaderGroup::RayGenerator.into_integer()]);
+                writer.write(shader_group_handle(ShaderGroup::RayGenerator));
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
                 {
                     let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write(shader_group_handles[ShaderGroup::ExtendMiss.into_integer()]);
+                    writer.write(shader_group_handle(ShaderGroup::ExtendMiss));
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write(shader_group_handles[ShaderGroup::OcclusionMiss.into_integer()]);
+                    writer.write(shader_group_handle(ShaderGroup::OcclusionMiss));
                     writer.write_zeros(end_offset - writer.written());
                 }
 
                 let mut light_indexer = 0u32..;
                 writer.write_zeros(hit_region.offset as usize - writer.written());
-                for instance_ref in clusters.instances_grouped_by_transform_iter().cloned() {
+                for instance_ref in clusters.instance_iter().cloned() {
                     let instance = scene.instance(instance_ref);
                     let shader_desc = scene.shader(instance.shader_ref);
 
@@ -431,12 +436,12 @@ impl Renderer {
                             };
 
                             let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handles[ShaderGroup::ExtendHitTriangle.into_integer()]);
+                            writer.write(shader_group_handle(ShaderGroup::ExtendHitTriangle));
                             writer.write(&hit_record);
                             writer.write_zeros(end_offset - writer.written());
 
                             let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handles[ShaderGroup::OcclusionHitTriangle.into_integer()]);
+                            writer.write(shader_group_handle(ShaderGroup::OcclusionHitTriangle));
                             writer.write_zeros(end_offset - writer.written());
                         }
                         GeometryRecordData::Sphere => {
@@ -450,21 +455,21 @@ impl Renderer {
                             let hit_record = ExtendSphereHitRecord { geom, shader };
 
                             let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handles[ShaderGroup::ExtendHitSphere.into_integer()]);
+                            writer.write(shader_group_handle(ShaderGroup::ExtendHitSphere));
                             writer.write(&hit_record);
                             writer.write_zeros(end_offset - writer.written());
 
                             let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handles[ShaderGroup::OcclusionHitSphere.into_integer()]);
+                            writer.write(shader_group_handle(ShaderGroup::OcclusionHitSphere));
                             writer.write(&hit_record);
                             writer.write_zeros(end_offset - writer.written());
                         }
                     }
                 }
-                assert_eq!(light_indexer.next().unwrap(), total_light_count as u32);
+                assert_eq!(light_indexer.next().unwrap(), emissive_instance_count);
 
                 writer.write_zeros(callable_region.offset as usize - writer.written());
-                for instance_ref in clusters.instances_grouped_by_transform_iter().cloned() {
+                for instance_ref in clusters.instance_iter().cloned() {
                     let instance = scene.instance(instance_ref);
                     let shader = scene.shader(instance.shader_ref);
                     if let Some(emission) = shader.emission {
@@ -497,12 +502,12 @@ impl Renderer {
                                 };
 
                                 let end_offset = writer.written() + callable_region.stride as usize;
-                                writer.write(shader_group_handles[ShaderGroup::QuadLightEval.into_integer()]);
+                                writer.write(shader_group_handle(ShaderGroup::QuadLightEval));
                                 writer.write(&light_record);
                                 writer.write_zeros(end_offset - writer.written());
 
                                 let end_offset = writer.written() + callable_region.stride as usize;
-                                writer.write(shader_group_handles[ShaderGroup::QuadLightSample.into_integer()]);
+                                writer.write(shader_group_handle(ShaderGroup::QuadLightSample));
                                 writer.write(&light_record);
                                 writer.write_zeros(end_offset - writer.written());
                             }
@@ -519,12 +524,12 @@ impl Renderer {
                                 };
 
                                 let end_offset = writer.written() + callable_region.stride as usize;
-                                writer.write(shader_group_handles[ShaderGroup::SphereLightEval.into_integer()]);
+                                writer.write(shader_group_handle(ShaderGroup::SphereLightEval));
                                 writer.write(&light_record);
                                 writer.write_zeros(end_offset - writer.written());
 
                                 let end_offset = writer.written() + callable_region.stride as usize;
-                                writer.write(shader_group_handles[ShaderGroup::SphereLightSample.into_integer()]);
+                                writer.write(shader_group_handle(ShaderGroup::SphereLightSample));
                                 writer.write(&light_record);
                                 writer.write_zeros(end_offset - writer.written());
                             }
@@ -539,6 +544,7 @@ impl Renderer {
             hit_region,
             callable_region,
             buffer: shader_binding_table,
+            sampled_light_count,
         })
     }
 
@@ -608,6 +614,8 @@ impl Renderer {
         let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
         let fov_size_at_unit_z = 2.0 * (0.5 * camera.fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
+        let shader_binding_table = self.shader_binding_table.as_ref().unwrap();
+
         let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
             descriptor_pool,
             |buf: &mut PathTraceUniforms| {
@@ -623,6 +631,7 @@ impl Renderer {
             |buf: &mut LightUniforms| {
                 *buf = LightUniforms {
                     sample_sphere_solid_angle: if self.sample_sphere_solid_angle { 1 } else { 0 },
+                    sampled_light_count: shader_binding_table.sampled_light_count,
                 }
             },
             self.accel.top_level_accel().unwrap(),
@@ -634,7 +643,6 @@ impl Renderer {
 
         let device = &self.context.device;
 
-        let shader_binding_table = self.shader_binding_table.as_ref().unwrap();
         let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_table.buffer).unwrap();
         let shader_binding_table_address =
             unsafe { device.get_buffer_device_address_helper(shader_binding_table_buffer) };

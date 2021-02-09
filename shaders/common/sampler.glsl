@@ -71,15 +71,15 @@ vec3 dir_from_phi_cos_theta(float phi, float cos_theta)
 
 vec3 sample_sphere_uniform(vec2 u)
 {
-    const float phi = 2.f*PI*u.x;
-    const float cos_theta = 2.f*u.y - 1.f;
+    const float cos_theta = 2.f*u.x - 1.f;
+    const float phi = 2.f*PI*u.y;
     return dir_from_phi_cos_theta(phi, cos_theta);
 }
 
 vec3 sample_solid_angle_uniform(float cos_theta_min, vec2 u)
 {
-    const float phi = 2.f*PI*u.x;
-    const float cos_theta = 1.f + (cos_theta_min - 1.f)*u.y;
+    const float cos_theta = 1.f + (cos_theta_min - 1.f)*u.x;
+    const float phi = 2.f*PI*u.y;
     return dir_from_phi_cos_theta(phi, cos_theta);
 }
 
