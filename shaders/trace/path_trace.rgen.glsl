@@ -11,13 +11,17 @@
 #include "color_space.glsl"
 #include "light_common.glsl"
 
+#define PATH_TRACE_FLAG_USE_MAX_ROUGHNESS       0x01
+#define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
+#define PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING     0x04
+
 layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     mat4x3 world_from_camera;
     vec2 fov_size_at_unit_z;
     uint sample_index;
     uint max_segment_count;
     uint render_color_space;
-    uint use_max_roughness;
+    uint flags;
 } g_path_trace;
 
 LIGHT_UNIFORM_DATA(g_light);
@@ -134,6 +138,10 @@ float get_light_selection_pdf()
 
 void main()
 {
+    const bool allow_light_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING) != 0);
+    const bool allow_bsdf_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING) != 0);
+    const bool use_max_roughness = ((g_path_trace.flags & PATH_TRACE_FLAG_USE_MAX_ROUGHNESS) != 0);
+
     vec3 prev_position;
     vec3 prev_normal;
     bool prev_is_delta;
@@ -189,7 +197,7 @@ void main()
         ++segment_index;
 
         // handle ray hitting a light source
-        if (has_light(g_extend.hit)) {
+        if (has_light(g_extend.hit) && (allow_bsdf_sampling || segment_index == 1)) {
             // evaluate the light here
             const vec3 light_position = g_extend.position;
             vec3 light_emission;
@@ -202,7 +210,7 @@ void main()
                 light_solid_angle_pdf);
 
             // take into account how it could have been sampled
-            const bool light_can_be_sampled = has_surface(g_extend.hit);
+            const bool light_can_be_sampled = allow_light_sampling && has_surface(g_extend.hit);
             if (light_can_be_sampled) {
                 light_solid_angle_pdf *= get_light_selection_pdf();
             }
@@ -230,8 +238,7 @@ void main()
         }
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
-        if (g_path_trace.use_max_roughness != 0)
-        if (have_seen_non_delta && get_bsdf_type(g_extend.hit) == BSDF_TYPE_MIRROR) {
+        if (use_max_roughness && have_seen_non_delta && get_bsdf_type(g_extend.hit) == BSDF_TYPE_MIRROR) {
             const vec3 mirror_reflectance = get_reflectance(g_extend.hit);
             const bool is_emissive = has_light(g_extend.hit);
             const uint light_index = get_light_index(g_extend.hit);
@@ -258,7 +265,7 @@ void main()
         const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
 
         // sample a light source
-        if (g_light.sampled_light_count != 0 && !hit_is_delta) {
+        if (g_light.sampled_light_count != 0 && allow_light_sampling && !hit_is_delta) {
             // sample from all light sources
             vec3 light_position;
             vec3 light_normal;
@@ -286,7 +293,7 @@ void main()
             const vec3 unweighted_sample = alpha * hit_f * rcp_light_proj_solid_angle_pdf * light_emission;
 
             // apply MIS weight
-            const bool light_can_be_hit = true;
+            const bool light_can_be_hit = allow_bsdf_sampling;
             const float other_ratio = light_can_be_hit ? (hit_proj_solid_angle_pdf * rcp_light_proj_solid_angle_pdf) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;

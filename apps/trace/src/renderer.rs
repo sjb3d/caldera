@@ -5,8 +5,9 @@ use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::{im_str, Slider, Ui};
 use spark::vk;
+use std::ops::{BitOr, BitOrAssign};
+use std::sync::Arc;
 use std::{mem, slice};
-use std::{ops::BitOrAssign, sync::Arc};
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
@@ -36,6 +37,28 @@ struct ExternalLightRecord {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod, Default)]
+struct PathTraceFlags(u32);
+
+impl PathTraceFlags {
+    const USE_MAX_ROUGHNESS: PathTraceFlags = PathTraceFlags(0x1);
+    const ALLOW_LIGHT_SAMPLING: PathTraceFlags = PathTraceFlags(0x2);
+    const ALLOW_BSDF_SAMPLING: PathTraceFlags = PathTraceFlags(0x4);
+}
+
+impl BitOr for PathTraceFlags {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+impl BitOrAssign for PathTraceFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct PathTraceUniforms {
     world_from_camera: Transform3,
@@ -43,7 +66,7 @@ struct PathTraceUniforms {
     sample_index: u32,
     max_segment_count: u32,
     render_color_space: u32,
-    use_max_roughness: u32,
+    flags: PathTraceFlags,
 }
 
 #[repr(C)]
@@ -70,6 +93,13 @@ enum GeometryRecordData {
         position_buffer_address: u64,
     },
     Sphere,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SamplingTechnique {
+    LightsOnly,
+    SurfacesOnly,
+    LightsAndSurfaces,
 }
 
 #[repr(transparent)]
@@ -179,6 +209,7 @@ pub struct Renderer {
     max_bounces: u32,
     use_max_roughness: bool,
     sample_sphere_solid_angle: bool,
+    sampling_technique: SamplingTechnique,
 }
 
 impl Renderer {
@@ -254,6 +285,7 @@ impl Renderer {
             max_bounces,
             use_max_roughness: true,
             sample_sphere_solid_angle: true,
+            sampling_technique: SamplingTechnique::LightsAndSurfaces,
         }
     }
 
@@ -588,6 +620,22 @@ impl Renderer {
     #[must_use]
     pub fn debug_ui(&mut self, ui: &Ui) -> bool {
         let mut needs_reset = false;
+        ui.text("Sampling Technique:");
+        needs_reset |= ui.radio_button(
+            im_str!("Lights Only"),
+            &mut self.sampling_technique,
+            SamplingTechnique::LightsOnly,
+        );
+        needs_reset |= ui.radio_button(
+            im_str!("Surfaces Only"),
+            &mut self.sampling_technique,
+            SamplingTechnique::SurfacesOnly,
+        );
+        needs_reset |= ui.radio_button(
+            im_str!("Lights And Surfaces"),
+            &mut self.sampling_technique,
+            SamplingTechnique::LightsAndSurfaces,
+        );
         needs_reset |= Slider::new(im_str!("Max Bounces"))
             .range(0..=8)
             .build(&ui, &mut self.max_bounces);
@@ -653,6 +701,17 @@ impl Renderer {
 
         let shader_binding_table = self.shader_binding_table.as_ref().unwrap();
 
+        let mut path_trace_flags = match self.sampling_technique {
+            SamplingTechnique::LightsOnly => PathTraceFlags::ALLOW_LIGHT_SAMPLING,
+            SamplingTechnique::SurfacesOnly => PathTraceFlags::ALLOW_BSDF_SAMPLING,
+            SamplingTechnique::LightsAndSurfaces => {
+                PathTraceFlags::ALLOW_LIGHT_SAMPLING | PathTraceFlags::ALLOW_BSDF_SAMPLING
+            }
+        };
+        if self.use_max_roughness {
+            path_trace_flags |= PathTraceFlags::USE_MAX_ROUGHNESS;
+        }
+
         let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
             descriptor_pool,
             |buf: &mut PathTraceUniforms| {
@@ -662,7 +721,7 @@ impl Renderer {
                     sample_index,
                     max_segment_count: self.max_bounces + 2,
                     render_color_space: render_color_space.into_integer(),
-                    use_max_roughness: if self.use_max_roughness { 1 } else { 0 },
+                    flags: path_trace_flags,
                 }
             },
             |buf: &mut LightUniforms| {
