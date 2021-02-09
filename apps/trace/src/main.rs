@@ -7,8 +7,7 @@ use crate::renderer::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
-use imgui::im_str;
-use imgui::{Drag, Key, MouseButton, Slider};
+use imgui::{im_str, CollapsingHeader, Drag, Key, MouseButton};
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
@@ -125,8 +124,6 @@ struct App {
     log2_exposure_scale: f32,
     render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
-    max_bounces: u32,
-    use_max_roughness: bool,
     view_drag: ViewDrag,
 }
 
@@ -201,6 +198,7 @@ impl App {
             &mut base.systems.descriptor_set_layout_cache,
             &base.systems.pipeline_cache,
             &mut base.systems.resource_loader,
+            params.max_bounces,
         );
 
         let camera_ref = CameraRef(0);
@@ -219,8 +217,6 @@ impl App {
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
-            max_bounces: params.max_bounces,
-            use_max_roughness: true,
             view_drag: ViewDrag::new(rotation),
         }
     }
@@ -237,56 +233,58 @@ impl App {
             .build(&ui, {
                 || {
                     let mut needs_reset = false;
-                    ui.text("Render Color Space:");
-                    needs_reset |= ui.radio_button(
-                        im_str!("Rec709 (sRGB primaries)"),
-                        &mut self.render_color_space,
-                        RenderColorSpace::Rec709,
-                    );
-                    needs_reset |= ui.radio_button(
-                        im_str!("ACEScg (AP1 primaries)"),
-                        &mut self.render_color_space,
-                        RenderColorSpace::ACEScg,
-                    );
-                    needs_reset |= Slider::new(im_str!("Max Bounces"))
-                        .range(0..=8)
-                        .build(&ui, &mut self.max_bounces);
-                    needs_reset |= ui.checkbox(im_str!("Use Max Roughness"), &mut self.use_max_roughness);
-                    ui.text("Tone Map Method:");
-                    ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
-                    ui.radio_button(
-                        im_str!("Filmic sRGB"),
-                        &mut self.tone_map_method,
-                        ToneMapMethod::FilmicSrgb,
-                    );
-                    ui.radio_button(
-                        im_str!("ACES (fitted)"),
-                        &mut self.tone_map_method,
-                        ToneMapMethod::AcesFit,
-                    );
-                    Drag::new(im_str!("Exposure"))
-                        .speed(0.05f32)
-                        .build(&ui, &mut self.log2_exposure_scale);
-                    let scene = self.scene.deref();
-                    ui.text("Cameras:");
-                    for camera_ref in scene.camera_ref_iter() {
-                        if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
-                            let camera = scene.camera(camera_ref);
-                            let rotation = scene.transform(camera.transform_ref).0.rotation;
-                            self.camera_ref = camera_ref;
-                            self.view_drag = ViewDrag::new(rotation);
-                            needs_reset = true;
-                        }
+                    if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
+                        ui.text("Color Space:");
+                        needs_reset |= ui.radio_button(
+                            im_str!("Rec709 (sRGB primaries)"),
+                            &mut self.render_color_space,
+                            RenderColorSpace::Rec709,
+                        );
+                        needs_reset |= ui.radio_button(
+                            im_str!("ACEScg (AP1 primaries)"),
+                            &mut self.render_color_space,
+                            RenderColorSpace::ACEScg,
+                        );
+                        needs_reset |= self.renderer.debug_ui(&ui);
                     }
-                    ui.text(format!(
-                        "Lights: {}",
-                        scene.lights.len()
-                            + scene
-                                .instances
-                                .iter()
-                                .filter_map(|instance| scene.shader(instance.shader_ref).emission)
-                                .count()
-                    ));
+                    if CollapsingHeader::new(im_str!("Tone Map")).default_open(true).build(&ui) {
+                        Drag::new(im_str!("Exposure"))
+                            .speed(0.05f32)
+                            .build(&ui, &mut self.log2_exposure_scale);
+                        ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
+                        ui.radio_button(
+                            im_str!("Filmic sRGB"),
+                            &mut self.tone_map_method,
+                            ToneMapMethod::FilmicSrgb,
+                        );
+                        ui.radio_button(
+                            im_str!("ACES (fitted)"),
+                            &mut self.tone_map_method,
+                            ToneMapMethod::AcesFit,
+                        );
+                    }
+                    if CollapsingHeader::new(im_str!("Scene")).default_open(true).build(&ui) {
+                        let scene = self.scene.deref();
+                        ui.text("Cameras:");
+                        for camera_ref in scene.camera_ref_iter() {
+                            if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
+                                let camera = scene.camera(camera_ref);
+                                let rotation = scene.transform(camera.transform_ref).0.rotation;
+                                self.camera_ref = camera_ref;
+                                self.view_drag = ViewDrag::new(rotation);
+                                needs_reset = true;
+                            }
+                        }
+                        ui.text(format!(
+                            "Lights: {}",
+                            scene.lights.len()
+                                + scene
+                                    .instances
+                                    .iter()
+                                    .filter_map(|instance| scene.shader(instance.shader_ref).emission)
+                                    .count()
+                        ));
+                    }
 
                     if needs_reset {
                         self.next_sample_index = 0;
@@ -360,11 +358,9 @@ impl App {
                     let resource_loader = &base.systems.resource_loader;
                     let render_color_space = self.render_color_space;
                     let renderer = &self.renderer;
-                    let max_bounces = self.max_bounces;
                     let next_sample_index = self.next_sample_index;
                     let camera_ref = self.camera_ref;
                     let result_images = &self.result_images;
-                    let use_max_roughness = self.use_max_roughness;
                     move |params, cmd| {
                         let result_image_views = (
                             params.get_image_view(result_images.0),
@@ -377,8 +373,6 @@ impl App {
                             descriptor_pool,
                             resource_loader,
                             render_color_space,
-                            max_bounces,
-                            use_max_roughness,
                             sample_image_view,
                             next_sample_index,
                             camera_ref,

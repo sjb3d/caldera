@@ -1,3 +1,7 @@
+#define LIGHT_UNIFORM_DATA(NAME)                                    \
+    layout(set = 0, binding = 1, scalar) uniform LightUniforms {    \
+        uint sample_sphere_solid_angle;                             \
+    } NAME
 
 #define QUAD_LIGHT_RECORD(NAME)                                 \
     layout(shaderRecordEXT, scalar) buffer QuadLightRecord {    \

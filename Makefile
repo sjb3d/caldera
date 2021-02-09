@@ -9,9 +9,9 @@ INC=\
 	common/maths.glsl \
 	common/normal_pack.glsl \
 	common/sampler.glsl \
+	trace/extend_common.glsl \
 	trace/light_common.glsl \
 	trace/occlusion_common.glsl \
-	trace/extend_common.glsl \
 	trace/sphere_common.glsl
 
 SRC=\

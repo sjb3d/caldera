@@ -3,6 +3,7 @@ use crate::scene::*;
 use crate::RenderColorSpace;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
+use imgui::{im_str, Slider, Ui};
 use spark::vk;
 use std::{mem, slice};
 use std::{ops::BitOrAssign, sync::Arc};
@@ -30,7 +31,7 @@ struct SphereLightRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct PathTraceData {
+struct PathTraceUniforms {
     world_from_camera: Transform3,
     fov_size_at_unit_z: Vec2,
     sample_index: u32,
@@ -39,8 +40,15 @@ struct PathTraceData {
     use_max_roughness: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct LightUniforms {
+    sample_sphere_solid_angle: u32,
+}
+
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
-    data: UniformData<PathTraceData>,
+    path_trace_uniforms: UniformData<PathTraceUniforms>,
+    light_uniforms: UniformData<LightUniforms>,
     accel: AccelerationStructure,
     samples: StorageImage,
     result_r: StorageImage,
@@ -159,6 +167,9 @@ pub struct Renderer {
     path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
     shader_binding_table: Option<ShaderBindingTable>,
+    max_bounces: u32,
+    use_max_roughness: bool,
+    sample_sphere_solid_angle: bool,
 }
 
 impl Renderer {
@@ -172,6 +183,7 @@ impl Renderer {
         descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
+        max_bounces: u32,
     ) -> Self {
         let accel = SceneAccel::new(context, scene, resource_loader);
 
@@ -227,6 +239,9 @@ impl Renderer {
             path_trace_pipeline_layout,
             path_trace_pipeline,
             shader_binding_table: None,
+            max_bounces,
+            use_max_roughness: true,
+            sample_sphere_solid_angle: true,
         }
     }
 
@@ -527,6 +542,20 @@ impl Renderer {
         })
     }
 
+    #[must_use]
+    pub fn debug_ui(&mut self, ui: &Ui) -> bool {
+        let mut needs_reset = false;
+        needs_reset |= Slider::new(im_str!("Max Bounces"))
+            .range(0..=8)
+            .build(&ui, &mut self.max_bounces);
+        needs_reset |= ui.checkbox(im_str!("Use Max Roughness"), &mut self.use_max_roughness);
+        needs_reset |= ui.checkbox(
+            im_str!("Sample Sphere Solid Angle"),
+            &mut self.sample_sphere_solid_angle,
+        );
+        needs_reset
+    }
+
     pub fn update<'a>(
         &mut self,
         context: &'a Context,
@@ -568,8 +597,6 @@ impl Renderer {
         descriptor_pool: &DescriptorPool,
         resource_loader: &ResourceLoader,
         render_color_space: RenderColorSpace,
-        max_bounces: u32,
-        use_max_roughness: bool,
         sample_image_view: vk::ImageView,
         sample_index: u32,
         camera_ref: CameraRef,
@@ -583,14 +610,19 @@ impl Renderer {
 
         let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
             descriptor_pool,
-            |buf: &mut PathTraceData| {
-                *buf = PathTraceData {
+            |buf: &mut PathTraceUniforms| {
+                *buf = PathTraceUniforms {
                     world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
                     fov_size_at_unit_z,
                     sample_index,
-                    max_segment_count: max_bounces + 2,
+                    max_segment_count: self.max_bounces + 2,
                     render_color_space: render_color_space.into_integer(),
-                    use_max_roughness: if use_max_roughness { 1 } else { 0 },
+                    use_max_roughness: if self.use_max_roughness { 1 } else { 0 },
+                }
+            },
+            |buf: &mut LightUniforms| {
+                *buf = LightUniforms {
+                    sample_sphere_solid_angle: if self.sample_sphere_solid_angle { 1 } else { 0 },
                 }
             },
             self.accel.top_level_accel().unwrap(),

@@ -11,23 +11,23 @@
 #include "color_space.glsl"
 #include "light_common.glsl"
 
-layout(set = 0, binding = 0, scalar) uniform PathTraceData {
+layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     mat4x3 world_from_camera;
     vec2 fov_size_at_unit_z;
     uint sample_index;
     uint max_segment_count;
     uint render_color_space;
     uint use_max_roughness;
-} g_data;
+} g_path_trace;
 
 #define RENDER_COLOR_SPACE_REC709   0
 #define RENDER_COLOR_SPACE_ACESCG   1
 
-layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
-layout(set = 0, binding = 2, r16ui) uniform restrict readonly uimage2D g_samples;
-layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_r;
-layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result_g;
-layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_b;
+layout(set = 0, binding = 2) uniform accelerationStructureEXT g_accel;
+layout(set = 0, binding = 3, r16ui) uniform restrict readonly uimage2D g_samples;
+layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result_r;
+layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_g;
+layout(set = 0, binding = 6, r32f) uniform restrict image2D g_result_b;
 
 #define LOG2_SEQUENCE_COUNT     8
 
@@ -35,7 +35,7 @@ layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_b;
 
 vec3 sample_from_rec709(vec3 c)
 {
-    switch (g_data.render_color_space) {
+    switch (g_path_trace.render_color_space) {
         default:
         case RENDER_COLOR_SPACE_REC709: return c;
         case RENDER_COLOR_SPACE_ACESCG: return acescg_from_rec709(c);
@@ -46,7 +46,7 @@ vec2 rand_u01(uint seq_index)
 {
     // hash the pixel coordinate and ray index to pick a sequence
     const uint seq_hash = hash((seq_index << 24) ^ (gl_LaunchIDEXT.y << 12) ^ gl_LaunchIDEXT.x);
-    const ivec2 sample_coord = ivec2(g_data.sample_index, seq_hash >> (32 - LOG2_SEQUENCE_COUNT));
+    const ivec2 sample_coord = ivec2(g_path_trace.sample_index, seq_hash >> (32 - LOG2_SEQUENCE_COUNT));
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
 }
@@ -71,10 +71,10 @@ void main()
     {
         const vec2 pixel_rand_u01 = rand_u01(0);
         const vec2 fov_uv = (vec2(gl_LaunchIDEXT.xy) + pixel_rand_u01)/vec2(gl_LaunchSizeEXT);
-        const vec3 ray_dir_ls = normalize(vec3(g_data.fov_size_at_unit_z*(.5f - fov_uv), 1.f));
-        const vec3 ray_dir = g_data.world_from_camera * vec4(ray_dir_ls, 0.f);
+        const vec3 ray_dir_ls = normalize(vec3(g_path_trace.fov_size_at_unit_z*(.5f - fov_uv), 1.f));
+        const vec3 ray_dir = g_path_trace.world_from_camera * vec4(ray_dir_ls, 0.f);
         
-        const float fov_area_at_unit_z = mul_elements(g_data.fov_size_at_unit_z);
+        const float fov_area_at_unit_z = mul_elements(g_path_trace.fov_size_at_unit_z);
         const float cos_theta = ray_dir_ls.z;
         const float cos_theta2 = cos_theta*cos_theta;
         const float cos_theta4 = cos_theta2*cos_theta2;
@@ -83,8 +83,8 @@ void main()
         const vec3 importance = vec3(1.f/fov_area_at_unit_z);
         const float sensor_area_pdf = 1.f;
 
-        prev_position = g_data.world_from_camera[3];
-        prev_normal = g_data.world_from_camera[2];
+        prev_position = g_path_trace.world_from_camera[3];
+        prev_normal = g_path_trace.world_from_camera[2];
         prev_is_delta = false;
         have_seen_non_delta = false;
         prev_epsilon = 0.f;
@@ -155,12 +155,12 @@ void main()
         if (!has_surface(g_extend.hit)) {
             break;
         }
-        if (segment_index >= g_data.max_segment_count) {
+        if (segment_index >= g_path_trace.max_segment_count) {
             break;
         }
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
-        if (g_data.use_max_roughness != 0)
+        if (g_path_trace.use_max_roughness != 0)
         if (have_seen_non_delta && get_bsdf_type(g_extend.hit) == BSDF_TYPE_MIRROR) {
             const vec3 mirror_reflectance = get_reflectance(g_extend.hit);
             const bool is_emissive = has_light(g_extend.hit);
@@ -279,7 +279,7 @@ void main()
         }
     }
 
-    if (g_data.sample_index != 0) {
+    if (g_path_trace.sample_index != 0) {
         result_sum.r += imageLoad(g_result_r, ivec2(gl_LaunchIDEXT.xy)).x;
         result_sum.g += imageLoad(g_result_g, ivec2(gl_LaunchIDEXT.xy)).x;
         result_sum.b += imageLoad(g_result_b, ivec2(gl_LaunchIDEXT.xy)).x;

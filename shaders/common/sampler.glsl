@@ -76,6 +76,13 @@ vec3 sample_sphere_uniform(vec2 u)
     return dir_from_phi_cos_theta(phi, cos_theta);
 }
 
+vec3 sample_solid_angle_uniform(float cos_theta_min, vec2 u)
+{
+    const float phi = 2.f*PI*u.x;
+    const float cos_theta = 1.f + (cos_theta_min - 1.f)*u.y;
+    return dir_from_phi_cos_theta(phi, cos_theta);
+}
+
 vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
 {
     // transforming the view direction to the hemisphere configuration
