@@ -63,37 +63,26 @@ bool intersect_sphere(
     inout vec3 gnv,     // geometric normal vector (unnormalised)
     inout float d)      // ray distance
 {
-    /*
-        |o + t*d|^2 = r^2
-        => (d.d)t^2 + 2(d.o)t + o.o - r^2 = 0
-    */
     const vec3 o = ro - sc;
+    vec2 t;
+    const bool is_hit = ray_vs_sphere(o, rd, sr, t);
 
-    const float a = dot(rd, rd);
-    const float b = 2.f*dot(rd, o);
-    const float c = dot(o, o) - sr*sr;
-
-    const float Q = b*b - 4.f*a*c;
-    bool is_hit = false;
-    if (Q > 0.f) {
-        const float q = sqrt(Q);
-        const float k = -b - copysign(q, b);
-        const float t1 = k/(2.f*a);
-        const float t2 = (2.f*c)/k;
-        const float t_min = min(t1, t2);
-        const float t_max = max(t1, t2);
+    bool is_closest_hit = false;
+    if (is_hit) {
+        const float t_min = min_element(t);
+        const float t_max = max_element(t);
         if (0.f < t_min && t_min < d) {
             gnv = o + t_min*rd;
             d = t_min;
-            is_hit = true;
+            is_closest_hit = true;
         }
         if (0.f < t_max && t_max < d) {
             gnv = o + t_max*rd;
             d = t_max;
-            is_hit = true;
+            is_closest_hit = true;
         }
     }
-    return is_hit;
+    return is_closest_hit;
 }
 
 vec2 rand_u01(uvec2 pixel_coord, uint seq_index, uint sample_index)

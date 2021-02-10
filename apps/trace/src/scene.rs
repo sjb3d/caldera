@@ -5,9 +5,34 @@ pub struct Transform(pub Similarity3);
 
 #[derive(Debug)]
 pub enum Geometry {
-    TriangleMesh { positions: Vec<Vec3>, indices: Vec<UVec3> },
-    Quad { transform: Similarity3, size: Vec2 },
-    Sphere { centre: Vec3, radius: f32 },
+    TriangleMesh {
+        positions: Vec<Vec3>,
+        indices: Vec<UVec3>,
+        min: Vec3,
+        max: Vec3,
+    },
+    Quad {
+        transform: Similarity3,
+        size: Vec2,
+    },
+    Sphere {
+        centre: Vec3,
+        radius: f32,
+    },
+}
+
+impl Geometry {
+    pub fn get_epsilon_ref(&self, world_from_local: Similarity3) -> f32 {
+        let local_offset = match self {
+            Geometry::TriangleMesh { min, max, .. } => max.abs().max_by_component(min.abs()).component_max(),
+            Geometry::Quad { transform, size } => {
+                transform.translation.abs().component_max() + transform.scale * size.abs().component_max()
+            }
+            Geometry::Sphere { centre, radius } => centre.abs().component_max() + radius,
+        };
+        let world_offset = world_from_local.translation.abs().component_max();
+        world_offset.max(world_from_local.scale.abs() * local_offset)
+    }
 }
 
 #[derive(Debug)]
@@ -211,9 +236,17 @@ impl TriangleMeshBuilder {
     }
 
     pub fn build(self) -> Geometry {
+        let mut min = Vec3::broadcast(f32::INFINITY);
+        let mut max = Vec3::broadcast(-f32::INFINITY);
+        for pos in self.positions.iter() {
+            min = min.min_by_component(*pos);
+            max = max.max_by_component(*pos);
+        }
         Geometry::TriangleMesh {
             positions: self.positions,
             indices: self.indices,
+            min,
+            max,
         }
     }
 }

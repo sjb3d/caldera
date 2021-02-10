@@ -31,5 +31,5 @@ void main()
     g_sample.normal = light_normal;
     g_sample.emission = emission;
     g_sample.solid_angle_pdf = solid_angle_pdf;
-    g_sample.unit_value = g_record.unit_value;   
+    g_sample.epsilon_ref = g_record.epsilon_ref;
 }

@@ -174,7 +174,18 @@ pub fn parse_scene(i: &str) -> Scene {
                 positions,
                 indices,
             } => {
-                let geometry_ref = scene.add_geometry(Geometry::TriangleMesh { positions, indices });
+                let mut min = Vec3::broadcast(f32::INFINITY);
+                let mut max = Vec3::broadcast(-f32::INFINITY);
+                for pos in positions.iter() {
+                    min = min.min_by_component(*pos);
+                    max = max.max_by_component(*pos);
+                }
+                let geometry_ref = scene.add_geometry(Geometry::TriangleMesh {
+                    positions,
+                    indices,
+                    min,
+                    max,
+                });
                 if geometry_refs.insert(name, geometry_ref).is_some() {
                     panic!("multiple geometry with name \"{}\"", name);
                 }

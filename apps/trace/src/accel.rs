@@ -182,6 +182,7 @@ impl SceneAccel {
                                 Geometry::TriangleMesh {
                                     ref positions,
                                     ref indices,
+                                    ..
                                 } => (positions.as_slice(), indices.as_slice()),
                                 Geometry::Quad { transform, size } => {
                                     let half_size = 0.5 * size;
@@ -293,7 +294,9 @@ impl SceneAccel {
                     let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
 
                     let (vertex_count, triangle_count) = match geometry {
-                        Geometry::TriangleMesh { positions, indices } => (positions.len() as u32, indices.len() as u32),
+                        Geometry::TriangleMesh { positions, indices, .. } => {
+                            (positions.len() as u32, indices.len() as u32)
+                        }
                         Geometry::Quad { .. } => (4, 2),
                         Geometry::Sphere { .. } => unimplemented!(),
                     };

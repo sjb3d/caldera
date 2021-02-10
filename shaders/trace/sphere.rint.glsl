@@ -18,22 +18,10 @@ void main()
     const vec3 d = gl_ObjectRayDirectionEXT;
     const float r = g_record.geom.radius;
 
-    /*
-        |p + t*d|^2 = r^2
-        => d.d t^2 + 2(d.p)t + (p.p - r^2) = 0
-    */
-    const float a = dot(d, d);
-    const float b = 2.f*dot(d, p);
-    const float c = dot(p, p) - r*r;
-
-    const float Q = b*b - 4.f*a*c;
-    if (Q > 0.f) {
-        const float q = sqrt(Q);
-        const float k = -b - copysign(q, b);
-        const float t1 = k/(2.f*a);
-        const float t2 = (2.f*c)/k;
-        const float t_min = min(t1, t2);
-        const float t_max = max(t1, t2);
+    vec2 t;
+    if (ray_vs_sphere(p, d, r, t)) {
+        const float t_min = min_element(t);
+        const float t_max = max_element(t);
         g_attrib.hit_from_centre = p + t_min*d;
         if (!reportIntersectionEXT(t_min, SPHERE_HIT_FRONT)) {
             g_attrib.hit_from_centre = p + t_max*d;

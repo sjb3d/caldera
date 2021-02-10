@@ -13,7 +13,7 @@ use std::{mem, slice};
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct QuadLightRecord {
     emission: Vec3,
-    unit_value: f32,
+    epsilon_ref: f32,
     area_pdf: f32,
     normal_ws: Vec3,
     corner_ws: Vec3,
@@ -25,7 +25,7 @@ struct QuadLightRecord {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct SphereLightRecord {
     emission: Vec3,
-    unit_value: f32,
+    epsilon_ref: f32,
     centre_ws: Vec3,
     radius_ws: f32,
 }
@@ -142,7 +142,9 @@ struct ExtendShader {
 struct ExtendTriangleHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
+    epsilon_ref: f32,
     shader: ExtendShader,
+    _pad: u32,
 }
 
 #[repr(C)]
@@ -156,6 +158,7 @@ struct SphereGeomData {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ExtendSphereHitRecord {
     geom: SphereGeomData,
+    epsilon_ref: f32,
     shader: ExtendShader,
 }
 
@@ -472,6 +475,8 @@ impl Renderer {
                 writer.write_zeros(hit_region.offset as usize - writer.written());
                 for instance_ref in clusters.instance_iter().cloned() {
                     let instance = scene.instance(instance_ref);
+                    let geometry = scene.geometry(instance.geometry_ref);
+                    let transform = scene.transform(instance.transform_ref);
                     let shader_desc = scene.shader(instance.shader_ref);
 
                     let mut shader = match shader_desc.surface {
@@ -497,6 +502,7 @@ impl Renderer {
                         shader.light_index = light_indexer.next().unwrap();
                     }
 
+                    let epsilon_ref = geometry.get_epsilon_ref(transform.0);
                     match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
                         GeometryRecordData::Triangles {
                             index_buffer_address,
@@ -505,7 +511,9 @@ impl Renderer {
                             let hit_record = ExtendTriangleHitRecord {
                                 index_buffer_address,
                                 position_buffer_address,
+                                epsilon_ref,
                                 shader,
+                                _pad: 0,
                             };
 
                             let end_offset = writer.written() + hit_region.stride as usize;
@@ -525,7 +533,11 @@ impl Renderer {
                                 },
                                 _ => unreachable!(),
                             };
-                            let hit_record = ExtendSphereHitRecord { geom, shader };
+                            let hit_record = ExtendSphereHitRecord {
+                                geom,
+                                epsilon_ref,
+                                shader,
+                            };
 
                             let end_offset = writer.written() + hit_region.stride as usize;
                             writer.write(shader_group_handle(ShaderGroup::ExtendHitSphere));
@@ -545,9 +557,12 @@ impl Renderer {
                 for instance_ref in clusters.instance_iter().cloned() {
                     let instance = scene.instance(instance_ref);
                     let shader = scene.shader(instance.shader_ref);
+
                     if let Some(emission) = shader.emission {
                         let world_from_local = scene.transform(instance.transform_ref).0;
-                        match scene.geometry(instance.geometry_ref) {
+                        let geometry = scene.geometry(instance.geometry_ref);
+                        let epsilon_ref = geometry.get_epsilon_ref(world_from_local);
+                        match geometry {
                             Geometry::TriangleMesh { .. } => unimplemented!(),
                             Geometry::Quad {
                                 size,
@@ -559,14 +574,11 @@ impl Renderer {
                                 let edge0_ws = world_from_quad.transform_vec3(Vec3::new(size.x, 0.0, 0.0));
                                 let edge1_ws = world_from_quad.transform_vec3(Vec3::new(0.0, size.y, 0.0));
                                 let normal_ws = world_from_quad.transform_vec3(Vec3::unit_z()).normalized();
-
-                                let unit_value =
-                                    (centre_ws.abs() + 0.5 * (edge0_ws.abs() + edge1_ws.abs())).component_max();
                                 let area_ws = world_from_quad.scale * world_from_quad.scale * size.x * size.y;
 
                                 let light_record = QuadLightRecord {
                                     emission,
-                                    unit_value,
+                                    epsilon_ref,
                                     area_pdf: 1.0 / area_ws,
                                     normal_ws,
                                     corner_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
@@ -587,11 +599,10 @@ impl Renderer {
                             Geometry::Sphere { centre, radius } => {
                                 let centre_ws = world_from_local * *centre;
                                 let radius_ws = world_from_local.scale.abs() * *radius;
-                                let unit_value = centre_ws.abs().component_max() + radius_ws;
 
                                 let light_record = SphereLightRecord {
                                     emission,
-                                    unit_value,
+                                    epsilon_ref,
                                     centre_ws,
                                     radius_ws,
                                 };

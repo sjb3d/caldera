@@ -7,7 +7,7 @@
 #define QUAD_LIGHT_RECORD(NAME)                                 \
     layout(shaderRecordEXT, scalar) buffer QuadLightRecord {    \
         vec3 emission;                                          \
-        float unit_value;                                       \
+        float epsilon_ref;                                      \
         float area_pdf;                                         \
         vec3 normal_ws;                                         \
         vec3 corner_ws;                                         \
@@ -18,7 +18,7 @@
 #define SPHERE_LIGHT_RECORD(NAME)                               \
     layout(shaderRecordEXT, scalar) buffer SphereLightRecord {  \
         vec3 emission;                                          \
-        float unit_value;                                       \
+        float epsilon_ref;                                      \
         vec3 centre_ws;                                         \
         float radius_ws;                                        \
     } NAME
@@ -48,7 +48,7 @@ struct LightSampleData {
     vec3 normal;            // input: target normal
     vec3 emission;          // input: random numbers
     float solid_angle_pdf;
-    float unit_value;
+    float epsilon_ref;
 };
 
 #define LIGHT_SAMPLE_SHADER_INDEX(LIGHT)    (CALLABLE_SHADER_COUNT_PER_LIGHT*(LIGHT) + 1)

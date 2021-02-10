@@ -19,7 +19,9 @@ layout(buffer_reference, scalar) buffer PositionBuffer {
 layout(shaderRecordEXT, scalar) buffer ExtendTriangleHitRecord {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
+    float epsilon_ref;
     ExtendShader shader;
+    uint pad;
 } g_record;
 
 hitAttributeEXT vec2 g_bary_coord;
@@ -51,15 +53,6 @@ void main()
     const uint bsdf_type = g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
-    // estimate floating point number size for local and world space
-    // TODO: handle scale
-    const float max_position_value = max_element(
-        max(max(abs(p0), abs(p1)), abs(p2))
-        + abs(gl_ObjectToWorldEXT[3])
-    );
-    int max_exponent = 0;
-    frexp(max_position_value, max_exponent);
-
     g_extend.position = hit_pos_ws;
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
     g_extend.hit = create_hit_data(
@@ -68,5 +61,5 @@ void main()
         g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
-        max_exponent);
+        g_record.epsilon_ref);
 }

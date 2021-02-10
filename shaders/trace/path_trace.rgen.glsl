@@ -86,7 +86,7 @@ void sample_single_light(
     light_normal = g_light_sample.normal;
     light_emission = sample_from_rec709(g_light_sample.emission);
     light_solid_angle_pdf = g_light_sample.solid_angle_pdf;
-    light_epsilon = ldexp(g_light_sample.unit_value, LOG2_EPSILON_FACTOR);    
+    light_epsilon = ldexp(g_light_sample.epsilon_ref, LOG2_EPSILON_FACTOR);    
 }
 
 void sample_all_lights(
@@ -277,8 +277,7 @@ void main()
 
         const vec3 out_dir_ls = normalize(-prev_in_dir * hit_basis);
 
-        const float hit_epsilon = ldexp(1.f, get_max_exponent(g_extend.hit) + LOG2_EPSILON_FACTOR);
-        const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
+        const float hit_epsilon = get_epsilon(g_extend.hit, LOG2_EPSILON_FACTOR);
 
         // sample a light source
         if (g_light.sampled_light_count != 0 && allow_light_sampling && !hit_is_delta) {
@@ -338,6 +337,7 @@ void main()
 
             // trace an occlusion ray if necessary
             if (any(greaterThan(result, vec3(0.f)))) {
+                const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
                 const vec3 adjusted_light_position = light_position + light_normal*light_epsilon;
 
                 const vec3 ray_origin = adjusted_hit_position;
@@ -345,7 +345,6 @@ void main()
                 const float ray_distance = length(ray_vec);
                 const vec3 ray_dir = ray_vec/ray_distance;
 
-                const float distance_epsilon_factor = 1.f - ldexp(1.f, LOG2_EPSILON_FACTOR);
                 traceRayEXT(
                     g_accel,
                     gl_RayFlagsNoneEXT | gl_RayFlagsTerminateOnFirstHitEXT,
@@ -356,7 +355,7 @@ void main()
                     ray_origin,
                     0.f,
                     ray_dir,
-                    ray_distance*distance_epsilon_factor,
+                    ray_distance,
                     OCCLUSION_PAYLOAD_INDEX);
 
                 if (g_occlusion.is_occluded == 0) {

@@ -40,17 +40,9 @@ void main()
             const vec3 p = -centre_from_target;
             const vec3 d = ray_dir;
             const float r = g_record.radius_ws;
+            const vec2 t = ray_vs_sphere_force_hit(p, d, r);
 
-            const float a = dot(d, d);
-            const float b = 2.f*dot(d, p);
-            const float c = dot(p, p) - r*r;
-
-            const float Q = max(b*b - 4.f*a*c, 0.f);
-            const float q = sqrt(Q);
-            const float k = -b - copysign(q, b);
-            const float t1 = k/(2.f*a);
-            const float t2 = (2.f*c)/k;
-            const float t_min = max(min(t1, t2), 0.f);
+            const float t_min = max(min_element(t), 0.f);
 
             sample_dir = normalize(p + t_min*d);
         } else {
@@ -74,7 +66,7 @@ void main()
         g_sample.normal = light_normal;
         g_sample.emission = emission;
         g_sample.solid_angle_pdf = 1.f/solid_angle;
-        g_sample.unit_value = g_record.unit_value;
+        g_sample.epsilon_ref = g_record.epsilon_ref;
     } else {
         const vec3 sample_dir = sample_sphere_uniform(rand_u01);
         const vec3 light_position = g_record.centre_ws + g_record.radius_ws*sample_dir;
@@ -92,6 +84,6 @@ void main()
         g_sample.normal = light_normal;
         g_sample.emission = emission;
         g_sample.solid_angle_pdf = solid_angle_pdf;
-        g_sample.unit_value = g_record.unit_value;   
+        g_sample.epsilon_ref = g_record.epsilon_ref;
     }
 }
