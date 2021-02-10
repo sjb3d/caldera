@@ -40,7 +40,7 @@ layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result_r;
 layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_g;
 layout(set = 0, binding = 6, r32f) uniform restrict image2D g_result_b;
 
-#define LOG2_SEQUENCE_COUNT     8
+#define LOG2_SEQUENCE_COUNT     10
 
 #define LOG2_EPSILON_FACTOR     (-18)
 

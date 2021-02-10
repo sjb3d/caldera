@@ -128,7 +128,7 @@ struct App {
 }
 
 impl App {
-    const SEQUENCE_COUNT: u32 = 256;
+    const SEQUENCE_COUNT: u32 = 1024;
     const SAMPLES_PER_SEQUENCE: u32 = 256;
 
     fn trace_size() -> UVec2 {
