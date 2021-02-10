@@ -21,33 +21,49 @@ void main()
 
     if (g_light.sample_sphere_solid_angle != 0) {
         const vec3 centre_from_target = g_record.centre_ws - target_position;
+        const mat3 basis = basis_from_z_axis(normalize(centre_from_target));
 
         const float sin_theta = g_record.radius_ws/length(centre_from_target);
-        const float cos_theta = sqrt(max(0.f, 1.f - sin_theta*sin_theta));
-        const float solid_angle = 2.f*PI*(1.f - cos_theta);
 
-        const vec3 ray_dir_ls = sample_solid_angle_uniform(cos_theta, rand_u01);
-        const mat3 basis = basis_from_z_axis(normalize(centre_from_target));
-        const vec3 ray_dir = basis*ray_dir_ls;
+        float solid_angle;
+        vec3 sample_dir;
+        if (sin_theta > SPHERE_LIGHT_SIN_THETA_MIN) {
+            // compute solid angle on a sphere
+            const float cos_theta = sqrt(max(0.f, 1.f - sin_theta*sin_theta));
+            solid_angle = 2.f*PI*(1.f - cos_theta);
 
-        // intersect ray with sphere for sample point
-        const vec3 p = -centre_from_target;
-        const vec3 d = ray_dir;
-        const float r = g_record.radius_ws;
+            // sample the visible solid angle
+            const vec3 ray_dir_ls = sample_solid_angle_uniform(cos_theta, rand_u01);
+            const vec3 ray_dir = basis*ray_dir_ls;
 
-        const float a = dot(d, d);
-        const float b = 2.f*dot(d, p);
-        const float c = dot(p, p) - r*r;
+            // intersect ray with sphere for sample point
+            const vec3 p = -centre_from_target;
+            const vec3 d = ray_dir;
+            const float r = g_record.radius_ws;
 
-        const float Q = max(b*b - 4.f*a*c, 0.f);
-        const float q = sqrt(Q);
-        const float k = -b - copysign(q, b);
-        const float t1 = k/(2.f*a);
-        const float t2 = (2.f*c)/k;
-        const float t_min = max(min(t1, t2), 0.f);
+            const float a = dot(d, d);
+            const float b = 2.f*dot(d, p);
+            const float c = dot(p, p) - r*r;
+
+            const float Q = max(b*b - 4.f*a*c, 0.f);
+            const float q = sqrt(Q);
+            const float k = -b - copysign(q, b);
+            const float t1 = k/(2.f*a);
+            const float t2 = (2.f*c)/k;
+            const float t_min = max(min(t1, t2), 0.f);
+
+            sample_dir = normalize(p + t_min*d);
+        } else {
+            // approximate with a disc since it is more numerically stable
+            solid_angle = PI*sin_theta*sin_theta;
+
+            const vec2 disc_pos = sample_disc_uniform(rand_u01);
+            const vec3 sample_vec_ls = vec3(disc_pos*sin_theta, -1.f);
+
+            sample_dir = normalize(basis*sample_vec_ls);
+        }
 
         // construct the sample here
-        const vec3 sample_dir = normalize(p + t_min*d);
         const vec3 light_position = g_record.centre_ws + g_record.radius_ws*sample_dir;
         const vec3 light_normal = sample_dir;
         const vec3 target_from_light = target_position - light_position;

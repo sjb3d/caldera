@@ -28,7 +28,9 @@
         vec3 emission;                                              \
     } NAME
 
-#define CALLABLE_SHADER_COUNT_PER_LIGHT       2
+#define SPHERE_LIGHT_SIN_THETA_MIN          0.01f
+
+#define CALLABLE_SHADER_COUNT_PER_LIGHT     2
 
 struct LightEvalData {
     vec3 position;          // input only

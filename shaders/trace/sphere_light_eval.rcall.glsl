@@ -28,10 +28,17 @@ void main()
     
     if (g_light.sample_sphere_solid_angle != 0) {
         const vec3 centre_from_target = g_record.centre_ws - target_position;
-
         const float sin_theta = g_record.radius_ws/length(centre_from_target);
-        const float cos_theta = sqrt(max(0.f, 1.f - sin_theta*sin_theta));
-        const float solid_angle = 2.f*PI*(1.f - cos_theta);
+
+        float solid_angle;
+        if (sin_theta > SPHERE_LIGHT_SIN_THETA_MIN) {
+            // accurate solid angle on a sphere
+            const float cos_theta = sqrt(max(0.f, 1.f - sin_theta*sin_theta));
+            solid_angle = 2.f*PI*(1.f - cos_theta);
+        } else {
+            // approximate with a disc
+            solid_angle = PI*sin_theta*sin_theta;
+        }
 
         g_eval.solid_angle_pdf = 1.f/solid_angle;
     } else {
