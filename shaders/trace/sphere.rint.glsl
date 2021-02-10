@@ -35,9 +35,9 @@ void main()
         const float t_min = min(t1, t2);
         const float t_max = max(t1, t2);
         g_attrib.hit_from_centre = p + t_min*d;
-        if (!reportIntersectionEXT(t_min, 1)) {
+        if (!reportIntersectionEXT(t_min, SPHERE_HIT_FRONT)) {
             g_attrib.hit_from_centre = p + t_max*d;
-            reportIntersectionEXT(t_max, 0);
+            reportIntersectionEXT(t_max, SPHERE_HIT_BACK);
         }
     }
 }

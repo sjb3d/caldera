@@ -21,7 +21,7 @@ void main()
 {   
     const vec3 hit_from_centre = g_attrib.hit_from_centre;
     const vec3 hit_pos_ls = g_record.geom.centre + hit_from_centre;
-    const vec3 hit_normal_vec_ls = (gl_HitKindEXT != 0) ? hit_from_centre : -hit_from_centre;
+    const vec3 hit_normal_vec_ls = (gl_HitKindEXT == SPHERE_HIT_FRONT) ? hit_from_centre : -hit_from_centre;
 
     // transform normal vector to world space
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
