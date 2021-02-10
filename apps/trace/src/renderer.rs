@@ -3,7 +3,7 @@ use crate::scene::*;
 use crate::RenderColorSpace;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
-use imgui::{im_str, Slider, Ui, StyleColor};
+use imgui::{im_str, Slider, StyleColor, Ui};
 use spark::vk;
 use std::ops::{BitOr, BitOrAssign};
 use std::sync::Arc;
@@ -656,9 +656,21 @@ impl Renderer {
         let id = ui.push_id(im_str!("MIS Heuristic"));
         if self.sampling_technique == SamplingTechnique::LightsAndSurfaces {
             ui.text("MIS Heuristic:");
-            needs_reset |= ui.radio_button(im_str!("None"), &mut self.mis_heuristic, MultipleImportanceHeuristic::None);
-            needs_reset |= ui.radio_button(im_str!("Balance"), &mut self.mis_heuristic, MultipleImportanceHeuristic::Balance);
-            needs_reset |= ui.radio_button(im_str!("Power2"), &mut self.mis_heuristic, MultipleImportanceHeuristic::Power2);
+            needs_reset |= ui.radio_button(
+                im_str!("None"),
+                &mut self.mis_heuristic,
+                MultipleImportanceHeuristic::None,
+            );
+            needs_reset |= ui.radio_button(
+                im_str!("Balance"),
+                &mut self.mis_heuristic,
+                MultipleImportanceHeuristic::Balance,
+            );
+            needs_reset |= ui.radio_button(
+                im_str!("Power2"),
+                &mut self.mis_heuristic,
+                MultipleImportanceHeuristic::Power2,
+            );
         } else {
             ui.text_disabled("MIS Heuristic:");
             let style = ui.push_style_color(StyleColor::Text, ui.style_color(StyleColor::TextDisabled));
@@ -723,7 +735,7 @@ impl Renderer {
         sample_image_view: vk::ImageView,
         sample_index: u32,
         camera_ref: CameraRef,
-        world_from_camera: Isometry3,
+        world_from_camera: Similarity3,
         result_image_views: &(vk::ImageView, vk::ImageView, vk::ImageView),
         trace_size: UVec2,
     ) {

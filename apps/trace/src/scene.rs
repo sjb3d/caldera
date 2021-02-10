@@ -547,7 +547,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let camera_transform = scene.add_transform(Transform(Similarity3::new(
         Vec3::new(0.278, 0.273, -0.8),
         Rotor3::identity(),
-        1.0,
+        0.5,
     )));
     scene.add_camera(Camera {
         transform_ref: camera_transform,

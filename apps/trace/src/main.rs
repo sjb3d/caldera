@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::{env, ops::Deref};
 use winit::{
     dpi::{LogicalSize, Size},
+    event::VirtualKeyCode,
     event_loop::EventLoop,
     window::WindowBuilder,
 };
@@ -57,15 +58,19 @@ descriptor_set_layout!(CopyDescriptorSetLayout {
     result_b: StorageImage,
 });
 
-struct ViewDrag {
+struct ViewAdjust {
+    translation: Vec3,
     rotation: Rotor3,
+    log2_scale: f32,
     drag_start: Option<(Vec2, Rotor3, Vec3)>,
 }
 
-impl ViewDrag {
-    fn new(rotation: Rotor3) -> Self {
+impl ViewAdjust {
+    fn new(transform: Similarity3) -> Self {
         Self {
-            rotation,
+            translation: transform.translation,
+            rotation: transform.rotation,
+            log2_scale: transform.scale.abs().log2(),
             drag_start: None,
         }
     }
@@ -103,7 +108,34 @@ impl ViewDrag {
                 }
             }
         }
+        if !io.want_capture_keyboard {
+            let step_size = 5.0 * io.delta_time * self.log2_scale.exp();
+            if io.keys_down[VirtualKeyCode::W as usize] {
+                let v = if io.key_shift { Vec3::unit_y() } else { Vec3::unit_z() };
+                self.translation += step_size * (self.rotation * v);
+                was_updated = true;
+            }
+            if io.keys_down[VirtualKeyCode::S as usize] {
+                let v = if io.key_shift { -Vec3::unit_y() } else { -Vec3::unit_z() };
+                self.translation += step_size * (self.rotation * v);
+                was_updated = true;
+            }
+            if io.keys_down[VirtualKeyCode::A as usize] {
+                let v = Vec3::unit_x();
+                self.translation += step_size * (self.rotation * v);
+                was_updated = true;
+            }
+            if io.keys_down[VirtualKeyCode::D as usize] {
+                let v = -Vec3::unit_x();
+                self.translation += step_size * (self.rotation * v);
+                was_updated = true;
+            }
+        }
         was_updated
+    }
+
+    fn transform(&self) -> Similarity3 {
+        Similarity3::new(self.translation, self.rotation, self.log2_scale.exp2())
     }
 }
 
@@ -124,7 +156,7 @@ struct App {
     log2_exposure_scale: f32,
     render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
-    view_drag: ViewDrag,
+    view_adjust: ViewAdjust,
 }
 
 impl App {
@@ -202,7 +234,7 @@ impl App {
         );
 
         let camera_ref = CameraRef(0);
-        let rotation = scene.transform(scene.camera(camera_ref).transform_ref).0.rotation;
+        let transform = scene.transform(scene.camera(camera_ref).transform_ref).0;
 
         Self {
             context: Arc::clone(&context),
@@ -217,7 +249,7 @@ impl App {
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
-            view_drag: ViewDrag::new(rotation),
+            view_adjust: ViewAdjust::new(transform),
         }
     }
 
@@ -249,8 +281,8 @@ impl App {
                     }
                     if CollapsingHeader::new(im_str!("Tone Map")).default_open(true).build(&ui) {
                         let id = ui.push_id(im_str!("Tone Map"));
-                        Drag::new(im_str!("Exposure"))
-                            .speed(0.05f32)
+                        Drag::new(im_str!("Exposure Bias"))
+                            .speed(0.05)
                             .build(&ui, &mut self.log2_exposure_scale);
                         ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
                         ui.radio_button(
@@ -271,12 +303,15 @@ impl App {
                         for camera_ref in scene.camera_ref_iter() {
                             if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
                                 let camera = scene.camera(camera_ref);
-                                let rotation = scene.transform(camera.transform_ref).0.rotation;
+                                let transform = scene.transform(camera.transform_ref).0;
                                 self.camera_ref = camera_ref;
-                                self.view_drag = ViewDrag::new(rotation);
+                                self.view_adjust = ViewAdjust::new(transform);
                                 needs_reset = true;
                             }
                         }
+                        needs_reset |= Drag::new(im_str!("Camera Scale Bias"))
+                            .speed(0.05)
+                            .build(&ui, &mut self.view_adjust.log2_scale);
                         ui.text(format!(
                             "Lights: {}",
                             scene.lights.len()
@@ -296,13 +331,10 @@ impl App {
 
         let camera = self.scene.camera(self.camera_ref);
         let fov_y = camera.fov_y;
-        if self.view_drag.update(ui.io(), fov_y) {
+        if self.view_adjust.update(ui.io(), fov_y) {
             self.next_sample_index = 0;
         }
-        let world_from_camera = Isometry3::new(
-            self.scene.transform(camera.transform_ref).0.translation,
-            self.view_drag.rotation,
-        );
+        let world_from_camera = self.view_adjust.transform();
 
         // start render
         let cbar = base.systems.acquire_command_buffer();
