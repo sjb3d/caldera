@@ -3,7 +3,7 @@ use crate::scene::*;
 use crate::RenderColorSpace;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
-use imgui::{im_str, Slider, Ui};
+use imgui::{im_str, Slider, Ui, StyleColor};
 use spark::vk;
 use std::ops::{BitOr, BitOrAssign};
 use std::sync::Arc;
@@ -58,6 +58,14 @@ impl BitOrAssign for PathTraceFlags {
     }
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy, Contiguous, PartialEq, Eq)]
+enum MultipleImportanceHeuristic {
+    None,
+    Balance,
+    Power2,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct PathTraceUniforms {
@@ -66,6 +74,7 @@ struct PathTraceUniforms {
     sample_index: u32,
     max_segment_count: u32,
     render_color_space: u32,
+    mis_heuristic: u32,
     flags: PathTraceFlags,
 }
 
@@ -211,6 +220,7 @@ pub struct Renderer {
     use_max_roughness: bool,
     sample_sphere_solid_angle: bool,
     sampling_technique: SamplingTechnique,
+    mis_heuristic: MultipleImportanceHeuristic,
 }
 
 impl Renderer {
@@ -287,6 +297,7 @@ impl Renderer {
             use_max_roughness: true,
             sample_sphere_solid_angle: true,
             sampling_technique: SamplingTechnique::LightsAndSurfaces,
+            mis_heuristic: MultipleImportanceHeuristic::Balance,
         }
     }
 
@@ -642,6 +653,21 @@ impl Renderer {
             &mut self.sampling_technique,
             SamplingTechnique::LightsAndSurfaces,
         );
+        let id = ui.push_id(im_str!("MIS Heuristic"));
+        if self.sampling_technique == SamplingTechnique::LightsAndSurfaces {
+            ui.text("MIS Heuristic:");
+            needs_reset |= ui.radio_button(im_str!("None"), &mut self.mis_heuristic, MultipleImportanceHeuristic::None);
+            needs_reset |= ui.radio_button(im_str!("Balance"), &mut self.mis_heuristic, MultipleImportanceHeuristic::Balance);
+            needs_reset |= ui.radio_button(im_str!("Power2"), &mut self.mis_heuristic, MultipleImportanceHeuristic::Power2);
+        } else {
+            ui.text_disabled("MIS Heuristic:");
+            let style = ui.push_style_color(StyleColor::Text, ui.style_color(StyleColor::TextDisabled));
+            ui.radio_button_bool(im_str!("None"), true);
+            ui.radio_button_bool(im_str!("Balance"), false);
+            ui.radio_button_bool(im_str!("Power2"), false);
+            style.pop(&ui);
+        }
+        id.pop(&ui);
         needs_reset |= Slider::new(im_str!("Max Bounces"))
             .range(0..=8)
             .build(&ui, &mut self.max_bounces);
@@ -727,6 +753,7 @@ impl Renderer {
                     sample_index,
                     max_segment_count: self.max_bounces + 2,
                     render_color_space: render_color_space.into_integer(),
+                    mis_heuristic: self.mis_heuristic.into_integer(),
                     flags: path_trace_flags,
                 }
             },

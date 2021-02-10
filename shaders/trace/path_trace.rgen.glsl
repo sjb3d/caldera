@@ -15,12 +15,17 @@
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
 #define PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING     0x04
 
+#define MIS_HEURISTIC_NONE      0
+#define MIS_HEURISTIC_BALANCE   1
+#define MIS_HEURISTIC_POWER2    2
+
 layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     mat4x3 world_from_camera;
     vec2 fov_size_at_unit_z;
     uint sample_index;
     uint max_segment_count;
     uint render_color_space;
+    uint mis_heuristic;
     uint flags;
 } g_path_trace;
 
@@ -136,6 +141,16 @@ float get_light_selection_pdf()
     return 1.f/sampled_light_count_flt;
 }
 
+float mis_ratio(float ratio)
+{
+    switch (g_path_trace.mis_heuristic) {
+        default:
+        case MIS_HEURISTIC_NONE:    return 1.f;
+        case MIS_HEURISTIC_BALANCE: return ratio;
+        case MIS_HEURISTIC_POWER2:  return ratio*ratio;
+    }
+}
+
 void main()
 {
     const bool allow_light_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING) != 0);
@@ -220,7 +235,7 @@ void main()
 
             // apply MIS weight
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
-            const float other_ratio = can_be_sampled ? (light_solid_angle_pdf / prev_in_solid_angle_pdf) : 0.f;
+            const float other_ratio = can_be_sampled ? mis_ratio(light_solid_angle_pdf / prev_in_solid_angle_pdf) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
 
@@ -317,7 +332,7 @@ void main()
 
             // apply MIS weight
             const bool light_can_be_hit = allow_bsdf_sampling;
-            const float other_ratio = light_can_be_hit ? (hit_solid_angle_pdf / light_solid_angle_pdf) : 0.f;
+            const float other_ratio = light_can_be_hit ? mis_ratio(hit_solid_angle_pdf / light_solid_angle_pdf) : 0.f;
             const float weight = 1.f/(1.f + other_ratio);
             const vec3 result = weight*unweighted_sample;
 

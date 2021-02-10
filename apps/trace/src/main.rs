@@ -248,6 +248,7 @@ impl App {
                         needs_reset |= self.renderer.debug_ui(&ui);
                     }
                     if CollapsingHeader::new(im_str!("Tone Map")).default_open(true).build(&ui) {
+                        let id = ui.push_id(im_str!("Tone Map"));
                         Drag::new(im_str!("Exposure"))
                             .speed(0.05f32)
                             .build(&ui, &mut self.log2_exposure_scale);
@@ -262,6 +263,7 @@ impl App {
                             &mut self.tone_map_method,
                             ToneMapMethod::AcesFit,
                         );
+                        id.pop(&ui);
                     }
                     if CollapsingHeader::new(im_str!("Scene")).default_open(true).build(&ui) {
                         let scene = self.scene.deref();
