@@ -184,13 +184,13 @@ impl SceneAccel {
                                     ref indices,
                                     ..
                                 } => (positions.as_slice(), indices.as_slice()),
-                                Geometry::Quad { transform, size } => {
+                                Geometry::Quad { local_from_quad, size } => {
                                     let half_size = 0.5 * size;
                                     mesh_builder = mesh_builder.with_quad(
-                                        transform * Vec3::new(-half_size.x, -half_size.y, 0.0),
-                                        transform * Vec3::new(half_size.x, -half_size.y, 0.0),
-                                        transform * Vec3::new(half_size.x, half_size.y, 0.0),
-                                        transform * Vec3::new(-half_size.x, half_size.y, 0.0),
+                                        local_from_quad * Vec3::new(-half_size.x, -half_size.y, 0.0),
+                                        local_from_quad * Vec3::new(half_size.x, -half_size.y, 0.0),
+                                        local_from_quad * Vec3::new(half_size.x, half_size.y, 0.0),
+                                        local_from_quad * Vec3::new(-half_size.x, half_size.y, 0.0),
                                     );
                                     (mesh_builder.positions.as_slice(), mesh_builder.indices.as_slice())
                                 }
@@ -482,7 +482,7 @@ impl SceneAccel {
                         let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
                         let transform = scene.transform(transform_ref);
                         let instance = AccelerationStructureInstance {
-                            transform: transform.0.into_transform().transposed(),
+                            transform: transform.world_from_local.into_transform().transposed(),
                             instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
                             instance_shader_binding_table_record_offset_and_flags: record_offset,
                             acceleration_structure_reference,

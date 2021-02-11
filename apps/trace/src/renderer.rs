@@ -17,8 +17,8 @@ impl UnitScale for Geometry {
     fn unit_scale(&self, world_from_local: Similarity3) -> f32 {
         let local_offset = match self {
             Geometry::TriangleMesh { min, max, .. } => max.abs().max_by_component(min.abs()).component_max(),
-            Geometry::Quad { transform, size } => {
-                transform.translation.abs().component_max() + transform.scale * size.abs().component_max()
+            Geometry::Quad { local_from_quad, size } => {
+                local_from_quad.translation.abs().component_max() + local_from_quad.scale * size.abs().component_max()
             }
             Geometry::Sphere { centre, radius } => centre.abs().component_max() + radius,
         };
@@ -534,7 +534,7 @@ impl Renderer {
                         shader.light_index = light_indexer.next().unwrap();
                     }
 
-                    let unit_scale = geometry.unit_scale(transform.0);
+                    let unit_scale = geometry.unit_scale(transform.world_from_local);
                     match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
                         GeometryRecordData::Triangles {
                             index_buffer_address,
@@ -591,16 +591,13 @@ impl Renderer {
                     let shader = scene.shader(instance.shader_ref);
 
                     if let Some(emission) = shader.emission {
-                        let world_from_local = scene.transform(instance.transform_ref).0;
+                        let world_from_local = scene.transform(instance.transform_ref).world_from_local;
                         let geometry = scene.geometry(instance.geometry_ref);
                         let unit_scale = geometry.unit_scale(world_from_local);
                         match geometry {
                             Geometry::TriangleMesh { .. } => unimplemented!(),
-                            Geometry::Quad {
-                                size,
-                                transform: quad_from_local,
-                            } => {
-                                let world_from_quad = world_from_local * *quad_from_local;
+                            Geometry::Quad { size, local_from_quad } => {
+                                let world_from_quad = world_from_local * *local_from_quad;
 
                                 let centre_ws = world_from_quad.translation;
                                 let edge0_ws = world_from_quad.transform_vec3(Vec3::new(size.x, 0.0, 0.0));

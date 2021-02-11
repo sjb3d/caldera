@@ -1,7 +1,15 @@
 use caldera::*;
 
 #[derive(Debug, Default)]
-pub struct Transform(pub Similarity3);
+pub struct Transform {
+    pub world_from_local: Similarity3,
+}
+
+impl Transform {
+    pub fn new(world_from_local: Similarity3) -> Self {
+        Self { world_from_local }
+    }
+}
 
 #[derive(Debug)]
 pub enum Geometry {
@@ -12,7 +20,7 @@ pub enum Geometry {
         max: Vec3,
     },
     Quad {
-        transform: Similarity3,
+        local_from_quad: Similarity3,
         size: Vec2,
     },
     Sphere {
@@ -183,19 +191,23 @@ impl Scene {
         let identity_ref = self.add_transform(Transform::default());
         for instance in self.instances.iter_mut() {
             if instance_counts[instance.geometry_ref.0 as usize] == 1 {
-                let bake = self.transforms.get(instance.transform_ref.0 as usize).unwrap().0;
+                let world_from_local = self
+                    .transforms
+                    .get(instance.transform_ref.0 as usize)
+                    .unwrap()
+                    .world_from_local;
                 match self.geometries.get_mut(instance.geometry_ref.0 as usize).unwrap() {
                     Geometry::TriangleMesh { positions, .. } => {
                         for pos in positions.iter_mut() {
-                            *pos = bake * *pos;
+                            *pos = world_from_local * *pos;
                         }
                     }
-                    Geometry::Quad { transform, .. } => {
-                        *transform = bake * *transform;
+                    Geometry::Quad { local_from_quad, .. } => {
+                        *local_from_quad = world_from_local * *local_from_quad;
                     }
                     Geometry::Sphere { centre, radius } => {
-                        *centre = bake * *centre;
-                        *radius *= bake.scale.abs();
+                        *centre = world_from_local * *centre;
+                        *radius *= world_from_local.scale.abs();
                     }
                 }
                 instance.transform_ref = identity_ref;
@@ -560,7 +572,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             })
         } else {
             scene.add_geometry(Geometry::Quad {
-                transform: Similarity3::new(
+                local_from_quad: Similarity3::new(
                     Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
                     Rotor3::from_rotation_yz(0.5 * PI),
                     1.0,
@@ -576,7 +588,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         scene.add_instance(Instance::new(identity, light_geometry, light_shader));
     }
 
-    let camera_transform = scene.add_transform(Transform(Similarity3::new(
+    let camera_transform = scene.add_transform(Transform::new(Similarity3::new(
         Vec3::new(0.278, 0.273, -0.8),
         Rotor3::identity(),
         0.5,
@@ -590,7 +602,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         let extra_transforms: Vec<_> = (1..10)
             .map(|i| {
                 let f = i as f32;
-                scene.add_transform(Transform(Similarity3::new(
+                scene.add_transform(Transform::new(Similarity3::new(
                     Vec3::new(-0.01 * f, 0.02 * f, 0.0),
                     Rotor3::from_rotation_xz(0.05 * f),
                     1.0,

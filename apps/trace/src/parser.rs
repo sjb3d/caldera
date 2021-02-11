@@ -15,7 +15,7 @@ use std::collections::HashMap;
 enum Element<'a> {
     Transform {
         name: &'a str,
-        transform: Transform,
+        world_from_local: Similarity3,
     },
     Mesh {
         name: &'a str,
@@ -23,12 +23,12 @@ enum Element<'a> {
         indices: Vec<UVec3>,
     },
     Instance {
-        transform: &'a str,
-        geometry: &'a str,
+        transform_ref: &'a str,
+        geometry_ref: &'a str,
         surface: Surface,
     },
     Camera {
-        transform: &'a str,
+        transform_ref: &'a str,
         fov_y: f32,
     },
 }
@@ -62,8 +62,8 @@ fn quoted_name(i: &str) -> IResult<&str, &str> {
 
 fn element_transform(i: &str) -> IResult<&str, Element> {
     let (i, name) = quoted_name(i)?;
-    let (i, transform) = map(preceded(multispace0, similarity3), Transform)(i)?;
-    Ok((i, Element::Transform { name, transform }))
+    let (i, world_from_local) = preceded(multispace0, similarity3)(i)?;
+    Ok((i, Element::Transform { name, world_from_local }))
 }
 
 fn vec3(i: &str) -> IResult<&str, Vec3> {
@@ -107,9 +107,9 @@ fn element_mesh(i: &str) -> IResult<&str, Element> {
 }
 
 fn element_camera(i: &str) -> IResult<&str, Element> {
-    let (i, transform) = quoted_name(i)?;
+    let (i, transform_ref) = quoted_name(i)?;
     let (i, fov_y) = preceded(multispace0, float)(i)?;
-    Ok((i, Element::Camera { transform, fov_y }))
+    Ok((i, Element::Camera { transform_ref, fov_y }))
 }
 
 fn surface(i: &str) -> IResult<&str, Surface> {
@@ -126,14 +126,14 @@ fn surface(i: &str) -> IResult<&str, Surface> {
 }
 
 fn element_instance(i: &str) -> IResult<&str, Element> {
-    let (i, transform) = quoted_name(i)?;
-    let (i, geometry) = preceded(multispace0, quoted_name)(i)?;
+    let (i, transform_ref) = quoted_name(i)?;
+    let (i, geometry_ref) = preceded(multispace0, quoted_name)(i)?;
     let (i, surface) = preceded(multispace0, surface)(i)?;
     Ok((
         i,
         Element::Instance {
-            transform,
-            geometry,
+            transform_ref,
+            geometry_ref,
             surface,
         },
     ))
@@ -163,8 +163,8 @@ pub fn parse_scene(i: &str) -> Scene {
 
     for element in elements.drain(..) {
         match element {
-            Element::Transform { name, transform } => {
-                let transform_ref = scene.add_transform(transform);
+            Element::Transform { name, world_from_local } => {
+                let transform_ref = scene.add_transform(Transform::new(world_from_local));
                 if transform_refs.insert(name, transform_ref).is_some() {
                     panic!("multiple transforms with name \"{}\"", name);
                 }
@@ -191,8 +191,8 @@ pub fn parse_scene(i: &str) -> Scene {
                 }
             }
             Element::Instance {
-                transform,
-                geometry,
+                transform_ref,
+                geometry_ref,
                 surface,
             } => {
                 let shader_ref = scene.add_shader(Shader {
@@ -200,14 +200,14 @@ pub fn parse_scene(i: &str) -> Scene {
                     emission: None,
                 });
                 scene.add_instance(Instance {
-                    transform_ref: *transform_refs.get(transform).unwrap(),
-                    geometry_ref: *geometry_refs.get(geometry).unwrap(),
+                    transform_ref: *transform_refs.get(transform_ref).unwrap(),
+                    geometry_ref: *geometry_refs.get(geometry_ref).unwrap(),
                     shader_ref,
                 });
             }
-            Element::Camera { transform, fov_y } => {
+            Element::Camera { transform_ref, fov_y } => {
                 scene.add_camera(Camera {
-                    transform_ref: *transform_refs.get(transform).unwrap(),
+                    transform_ref: *transform_refs.get(transform_ref).unwrap(),
                     fov_y,
                 });
             }

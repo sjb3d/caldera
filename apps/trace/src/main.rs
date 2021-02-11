@@ -66,11 +66,11 @@ struct ViewAdjust {
 }
 
 impl ViewAdjust {
-    fn new(transform: Similarity3) -> Self {
+    fn new(world_from_camera: Similarity3) -> Self {
         Self {
-            translation: transform.translation,
-            rotation: transform.rotation,
-            log2_scale: transform.scale.abs().log2(),
+            translation: world_from_camera.translation,
+            rotation: world_from_camera.rotation,
+            log2_scale: world_from_camera.scale.abs().log2(),
             drag_start: None,
         }
     }
@@ -134,7 +134,7 @@ impl ViewAdjust {
         was_updated
     }
 
-    fn transform(&self) -> Similarity3 {
+    fn world_from_camera(&self) -> Similarity3 {
         Similarity3::new(self.translation, self.rotation, self.log2_scale.exp2())
     }
 }
@@ -234,7 +234,7 @@ impl App {
         );
 
         let camera_ref = CameraRef(0);
-        let transform = scene.transform(scene.camera(camera_ref).transform_ref).0;
+        let world_from_camera = scene.transform(scene.camera(camera_ref).transform_ref).world_from_local;
 
         Self {
             context: Arc::clone(&context),
@@ -249,7 +249,7 @@ impl App {
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
-            view_adjust: ViewAdjust::new(transform),
+            view_adjust: ViewAdjust::new(world_from_camera),
         }
     }
 
@@ -303,9 +303,9 @@ impl App {
                         for camera_ref in scene.camera_ref_iter() {
                             if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
                                 let camera = scene.camera(camera_ref);
-                                let transform = scene.transform(camera.transform_ref).0;
+                                let world_from_camera = scene.transform(camera.transform_ref).world_from_local;
                                 self.camera_ref = camera_ref;
-                                self.view_adjust = ViewAdjust::new(transform);
+                                self.view_adjust = ViewAdjust::new(world_from_camera);
                                 needs_reset = true;
                             }
                         }
@@ -334,7 +334,7 @@ impl App {
         if self.view_adjust.update(ui.io(), fov_y) {
             self.next_sample_index = 0;
         }
-        let world_from_camera = self.view_adjust.transform();
+        let world_from_camera = self.view_adjust.world_from_camera();
 
         // start render
         let cbar = base.systems.acquire_command_buffer();
