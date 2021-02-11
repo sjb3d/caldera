@@ -230,16 +230,13 @@ void main()
                 light_solid_angle_pdf *= get_light_selection_pdf();
             }
 
-            // compute the sample from this hit
-            const vec3 unweighted_sample = alpha * light_emission;
-
-            // apply MIS weight
+            // compute MIS weight
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
             const float other_ratio = can_be_sampled ? mis_ratio(light_solid_angle_pdf / prev_in_solid_angle_pdf) : 0.f;
-            const float weight = 1.f/(1.f + other_ratio);
-            const vec3 result = weight*unweighted_sample;
+            const float mis_weight = 1.f/(1.f + other_ratio);
 
-            result_sum += result;
+            // accumulate this sample
+            result_sum += alpha * light_emission * mis_weight;
         }
 
         // end the ray if we didn't hit any surface
@@ -326,14 +323,13 @@ void main()
                 }
             }
             
-            // compute the sample assuming the ray is not occluded
-            const vec3 unweighted_sample = alpha * hit_f * (abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
-
-            // apply MIS weight
+            // compute MIS weight
             const bool light_can_be_hit = allow_bsdf_sampling;
             const float other_ratio = light_can_be_hit ? mis_ratio(hit_solid_angle_pdf / light_solid_angle_pdf) : 0.f;
-            const float weight = 1.f/(1.f + other_ratio);
-            const vec3 result = weight*unweighted_sample;
+            const float mis_weight = 1.f/(1.f + other_ratio);
+
+            // compute the sample assuming the ray is not occluded
+            const vec3 result = alpha * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
 
             // trace an occlusion ray if necessary
             if (any(greaterThan(result, vec3(0.f)))) {
