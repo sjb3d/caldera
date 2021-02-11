@@ -148,7 +148,7 @@ fn element(i: &str) -> IResult<&str, Element> {
     ))(i)
 }
 
-pub fn parse_scene(i: &str) -> Scene {
+pub fn load_export(i: &str) -> Scene {
     let mut elements = all_consuming(terminated(many1(preceded(multispace0, element)), multispace0))(i)
         .unwrap()
         .1;

@@ -1,5 +1,5 @@
 mod accel;
-mod parser;
+mod blender;
 mod renderer;
 mod scene;
 
@@ -221,7 +221,7 @@ impl App {
             SceneDesc::CornellBox(variant) => create_cornell_box_scene(variant),
             SceneDesc::File(filename) => {
                 let contents = std::fs::read_to_string(filename.as_str()).unwrap();
-                parser::parse_scene(&contents)
+                blender::load_export(&contents)
             }
         });
         let renderer = Renderer::new(
