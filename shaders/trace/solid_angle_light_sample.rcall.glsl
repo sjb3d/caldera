@@ -29,5 +29,5 @@ void main()
     g_sample.normal = -external_dir;
     g_sample.emission = g_record.emission;
     g_sample.solid_angle_pdf = -1.f/g_record.solid_angle;
-    g_sample.epsilon_ref = 0.f;
+    g_sample.unit_scale = 0.f;
 }

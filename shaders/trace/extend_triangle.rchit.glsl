@@ -19,7 +19,7 @@ layout(buffer_reference, scalar) buffer PositionBuffer {
 layout(shaderRecordEXT, scalar) buffer ExtendTriangleHitRecord {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
-    float epsilon_ref;
+    float unit_scale;
     ExtendShader shader;
     uint pad;
 } g_record;
@@ -61,5 +61,5 @@ void main()
         g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
-        g_record.epsilon_ref);
+        g_record.unit_scale);
 }

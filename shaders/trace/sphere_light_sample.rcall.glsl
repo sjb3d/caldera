@@ -66,7 +66,7 @@ void main()
         g_sample.normal = light_normal;
         g_sample.emission = emission;
         g_sample.solid_angle_pdf = 1.f/solid_angle;
-        g_sample.epsilon_ref = g_record.epsilon_ref;
+        g_sample.unit_scale = g_record.unit_scale;
     } else {
         const vec3 sample_dir = sample_sphere_uniform(rand_u01);
         const vec3 light_position = g_record.centre_ws + g_record.radius_ws*sample_dir;
@@ -84,6 +84,6 @@ void main()
         g_sample.normal = light_normal;
         g_sample.emission = emission;
         g_sample.solid_angle_pdf = solid_angle_pdf;
-        g_sample.epsilon_ref = g_record.epsilon_ref;
+        g_sample.unit_scale = g_record.unit_scale;
     }
 }

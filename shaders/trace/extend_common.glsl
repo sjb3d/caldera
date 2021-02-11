@@ -7,8 +7,8 @@ struct HitData {
 #define HIT_DATA_Z_HAS_LIGHT_BIT        0x00020000
 #define HIT_DATA_Z_BSDF_TYPE_SHIFT      20
 #define HIT_DATA_Z_BSDF_TYPE_MASK       0x00300000
-#define HIT_DATA_Z_EPSILON_EXP_SHIFT    24
-#define HIT_DATA_Z_EPSILON_EXP_MASK     0xff000000
+#define HIT_DATA_Z_UNIT_SCALE_EXP_SHIFT 24
+#define HIT_DATA_Z_UNIT_SCALE_EXP_MASK  0xff000000
 
 #define BSDF_TYPE_DIFFUSE       0
 #define BSDF_TYPE_GGX           1
@@ -20,10 +20,10 @@ HitData create_hit_data(
     float roughness,
     bool is_emissive,
     uint light_index,
-    float epsilon_ref)
+    float unit_scale)
 {
     int exponent;
-    frexp(epsilon_ref, exponent);
+    frexp(unit_scale, exponent);
     const uint biased_exponent = uint(exponent + 128);
 
     HitData hit;
@@ -34,7 +34,7 @@ HitData create_hit_data(
         | HIT_DATA_Z_HAS_SURFACE_BIT
         | (is_emissive ? HIT_DATA_Z_HAS_LIGHT_BIT : 0)
         | (bsdf_type << HIT_DATA_Z_BSDF_TYPE_SHIFT)
-        | (biased_exponent << HIT_DATA_Z_EPSILON_EXP_SHIFT)
+        | (biased_exponent << HIT_DATA_Z_UNIT_SCALE_EXP_SHIFT)
         ;
     return hit;
 }
@@ -82,10 +82,10 @@ bool has_surface(HitData hit)
 {
     return (hit.bits.z & HIT_DATA_Z_HAS_SURFACE_BIT) != 0;
 }
-float get_epsilon(HitData hit, int exponent_offset_from_ref)
+float get_epsilon(HitData hit, int exponent_offset_from_unit_scale)
 {
-    const int exponent = int(hit.bits.z >> HIT_DATA_Z_EPSILON_EXP_SHIFT) - 128;
-    return ldexp(1.f, exponent + exponent_offset_from_ref);
+    const int exponent = int(hit.bits.z >> HIT_DATA_Z_UNIT_SCALE_EXP_SHIFT) - 128;
+    return ldexp(1.f, exponent + exponent_offset_from_unit_scale);
 }
 
 struct ExtendPayload {

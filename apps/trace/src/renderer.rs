@@ -10,11 +10,11 @@ use std::sync::Arc;
 use std::{mem, slice};
 
 trait UnitScale {
-    fn get_epsilon_ref(&self, world_from_local: Similarity3) -> f32;
+    fn unit_scale(&self, world_from_local: Similarity3) -> f32;
 }
 
 impl UnitScale for Geometry {
-    fn get_epsilon_ref(&self, world_from_local: Similarity3) -> f32 {
+    fn unit_scale(&self, world_from_local: Similarity3) -> f32 {
         let local_offset = match self {
             Geometry::TriangleMesh { min, max, .. } => max.abs().max_by_component(min.abs()).component_max(),
             Geometry::Quad { transform, size } => {
@@ -44,7 +44,7 @@ impl LightInfo for Light {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct QuadLightRecord {
     emission: Vec3,
-    epsilon_ref: f32,
+    unit_scale: f32,
     area_pdf: f32,
     normal_ws: Vec3,
     corner_ws: Vec3,
@@ -56,7 +56,7 @@ struct QuadLightRecord {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct SphereLightRecord {
     emission: Vec3,
-    epsilon_ref: f32,
+    unit_scale: f32,
     centre_ws: Vec3,
     radius_ws: f32,
 }
@@ -183,7 +183,7 @@ struct ExtendShader {
 struct ExtendTriangleHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
-    epsilon_ref: f32,
+    unit_scale: f32,
     shader: ExtendShader,
     _pad: u32,
 }
@@ -199,7 +199,7 @@ struct SphereGeomData {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ExtendSphereHitRecord {
     geom: SphereGeomData,
-    epsilon_ref: f32,
+    unit_scale: f32,
     shader: ExtendShader,
 }
 
@@ -534,7 +534,7 @@ impl Renderer {
                         shader.light_index = light_indexer.next().unwrap();
                     }
 
-                    let epsilon_ref = geometry.get_epsilon_ref(transform.0);
+                    let unit_scale = geometry.unit_scale(transform.0);
                     match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
                         GeometryRecordData::Triangles {
                             index_buffer_address,
@@ -543,7 +543,7 @@ impl Renderer {
                             let hit_record = ExtendTriangleHitRecord {
                                 index_buffer_address,
                                 position_buffer_address,
-                                epsilon_ref,
+                                unit_scale,
                                 shader,
                                 _pad: 0,
                             };
@@ -567,7 +567,7 @@ impl Renderer {
                             };
                             let hit_record = ExtendSphereHitRecord {
                                 geom,
-                                epsilon_ref,
+                                unit_scale,
                                 shader,
                             };
 
@@ -593,7 +593,7 @@ impl Renderer {
                     if let Some(emission) = shader.emission {
                         let world_from_local = scene.transform(instance.transform_ref).0;
                         let geometry = scene.geometry(instance.geometry_ref);
-                        let epsilon_ref = geometry.get_epsilon_ref(world_from_local);
+                        let unit_scale = geometry.unit_scale(world_from_local);
                         match geometry {
                             Geometry::TriangleMesh { .. } => unimplemented!(),
                             Geometry::Quad {
@@ -610,7 +610,7 @@ impl Renderer {
 
                                 let light_record = QuadLightRecord {
                                     emission,
-                                    epsilon_ref,
+                                    unit_scale,
                                     area_pdf: 1.0 / area_ws,
                                     normal_ws,
                                     corner_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
@@ -634,7 +634,7 @@ impl Renderer {
 
                                 let light_record = SphereLightRecord {
                                     emission,
-                                    epsilon_ref,
+                                    unit_scale,
                                     centre_ws,
                                     radius_ws,
                                 };

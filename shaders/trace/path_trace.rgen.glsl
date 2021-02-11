@@ -86,7 +86,7 @@ void sample_single_light(
     light_normal = g_light_sample.normal;
     light_emission = sample_from_rec709(g_light_sample.emission);
     light_solid_angle_pdf = g_light_sample.solid_angle_pdf;
-    light_epsilon = ldexp(g_light_sample.epsilon_ref, LOG2_EPSILON_FACTOR);    
+    light_epsilon = ldexp(g_light_sample.unit_scale, LOG2_EPSILON_FACTOR);    
 }
 
 void sample_all_lights(

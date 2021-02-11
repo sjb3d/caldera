@@ -10,7 +10,7 @@
 
 layout(shaderRecordEXT, scalar) buffer ExtendSphereHitRecord {
     SphereGeomData geom;
-    float epsilon_ref;
+    float unit_scale;
     ExtendShader shader;
 } g_record;
 
@@ -39,5 +39,5 @@ void main()
         g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
-        g_record.epsilon_ref);
+        g_record.unit_scale);
 }
