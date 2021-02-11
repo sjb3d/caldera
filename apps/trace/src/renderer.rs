@@ -5,8 +5,14 @@ use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::{im_str, Slider, StyleColor, Ui};
 use spark::vk;
-use std::ops::{BitOr, BitOrAssign};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::BufReader,
+    ops::{BitOr, BitOrAssign},
+    path::PathBuf,
+    sync::Arc,
+};
 use std::{mem, slice};
 
 trait UnitScale {
@@ -135,6 +141,11 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     result_g: StorageImage,
     result_b: StorageImage,
 });
+
+#[derive(Clone, Copy)]
+struct ShaderData {
+    reflectance: StaticImageHandle,
+}
 
 #[derive(Clone, Copy)]
 struct GeometryAttribData {
@@ -339,35 +350,76 @@ impl Renderer {
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
-        // start loading attributes for all meshes
+        // start loading textures and attributes for all meshes
         // TODO: drive from shaders that need them
+        let mut texture_images = HashMap::<PathBuf, StaticImageHandle>::new();
+        let mut shader_data = vec![None; scene.shaders.len()];
         let mut geometry_attrib_data = vec![None; scene.geometries.len()];
-        for geometry_ref in accel.clusters().geometry_iter().cloned() {
-            let geometry = scene.geometry(geometry_ref);
-            *geometry_attrib_data.get_mut(geometry_ref.0 as usize).unwrap() = match geometry {
-                Geometry::TriangleMesh { uvs, .. } if !uvs.is_empty() => {
-                    let uv_buffer = resource_loader.create_buffer();
-                    resource_loader.async_load({
-                        let scene = Arc::clone(scene);
-                        move |allocator| {
-                            let uvs = match scene.geometry(geometry_ref) {
-                                Geometry::TriangleMesh { uvs, .. } => uvs.as_slice(),
-                                _ => unreachable!(),
-                            };
-
-                            let uv_buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
-                            let mut mapping = allocator
-                                .map_buffer(uv_buffer, &uv_buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
-                                .unwrap();
-                            for uv in uvs.iter() {
-                                mapping.write(uv);
-                            }
-                        }
+        for instance_ref in accel.clusters().instance_iter().cloned() {
+            let instance = scene.instance(instance_ref);
+            let shader_ref = instance.shader_ref;
+            let shader = scene.shader(shader_ref);
+            if let Reflectance::Texture(filename) = &shader.reflectance {
+                shader_data
+                    .get_mut(shader_ref.0 as usize)
+                    .unwrap()
+                    .get_or_insert_with(|| ShaderData {
+                        reflectance: *texture_images.entry(filename.clone()).or_insert_with(|| {
+                            let image_handle = resource_loader.create_image();
+                            resource_loader.async_load({
+                                let filename = filename.clone();
+                                move |allocator| {
+                                    let file = File::open(&filename).unwrap();
+                                    let mut reader = BufReader::new(file);
+                                    let (info, data) =
+                                        stb::image::stbi_load_from_reader(&mut reader, stb::image::Channels::RgbAlpha)
+                                            .unwrap();
+                                    println!("loaded {:?}: {}x{}", filename, info.width, info.height);
+                                    let image_desc = ImageDesc::new_2d(
+                                        UVec2::new(info.width as u32, info.height as u32),
+                                        vk::Format::R8G8B8A8_SRGB,
+                                        vk::ImageAspectFlags::COLOR,
+                                    );
+                                    let mut mapping = allocator
+                                        .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
+                                        .unwrap();
+                                    mapping.write(data.as_slice());
+                                }
+                            });
+                            image_handle
+                        }),
                     });
-                    Some(GeometryAttribData { uv_buffer })
-                }
-                _ => None,
-            };
+
+                let geometry_ref = instance.geometry_ref;
+                let geometry = scene.geometry(geometry_ref);
+                geometry_attrib_data
+                    .get_mut(geometry_ref.0 as usize)
+                    .unwrap()
+                    .get_or_insert_with(|| match geometry {
+                        Geometry::TriangleMesh { uvs, .. } if !uvs.is_empty() => {
+                            let uv_buffer = resource_loader.create_buffer();
+                            resource_loader.async_load({
+                                let scene = Arc::clone(scene);
+                                move |allocator| {
+                                    let uvs = match scene.geometry(geometry_ref) {
+                                        Geometry::TriangleMesh { uvs, .. } => uvs.as_slice(),
+                                        _ => unreachable!(),
+                                    };
+
+                                    let uv_buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
+                                    let mut mapping = allocator
+                                        .map_buffer(uv_buffer, &uv_buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                                        .unwrap();
+                                    for uv in uvs.iter() {
+                                        mapping.write(uv);
+                                    }
+                                }
+                            });
+                            GeometryAttribData { uv_buffer }
+                        }
+                        _ => unimplemented!(),
+                    });
+            }
         }
 
         Self {
@@ -562,19 +614,24 @@ impl Renderer {
                     let transform = scene.transform(instance.transform_ref);
                     let shader_desc = scene.shader(instance.shader_ref);
 
+                    let reflectance = match shader_desc.reflectance {
+                        Reflectance::Constant(c) => c,
+                        Reflectance::Texture(_) => Vec3::broadcast(0.8), // TODO
+                    };
+
                     let mut shader = match shader_desc.surface {
-                        Surface::Diffuse { reflectance } => ExtendShader {
+                        Surface::Diffuse => ExtendShader {
                             flags: ExtendShaderFlags::BSDF_TYPE_DIFFUSE,
-                            reflectance: reflectance,
+                            reflectance,
                             ..Default::default()
                         },
-                        Surface::GGX { reflectance, roughness } => ExtendShader {
+                        Surface::GGX { roughness } => ExtendShader {
                             flags: ExtendShaderFlags::BSDF_TYPE_GGX,
-                            reflectance: reflectance,
+                            reflectance,
                             roughness: roughness,
                             ..Default::default()
                         },
-                        Surface::Mirror { reflectance } => ExtendShader {
+                        Surface::Mirror => ExtendShader {
                             flags: ExtendShaderFlags::BSDF_TYPE_MIRROR,
                             reflectance,
                             ..Default::default()

@@ -15,7 +15,9 @@ pub trait FormatExt {
 impl FormatExt for vk::Format {
     fn bits_per_element(&self) -> usize {
         match *self {
-            vk::Format::R16G16_UNORM | vk::Format::R16G16_UINT | vk::Format::R32_SFLOAT => 32,
+            vk::Format::R8G8B8A8_SRGB | vk::Format::R16G16_UNORM | vk::Format::R16G16_UINT | vk::Format::R32_SFLOAT => {
+                32
+            }
             vk::Format::R16G16B16A16_SFLOAT | vk::Format::R32G32_SFLOAT => 64,
             _ => unimplemented!(),
         }

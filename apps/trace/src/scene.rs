@@ -1,4 +1,5 @@
 use caldera::*;
+use std::path::PathBuf;
 
 #[derive(Debug, Default)]
 pub struct Transform {
@@ -31,14 +32,21 @@ pub enum Geometry {
 }
 
 #[derive(Debug)]
+pub enum Reflectance {
+    Constant(Vec3),
+    Texture(PathBuf),
+}
+
+#[derive(Debug)]
 pub enum Surface {
-    Diffuse { reflectance: Vec3 },
-    GGX { reflectance: Vec3, roughness: f32 },
-    Mirror { reflectance: Vec3 },
+    Diffuse,
+    GGX { roughness: f32 },
+    Mirror,
 }
 
 /*
-    Ideally this would be some kind of shader that reads some
+    Eventually this would be some kind of graph/script that we can
+    runtime compile to a GLSL callable shader.  The graph would read
     interpolated data from the geometry (e.g. texture coordinates)
     and uniform data from the instance (e.g. textures, constants)
     and produces a closure for the BRDF (and emitter if present).
@@ -48,6 +56,7 @@ pub enum Surface {
 */
 #[derive(Debug)]
 pub struct Shader {
+    pub reflectance: Reflectance,
     pub surface: Surface,
     pub emission: Option<Vec3>,
 }
@@ -269,23 +278,24 @@ pub struct ShaderBuilder(Shader);
 impl ShaderBuilder {
     pub fn new_diffuse(reflectance: Vec3) -> Self {
         Self(Shader {
-            surface: Surface::Diffuse {
-                reflectance: reflectance.saturated(),
-            },
+            reflectance: Reflectance::Constant(reflectance),
+            surface: Surface::Diffuse,
             emission: None,
         })
     }
 
     pub fn new_ggx(reflectance: Vec3, roughness: f32) -> Self {
         Self(Shader {
-            surface: Surface::GGX { reflectance, roughness },
+            reflectance: Reflectance::Constant(reflectance),
+            surface: Surface::GGX { roughness },
             emission: None,
         })
     }
 
     pub fn new_mirror(reflectance: Vec3) -> Self {
         Self(Shader {
-            surface: Surface::Mirror { reflectance },
+            reflectance: Reflectance::Constant(reflectance),
+            surface: Surface::Mirror,
             emission: None,
         })
     }

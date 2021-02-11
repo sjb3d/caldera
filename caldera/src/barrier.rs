@@ -185,6 +185,7 @@ impl ImageUsage {
     pub const TRANSIENT_DEPTH_ATTACHMENT: ImageUsage = ImageUsage(0x100);
     pub const RAY_TRACING_STORAGE_READ: ImageUsage = ImageUsage(0x200);
     pub const RAY_TRACING_STORAGE_WRITE: ImageUsage = ImageUsage(0x400);
+    pub const RAY_TRACING_SAMPLED: ImageUsage = ImageUsage(0x800);
 
     pub fn empty() -> Self {
         Self(0)
@@ -227,6 +228,7 @@ impl ImageUsage {
                 }
                 Self::RAY_TRACING_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
                 Self::RAY_TRACING_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
+                Self::RAY_TRACING_SAMPLED => vk::ImageUsageFlags::SAMPLED,
                 _ => unimplemented!(),
             })
             .fold(vk::ImageUsageFlags::empty(), |m, u| m | u)
@@ -245,6 +247,7 @@ impl ImageUsage {
                 Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::PipelineStageFlags::empty(),
                 Self::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 Self::RAY_TRACING_STORAGE_WRITE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                Self::RAY_TRACING_SAMPLED => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 _ => unimplemented!(),
             })
             .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
@@ -263,6 +266,7 @@ impl ImageUsage {
                 Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::AccessFlags::empty(),
                 Self::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
                 Self::RAY_TRACING_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
+                Self::RAY_TRACING_SAMPLED => vk::AccessFlags::SHADER_READ,
                 _ => unimplemented!(),
             })
             .fold(vk::AccessFlags::empty(), |m, u| m | u)
@@ -281,6 +285,7 @@ impl ImageUsage {
                 Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::ImageLayout::UNDEFINED,
                 Self::RAY_TRACING_STORAGE_READ => vk::ImageLayout::GENERAL,
                 Self::RAY_TRACING_STORAGE_WRITE => vk::ImageLayout::GENERAL,
+                Self::RAY_TRACING_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 _ => unimplemented!(),
             })
             .fold(vk::ImageLayout::UNDEFINED, |m, u| {

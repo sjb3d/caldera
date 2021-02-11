@@ -203,7 +203,26 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
 
-                let shader_ref = output.add_shader(scene::ShaderBuilder::new_diffuse(Vec3::broadcast(0.8)).build());
+                let bsdf = match &primitive.bsdf {
+                    BsdfRef::Inline(bsdf) => bsdf,
+                    BsdfRef::Named(name) => scene
+                        .bsdfs
+                        .iter()
+                        .find(|bsdf| bsdf.name.as_ref() == Some(name))
+                        .unwrap(),
+                };
+                let reflectance = match &bsdf.albedo {
+                    Albedo::Value(value) => scene::Reflectance::Constant(match value {
+                        ScalarOrVec3::Scalar(s) => Vec3::broadcast(*s),
+                        ScalarOrVec3::Vec3(v) => v.into(),
+                    }),
+                    Albedo::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
+                };
+                let shader_ref = output.add_shader(scene::Shader {
+                    reflectance,
+                    surface: scene::Surface::Diffuse,
+                    emission: None,
+                });
 
                 output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
             }

@@ -26,6 +26,7 @@ enum Element<'a> {
         transform_ref: &'a str,
         geometry_ref: &'a str,
         surface: Surface,
+        reflectance: Vec3,
     },
     Camera {
         transform_ref: &'a str,
@@ -114,14 +115,8 @@ fn element_camera(i: &str) -> IResult<&str, Element> {
 
 fn surface(i: &str) -> IResult<&str, Surface> {
     alt((
-        map(preceded(tag("diffuse"), preceded(multispace1, vec3)), |reflectance| {
-            Surface::Diffuse { reflectance }
-        }),
-        map(preceded(tag("mirror"), preceded(multispace1, vec3)), |reflectance| {
-            Surface::Mirror {
-                reflectance: Vec3::broadcast(reflectance.x),
-            }
-        }),
+        map(tag("diffuse"), |_| Surface::Diffuse),
+        map(tag("mirror"), |_| Surface::Mirror),
     ))(i)
 }
 
@@ -129,12 +124,14 @@ fn element_instance(i: &str) -> IResult<&str, Element> {
     let (i, transform_ref) = quoted_name(i)?;
     let (i, geometry_ref) = preceded(multispace0, quoted_name)(i)?;
     let (i, surface) = preceded(multispace0, surface)(i)?;
+    let (i, reflectance) = preceded(multispace1, vec3)(i)?;
     Ok((
         i,
         Element::Instance {
             transform_ref,
             geometry_ref,
             surface,
+            reflectance,
         },
     ))
 }
@@ -195,8 +192,10 @@ pub fn load_export(i: &str) -> Scene {
                 transform_ref,
                 geometry_ref,
                 surface,
+                reflectance,
             } => {
                 let shader_ref = scene.add_shader(Shader {
+                    reflectance: Reflectance::Constant(reflectance),
                     surface,
                     emission: None,
                 });
