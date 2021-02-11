@@ -367,6 +367,7 @@ impl Context {
                 || {
                     extensions.enable_khr_acceleration_structure();
                     extensions.enable_khr_ray_tracing_pipeline();
+                    enabled_features.shader_int64 = vk::TRUE;
                     buffer_device_address_features.buffer_device_address = vk::TRUE;
                     enable_buffer_device_addresses = true;
                     acceleration_structure_features.acceleration_structure = vk::TRUE;

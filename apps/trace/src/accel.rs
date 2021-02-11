@@ -25,7 +25,7 @@ struct AccelerationStructureInstance {
     acceleration_structure_reference: u64,
 }
 
-pub enum GeometryBufferData {
+pub enum GeometryAccelData {
     Triangles {
         index_buffer: StaticBufferHandle,
         position_buffer: StaticBufferHandle,
@@ -148,7 +148,7 @@ pub struct SceneAccel {
     context: Arc<Context>,
     scene: Arc<Scene>,
     clusters: Arc<SceneClusters>,
-    geometry_buffer_data: Vec<Option<GeometryBufferData>>,
+    geometry_accel_data: Vec<Option<GeometryAccelData>>,
     cluster_accel: Vec<BottomLevelAccel>,
     instance_buffer: Option<StaticBufferHandle>,
     top_level_accel: Option<TopLevelAccel>,
@@ -159,18 +159,18 @@ impl SceneAccel {
         &self.clusters
     }
 
-    pub fn geometry_buffer_data(&self, geometry_ref: GeometryRef) -> Option<&GeometryBufferData> {
-        self.geometry_buffer_data[geometry_ref.0 as usize].as_ref()
+    pub fn geometry_accel_data(&self, geometry_ref: GeometryRef) -> Option<&GeometryAccelData> {
+        self.geometry_accel_data[geometry_ref.0 as usize].as_ref()
     }
 
     pub fn new(context: &Arc<Context>, scene: &Arc<Scene>, resource_loader: &mut ResourceLoader) -> Self {
         let clusters = Arc::new(SceneClusters::new(scene));
 
         // make vertex/index buffers for each referenced geometry
-        let mut geometry_buffer_data: Vec<_> = scene.geometries.iter().map(|_| None).collect();
+        let mut geometry_accel_data: Vec<_> = scene.geometries.iter().map(|_| None).collect();
         for geometry_ref in clusters.geometry_iter().cloned() {
             let geometry = scene.geometry(geometry_ref);
-            *geometry_buffer_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(match geometry {
+            *geometry_accel_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(match geometry {
                 Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => {
                     let index_buffer = resource_loader.create_buffer();
                     let position_buffer = resource_loader.create_buffer();
@@ -225,7 +225,7 @@ impl SceneAccel {
                             }
                         }
                     });
-                    GeometryBufferData::Triangles {
+                    GeometryAccelData::Triangles {
                         position_buffer,
                         index_buffer,
                     }
@@ -250,7 +250,7 @@ impl SceneAccel {
                             });
                         }
                     });
-                    GeometryBufferData::Sphere { aabb_buffer }
+                    GeometryAccelData::Sphere { aabb_buffer }
                 }
             });
         }
@@ -259,7 +259,7 @@ impl SceneAccel {
             context: Arc::clone(context),
             scene: Arc::clone(scene),
             clusters,
-            geometry_buffer_data,
+            geometry_accel_data,
             cluster_accel: Vec::new(),
             instance_buffer: None,
             top_level_accel: None,
@@ -279,10 +279,10 @@ impl SceneAccel {
         let mut build_range_info = Vec::new();
         for geometry_ref in cluster.elements.iter().map(|element| element.geometry_ref) {
             let geometry = self.scene.geometry(geometry_ref);
-            let geometry_buffer_data = self.geometry_buffer_data[geometry_ref.0 as usize].as_ref().unwrap();
+            let geometry_accel_data = self.geometry_accel_data[geometry_ref.0 as usize].as_ref().unwrap();
 
-            match geometry_buffer_data {
-                GeometryBufferData::Triangles {
+            match geometry_accel_data {
+                GeometryAccelData::Triangles {
                     index_buffer,
                     position_buffer,
                 } => {
@@ -329,7 +329,7 @@ impl SceneAccel {
                         transform_offset: 0,
                     });
                 }
-                GeometryBufferData::Sphere { aabb_buffer } => {
+                GeometryAccelData::Sphere { aabb_buffer } => {
                     let aabb_buffer = resource_loader.get_buffer(*aabb_buffer)?;
 
                     let aabb_buffer_address = unsafe { context.device.get_buffer_device_address_helper(aabb_buffer) };

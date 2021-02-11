@@ -2,6 +2,7 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference2 : require
+#extension GL_ARB_gpu_shader_int64 : require
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
@@ -15,10 +16,14 @@ layout(buffer_reference, scalar) buffer IndexBuffer {
 layout(buffer_reference, scalar) buffer PositionBuffer {
     vec3 pos[];
 };
+layout(buffer_reference, scalar) buffer UvBuffer {
+    vec2 uv[];
+};
 
 layout(shaderRecordEXT, scalar) buffer ExtendTriangleHitRecord {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
+    UvBuffer uv_buffer;
     float unit_scale;
     ExtendShader shader;
     uint pad;
@@ -41,6 +46,19 @@ void main()
         + p1*g_bary_coord.x
         + p2*g_bary_coord.y
         ;
+
+    const uint64_t uv_buffer_addr = uint64_t(g_record.uv_buffer);
+    const bool has_uvs = (uv_buffer_addr != 0);
+    vec2 uv;
+    if (has_uvs) {
+        const vec2 uv0 = g_record.uv_buffer.uv[tri[0]];
+        const vec2 uv1 = g_record.uv_buffer.uv[tri[1]];
+        const vec2 uv2 = g_record.uv_buffer.uv[tri[2]];
+        uv  = uv0*(1.f - g_bary_coord.x - g_bary_coord.y)
+            + uv1*g_bary_coord.x
+            + uv2*g_bary_coord.y
+            ;
+    }
 
     // transform normal vector to world space
     const vec3 hit_normal_vec_ls

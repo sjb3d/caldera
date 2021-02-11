@@ -137,10 +137,16 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
 });
 
 #[derive(Clone, Copy)]
+struct GeometryAttribData {
+    uv_buffer: StaticBufferHandle,
+}
+
+#[derive(Clone, Copy)]
 enum GeometryRecordData {
     Triangles {
         index_buffer_address: u64,
         position_buffer_address: u64,
+        uv_buffer_address: u64,
     },
     Sphere,
 }
@@ -183,6 +189,7 @@ struct ExtendShader {
 struct ExtendTriangleHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
+    uv_buffer_address: u64,
     unit_scale: f32,
     shader: ExtendShader,
     _pad: u32,
@@ -257,6 +264,7 @@ pub struct Renderer {
     path_trace_pipeline_layout: vk::PipelineLayout,
     path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
+    geometry_attrib_data: Vec<Option<GeometryAttribData>>,
     shader_binding_table: Option<ShaderBindingTable>,
     max_bounces: u32,
     use_max_roughness: bool,
@@ -331,6 +339,37 @@ impl Renderer {
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
+        // start loading attributes for all meshes
+        // TODO: drive from shaders that need them
+        let mut geometry_attrib_data = vec![None; scene.geometries.len()];
+        for geometry_ref in accel.clusters().geometry_iter().cloned() {
+            let geometry = scene.geometry(geometry_ref);
+            *geometry_attrib_data.get_mut(geometry_ref.0 as usize).unwrap() = match geometry {
+                Geometry::TriangleMesh { uvs, .. } if !uvs.is_empty() => {
+                    let uv_buffer = resource_loader.create_buffer();
+                    resource_loader.async_load({
+                        let scene = Arc::clone(scene);
+                        move |allocator| {
+                            let uvs = match scene.geometry(geometry_ref) {
+                                Geometry::TriangleMesh { uvs, .. } => uvs.as_slice(),
+                                _ => unreachable!(),
+                            };
+
+                            let uv_buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
+                            let mut mapping = allocator
+                                .map_buffer(uv_buffer, &uv_buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                                .unwrap();
+                            for uv in uvs.iter() {
+                                mapping.write(uv);
+                            }
+                        }
+                    });
+                    Some(GeometryAttribData { uv_buffer })
+                }
+                _ => None,
+            };
+        }
+
         Self {
             context: Arc::clone(context),
             scene: Arc::clone(scene),
@@ -338,6 +377,7 @@ impl Renderer {
             path_trace_descriptor_set_layout,
             path_trace_pipeline_layout,
             path_trace_pipeline,
+            geometry_attrib_data,
             shader_binding_table: None,
             max_bounces,
             use_max_roughness: true,
@@ -347,13 +387,17 @@ impl Renderer {
         }
     }
 
+    fn geometry_attrib_data(&self, geometry_ref: GeometryRef) -> Option<&GeometryAttribData> {
+        self.geometry_attrib_data[geometry_ref.0 as usize].as_ref()
+    }
+
     fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingTable> {
         // gather the data we need for records
         let mut geometry_records = vec![None; self.scene.geometries.len()];
         for geometry_ref in self.accel.clusters().geometry_iter().cloned() {
-            let geometry_buffer_data = self.accel.geometry_buffer_data(geometry_ref)?;
+            let geometry_buffer_data = self.accel.geometry_accel_data(geometry_ref)?;
             geometry_records[geometry_ref.0 as usize] = match geometry_buffer_data {
-                GeometryBufferData::Triangles {
+                GeometryAccelData::Triangles {
                     index_buffer,
                     position_buffer,
                 } => {
@@ -363,12 +407,19 @@ impl Renderer {
                         unsafe { self.context.device.get_buffer_device_address_helper(index_buffer) };
                     let position_buffer_address =
                         unsafe { self.context.device.get_buffer_device_address_helper(position_buffer) };
+                    let uv_buffer_address = if let Some(attrib_data) = self.geometry_attrib_data(geometry_ref) {
+                        let uv_buffer = resource_loader.get_buffer(attrib_data.uv_buffer)?;
+                        unsafe { self.context.device.get_buffer_device_address_helper(uv_buffer) }
+                    } else {
+                        0
+                    };
                     Some(GeometryRecordData::Triangles {
                         index_buffer_address,
                         position_buffer_address,
+                        uv_buffer_address,
                     })
                 }
-                GeometryBufferData::Sphere { .. } => Some(GeometryRecordData::Sphere),
+                GeometryAccelData::Sphere { .. } => Some(GeometryRecordData::Sphere),
             };
         }
 
@@ -539,10 +590,12 @@ impl Renderer {
                         GeometryRecordData::Triangles {
                             index_buffer_address,
                             position_buffer_address,
+                            uv_buffer_address,
                         } => {
                             let hit_record = ExtendTriangleHitRecord {
                                 index_buffer_address,
                                 position_buffer_address,
+                                uv_buffer_address,
                                 unit_scale,
                                 shader,
                                 _pad: 0,

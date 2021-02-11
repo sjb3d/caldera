@@ -15,6 +15,7 @@ impl Transform {
 pub enum Geometry {
     TriangleMesh {
         positions: Vec<Vec3>,
+        uvs: Vec<Vec2>,
         indices: Vec<UVec3>,
         min: Vec3,
         max: Vec3,
@@ -218,6 +219,7 @@ impl Scene {
 
 pub struct TriangleMeshBuilder {
     pub positions: Vec<Vec3>,
+    pub uvs: Vec<Vec2>,
     pub indices: Vec<UVec3>,
 }
 
@@ -225,6 +227,7 @@ impl TriangleMeshBuilder {
     pub fn new() -> Self {
         Self {
             positions: Vec::new(),
+            uvs: Vec::new(),
             indices: Vec::new(),
         }
     }
@@ -235,6 +238,10 @@ impl TriangleMeshBuilder {
         self.positions.push(v1);
         self.positions.push(v2);
         self.positions.push(v3);
+        self.uvs.push(Vec2::new(0.0, 0.0));
+        self.uvs.push(Vec2::new(1.0, 0.0));
+        self.uvs.push(Vec2::new(1.0, 1.0));
+        self.uvs.push(Vec2::new(0.0, 1.0));
         self.indices.push(base + UVec3::new(0, 1, 2));
         self.indices.push(base + UVec3::new(2, 3, 0));
         self
@@ -250,6 +257,7 @@ impl TriangleMeshBuilder {
         Geometry::TriangleMesh {
             positions: self.positions,
             indices: self.indices,
+            uvs: self.uvs,
             min,
             max,
         }
