@@ -157,7 +157,7 @@ pub fn parse_scene(i: &str) -> Scene {
     let mut transform_refs = HashMap::new();
     let mut geometry_refs = HashMap::new();
 
-    scene.add_light(Light {
+    scene.add_light(Light::Dome {
         emission: Vec3::new(0.5, 0.6, 0.7),
     });
 

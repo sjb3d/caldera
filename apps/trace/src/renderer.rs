@@ -9,6 +9,37 @@ use std::ops::{BitOr, BitOrAssign};
 use std::sync::Arc;
 use std::{mem, slice};
 
+trait UnitScale {
+    fn get_epsilon_ref(&self, world_from_local: Similarity3) -> f32;
+}
+
+impl UnitScale for Geometry {
+    fn get_epsilon_ref(&self, world_from_local: Similarity3) -> f32 {
+        let local_offset = match self {
+            Geometry::TriangleMesh { min, max, .. } => max.abs().max_by_component(min.abs()).component_max(),
+            Geometry::Quad { transform, size } => {
+                transform.translation.abs().component_max() + transform.scale * size.abs().component_max()
+            }
+            Geometry::Sphere { centre, radius } => centre.abs().component_max() + radius,
+        };
+        let world_offset = world_from_local.translation.abs().component_max();
+        world_offset.max(world_from_local.scale.abs() * local_offset)
+    }
+}
+
+trait LightInfo {
+    fn can_be_sampled(&self) -> bool;
+}
+
+impl LightInfo for Light {
+    fn can_be_sampled(&self) -> bool {
+        match self {
+            Light::Dome { .. } => false,
+            Light::SolidAngle { .. } => true,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct QuadLightRecord {
@@ -32,8 +63,16 @@ struct SphereLightRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct ExternalLightRecord {
+struct DomeLightRecord {
     emission: Vec3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct SolidAngleLightRecord {
+    emission: Vec3,
+    direction_ws: Vec3,
+    solid_angle: f32,
 }
 
 #[repr(C)]
@@ -82,7 +121,9 @@ struct PathTraceUniforms {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct LightUniforms {
     sample_sphere_solid_angle: u32,
-    sampled_light_count: u32,
+    sampled_count: u32,
+    external_begin: u32,
+    external_end: u32,
 }
 
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
@@ -162,12 +203,6 @@ struct ExtendSphereHitRecord {
     shader: ExtendShader,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct ExtendMissRecord {
-    shader: ExtendShader,
-}
-
 #[repr(usize)]
 #[derive(Clone, Copy, Contiguous)]
 enum ShaderGroup {
@@ -182,7 +217,9 @@ enum ShaderGroup {
     QuadLightSample,
     SphereLightEval,
     SphereLightSample,
-    ExternalLightEval,
+    DomeLightEval, // no sampling for now
+    SolidAngleLightEval,
+    SolidAngleLightSample,
 }
 
 #[derive(Clone, Copy)]
@@ -209,6 +246,8 @@ struct ShaderBindingTable {
     callable_region: ShaderBindingRegion,
     buffer: StaticBufferHandle,
     sampled_light_count: u32,
+    external_light_begin: u32,
+    external_light_end: u32,
 }
 
 pub struct Renderer {
@@ -281,8 +320,12 @@ impl Renderer {
                 ShaderGroup::SphereLightSample => {
                     RayTracingShaderGroupDesc::Callable("trace/sphere_light_sample.rcall.spv")
                 }
-                ShaderGroup::ExternalLightEval => {
-                    RayTracingShaderGroupDesc::Callable("trace/external_light_eval.rcall.spv")
+                ShaderGroup::DomeLightEval => RayTracingShaderGroupDesc::Callable("trace/dome_light_eval.rcall.spv"),
+                ShaderGroup::SolidAngleLightEval => {
+                    RayTracingShaderGroupDesc::Callable("trace/solid_angle_light_eval.rcall.spv")
+                }
+                ShaderGroup::SolidAngleLightSample => {
+                    RayTracingShaderGroupDesc::Callable("trace/solid_angle_light_sample.rcall.spv")
                 }
             })
             .collect();
@@ -355,10 +398,11 @@ impl Renderer {
                 self.scene.shader(shader_ref).emission.is_some()
             })
             .count() as u32;
-        let external_light_count = self.scene.lights.len() as u32;
-        assert!(external_light_count < 2, "multiple external lights not supported yet");
-        let sampled_light_count = emissive_instance_count;
-        let total_light_count = emissive_instance_count + external_light_count;
+        let external_light_begin = emissive_instance_count;
+        let external_light_end = emissive_instance_count + self.scene.lights.len() as u32;
+        let sampled_light_count =
+            emissive_instance_count + self.scene.lights.iter().filter(|light| light.can_be_sampled()).count() as u32;
+        let total_light_count = external_light_end;
 
         // figure out the layout
         let rtpp = self.context.ray_tracing_pipeline_properties.as_ref().unwrap();
@@ -380,7 +424,7 @@ impl Renderer {
         next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
 
         // miss shaders
-        let miss_record_size = mem::size_of::<ExtendMissRecord>() as u32;
+        let miss_record_size = 0;
         let miss_stride = align_up(
             rtpp.shader_group_handle_size + miss_record_size,
             rtpp.shader_group_handle_alignment,
@@ -450,20 +494,8 @@ impl Renderer {
 
                 writer.write_zeros(miss_region.offset as usize - writer.written());
                 {
-                    let extend_record = ExtendMissRecord {
-                        shader: match scene.lights.first() {
-                            Some(_) => ExtendShader {
-                                flags: ExtendShaderFlags::IS_EMISSIVE,
-                                light_index: sampled_light_count, // first external light
-                                ..Default::default()
-                            },
-                            None => ExtendShader::default(),
-                        },
-                    };
-
                     let end_offset = writer.written() + miss_region.stride as usize;
                     writer.write(shader_group_handle(ShaderGroup::ExtendMiss));
-                    writer.write(&extend_record);
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + miss_region.stride as usize;
@@ -620,18 +652,46 @@ impl Renderer {
                         }
                     }
                 }
-                for light in scene.lights.iter() {
-                    let light_record = ExternalLightRecord {
-                        emission: light.emission,
-                    };
+                for light in scene
+                    .lights
+                    .iter()
+                    .filter(|light| light.can_be_sampled())
+                    .chain(scene.lights.iter().filter(|light| !light.can_be_sampled()))
+                {
+                    match light {
+                        Light::Dome { emission } => {
+                            let light_record = DomeLightRecord { emission: *emission };
 
-                    let end_offset = writer.written() + callable_region.stride as usize;
-                    writer.write(shader_group_handle(ShaderGroup::ExternalLightEval));
-                    writer.write(&light_record);
-                    writer.write_zeros(end_offset - writer.written());
+                            let end_offset = writer.written() + callable_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::DomeLightEval));
+                            writer.write(&light_record);
+                            writer.write_zeros(end_offset - writer.written());
 
-                    let end_offset = writer.written() + callable_region.stride as usize;
-                    writer.write_zeros(end_offset - writer.written());
+                            let end_offset = writer.written() + callable_region.stride as usize;
+                            writer.write_zeros(end_offset - writer.written());
+                        }
+                        Light::SolidAngle {
+                            emission,
+                            direction_ws,
+                            solid_angle,
+                        } => {
+                            let light_record = SolidAngleLightRecord {
+                                emission: *emission,
+                                direction_ws: *direction_ws,
+                                solid_angle: *solid_angle,
+                            };
+
+                            let end_offset = writer.written() + callable_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::SolidAngleLightEval));
+                            writer.write(&light_record);
+                            writer.write_zeros(end_offset - writer.written());
+
+                            let end_offset = writer.written() + callable_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::SolidAngleLightSample));
+                            writer.write(&light_record);
+                            writer.write_zeros(end_offset - writer.written());
+                        }
+                    }
                 }
             }
         });
@@ -642,6 +702,8 @@ impl Renderer {
             callable_region,
             buffer: shader_binding_table,
             sampled_light_count,
+            external_light_begin,
+            external_light_end,
         })
     }
 
@@ -783,7 +845,9 @@ impl Renderer {
             |buf: &mut LightUniforms| {
                 *buf = LightUniforms {
                     sample_sphere_solid_angle: if self.sample_sphere_solid_angle { 1 } else { 0 },
-                    sampled_light_count: shader_binding_table.sampled_light_count,
+                    sampled_count: shader_binding_table.sampled_light_count,
+                    external_begin: shader_binding_table.external_light_begin,
+                    external_end: shader_binding_table.external_light_end,
                 }
             },
             self.accel.top_level_accel().unwrap(),

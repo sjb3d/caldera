@@ -3,6 +3,9 @@
 
 #define PI          3.1415926535f
 
+#define FLT_BITS_SIGN       0x80000000
+#define FLT_BITS_NOTSIGN    0x7FFFFFFF
+
 #define FLT_INF     uintBitsToFloat(0x7f800000) 
 
 float sum_elements(vec2 v)  { return v.x + v.y; }
@@ -20,22 +23,27 @@ float copysign(float x, float s)
 {
     const uint x_bits = floatBitsToUint(x);
     const uint s_bits = floatBitsToUint(s);
-    const uint y_bits = (x_bits & 0x7fffffff) | (s_bits & 0x80000000);
+    const uint y_bits = (x_bits & FLT_BITS_NOTSIGN) | (s_bits & FLT_BITS_SIGN);
     return uintBitsToFloat(y_bits);
 }
 vec2 copysign(vec2 x, vec2 s)
 {
     const uvec2 x_bits = floatBitsToUint(x);
     const uvec2 s_bits = floatBitsToUint(s);
-    const uvec2 y_bits = (x_bits & 0x7fffffff) | (s_bits & 0x80000000);
+    const uvec2 y_bits = (x_bits & FLT_BITS_NOTSIGN) | (s_bits & FLT_BITS_SIGN);
     return uintBitsToFloat(y_bits);
 }
 
+bool sign_bit_set(float x)
+{
+    const uint x_bits = floatBitsToUint(x);
+    return ((x_bits & FLT_BITS_SIGN) != 0);
+}
 bool sign_bits_match(float x, float y)
 {
     const uint x_bits = floatBitsToUint(x);
     const uint y_bits = floatBitsToUint(y);
-    return (((x_bits ^ y_bits) & 0x80000000) == 0);
+    return (((x_bits ^ y_bits) & FLT_BITS_SIGN) == 0);
 }
 
 // reference: https://blog.selfshadow.com/2011/10/17/perp-vectors/

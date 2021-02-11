@@ -13,7 +13,7 @@ LIGHT_EVAL_DATA_IN(g_eval);
 
 void main()
 {
-    const vec3 light_position = g_eval.position;
+    const vec3 light_position = g_eval.position_or_extdir;
     const vec3 target_position = g_eval.emission;
 
     const vec3 light_normal = g_record.normal_ws;

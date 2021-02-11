@@ -1,7 +1,9 @@
 #define LIGHT_UNIFORM_DATA(NAME)                                    \
     layout(set = 0, binding = 1, scalar) uniform LightUniforms {    \
         uint sample_sphere_solid_angle;                             \
-        uint sampled_light_count;                                   \
+        uint sampled_count;                                         \
+        uint external_begin;                                        \
+        uint external_end;                                          \
     } NAME
 
 #define QUAD_LIGHT_RECORD(NAME)                                 \
@@ -23,9 +25,16 @@
         float radius_ws;                                        \
     } NAME
 
-#define EXTERNAL_LIGHT_RECORD(NAME)                                 \
-    layout(shaderRecordEXT, scalar) buffer ExternalLightRecord {    \
+#define DOME_LIGHT_RECORD(NAME)                                 \
+    layout(shaderRecordEXT, scalar) buffer DomeLightRecord {    \
+        vec3 emission;                                          \
+    } NAME
+
+#define SOLID_ANGLE_LIGHT_RECORD(NAME)                              \
+    layout(shaderRecordEXT, scalar) buffer SolidAngleLightRecord {  \
         vec3 emission;                                              \
+        vec3 direction_ws;                                          \
+        float solid_angle;                                          \
     } NAME
 
 #define SPHERE_LIGHT_SIN_THETA_MIN          0.01f
@@ -33,8 +42,8 @@
 #define CALLABLE_SHADER_COUNT_PER_LIGHT     2
 
 struct LightEvalData {
-    vec3 position;          // input only
-    vec3 emission;          // input: target position
+    vec3 position_or_extdir;    // input only
+    vec3 emission;              // input: target position (or external direction)
     float solid_angle_pdf;
 };
 
@@ -44,10 +53,10 @@ struct LightEvalData {
 #define LIGHT_EVAL_DATA_IN(NAME)            layout(location = 0) callableDataInEXT LightEvalData NAME
 
 struct LightSampleData {
-    vec3 position;          // input: target position
-    vec3 normal;            // input: target normal
-    vec3 emission;          // input: random numbers
-    float solid_angle_pdf;
+    vec3 position_or_extdir;    // input: target position
+    vec3 normal;                // input: target normal
+    vec3 emission;              // input: random numbers
+    float solid_angle_pdf;      // (negative for external)
     float epsilon_ref;
 };
 

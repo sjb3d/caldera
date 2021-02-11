@@ -38,15 +38,10 @@ HitData create_hit_data(
         ;
     return hit;
 }
-HitData create_miss_data(bool is_emissive, uint light_index)
+HitData create_miss_data()
 {
     HitData hit;
-    hit.bits.x = 0;
-    hit.bits.y = 0;
-    hit.bits.z
-        = light_index
-        | (is_emissive ? HIT_DATA_Z_HAS_LIGHT_BIT : 0)
-        ;
+    hit.bits = uvec3(0);
     return hit;
 }
 
@@ -94,7 +89,7 @@ float get_epsilon(HitData hit, int exponent_offset_from_ref)
 }
 
 struct ExtendPayload {
-    vec3 position;
+    vec3 position_or_extdir;
     uint normal_oct32;
     HitData hit;
 };

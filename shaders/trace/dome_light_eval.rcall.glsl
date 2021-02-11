@@ -7,7 +7,7 @@
 #include "sampler.glsl"
 #include "light_common.glsl"
 
-EXTERNAL_LIGHT_RECORD(g_record);
+DOME_LIGHT_RECORD(g_record);
 
 LIGHT_EVAL_DATA_IN(g_eval);
 

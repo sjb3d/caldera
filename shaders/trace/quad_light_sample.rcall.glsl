@@ -13,7 +13,7 @@ LIGHT_SAMPLE_DATA_IN(g_sample);
 
 void main()
 {
-    const vec3 target_position = g_sample.position;
+    const vec3 target_position = g_sample.position_or_extdir;
     //const vec3 target_normal = g_sample.normal;
     const vec2 rand_u01 = g_sample.emission.xy;
 
@@ -27,7 +27,7 @@ void main()
     const float distance_sq = dot(target_from_light, target_from_light);
     const float solid_angle_pdf = solid_angle_pdf_from_area_pdf(g_record.area_pdf, facing_term, distance_sq);
 
-    g_sample.position = light_position;
+    g_sample.position_or_extdir = light_position;
     g_sample.normal = light_normal;
     g_sample.emission = emission;
     g_sample.solid_angle_pdf = solid_angle_pdf;

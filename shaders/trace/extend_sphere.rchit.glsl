@@ -31,7 +31,7 @@ void main()
     const uint bsdf_type = g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
-    g_extend.position = hit_pos_ws;
+    g_extend.position_or_extdir = hit_pos_ws;
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
     g_extend.hit = create_hit_data(
         bsdf_type,

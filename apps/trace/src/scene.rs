@@ -21,20 +21,6 @@ pub enum Geometry {
     },
 }
 
-impl Geometry {
-    pub fn get_epsilon_ref(&self, world_from_local: Similarity3) -> f32 {
-        let local_offset = match self {
-            Geometry::TriangleMesh { min, max, .. } => max.abs().max_by_component(min.abs()).component_max(),
-            Geometry::Quad { transform, size } => {
-                transform.translation.abs().component_max() + transform.scale * size.abs().component_max()
-            }
-            Geometry::Sphere { centre, radius } => centre.abs().component_max() + radius,
-        };
-        let world_offset = world_from_local.translation.abs().component_max();
-        world_offset.max(world_from_local.scale.abs() * local_offset)
-    }
-}
-
 #[derive(Debug)]
 pub enum Surface {
     Diffuse { reflectance: Vec3 },
@@ -65,8 +51,15 @@ pub struct Instance {
 }
 
 #[derive(Debug)]
-pub struct Light {
-    pub emission: Vec3,
+pub enum Light {
+    Dome {
+        emission: Vec3,
+    },
+    SolidAngle {
+        emission: Vec3,
+        direction_ws: Vec3,
+        solid_angle: f32,
+    },
 }
 
 #[derive(Debug)]
@@ -539,8 +532,14 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
 
     if matches!(variant, CornellBoxVariant::DomeLight) {
-        scene.add_light(Light {
-            emission: Vec3::new(0.4, 0.5, 0.6),
+        scene.add_light(Light::Dome {
+            emission: Vec3::new(0.4, 0.5, 0.6) * 0.5,
+        });
+        let solid_angle = PI / 1024.0;
+        scene.add_light(Light::SolidAngle {
+            emission: Vec3::new(1.0, 0.8, 0.6) * 2.0 / solid_angle,
+            direction_ws: Vec3::new(-1.0, 8.0, -5.0).normalized(),
+            solid_angle,
         });
     } else {
         let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
