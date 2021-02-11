@@ -28,6 +28,6 @@ void main()
     g_sample.position_or_extdir = external_dir;
     g_sample.normal = -external_dir;
     g_sample.emission = g_record.emission;
-    g_sample.solid_angle_pdf = -1.f/g_record.solid_angle;
+    g_sample.solid_angle_pdf_and_extbit = -1.f/g_record.solid_angle; // sign bit signals an external sample
     g_sample.unit_scale = 0.f;
 }

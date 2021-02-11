@@ -30,6 +30,6 @@ void main()
     g_sample.position_or_extdir = light_position;
     g_sample.normal = light_normal;
     g_sample.emission = emission;
-    g_sample.solid_angle_pdf = solid_angle_pdf;
+    g_sample.solid_angle_pdf_and_extbit = solid_angle_pdf;
     g_sample.unit_scale = g_record.unit_scale;
 }

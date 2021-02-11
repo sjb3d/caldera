@@ -24,5 +24,5 @@ void main()
     const vec3 emission = (cos_theta > cos_theta_min) ? g_record.emission : vec3(0.f);
 
     g_eval.emission = emission;
-    g_eval.solid_angle_pdf = -1.f/g_record.solid_angle;
+    g_eval.solid_angle_pdf = 1.f/g_record.solid_angle;
 }

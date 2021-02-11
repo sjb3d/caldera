@@ -76,6 +76,7 @@ void sample_single_light(
     out vec3 light_normal,
     out vec3 light_emission,
     out float light_solid_angle_pdf,
+    out bool light_is_external,
     out float light_epsilon)
 {
     g_light_sample.position_or_extdir = target_position;
@@ -85,7 +86,8 @@ void sample_single_light(
     light_position_or_extdir = g_light_sample.position_or_extdir;
     light_normal = g_light_sample.normal;
     light_emission = sample_from_rec709(g_light_sample.emission);
-    light_solid_angle_pdf = g_light_sample.solid_angle_pdf;
+    light_solid_angle_pdf = abs(g_light_sample.solid_angle_pdf_and_extbit);
+    light_is_external = sign_bit_set(g_light_sample.solid_angle_pdf_and_extbit);
     light_epsilon = ldexp(g_light_sample.unit_scale, LOG2_EPSILON_FACTOR);    
 }
 
@@ -97,6 +99,7 @@ void sample_all_lights(
     out vec3 light_normal,
     out vec3 light_emission,
     out float light_solid_angle_pdf,
+    out bool light_is_external,
     out float light_epsilon)
 {
     // pick a light source
@@ -115,6 +118,7 @@ void sample_all_lights(
         light_normal,
         light_emission,
         light_solid_angle_pdf,
+        light_is_external,
         light_epsilon);
 
     // adjust pdf for selection chance
@@ -294,6 +298,7 @@ void main()
             vec3 light_normal;
             vec3 light_emission;
             float light_solid_angle_pdf;
+            bool light_is_external;
             float light_epsilon;
             sample_all_lights(
                 hit_position,
@@ -303,9 +308,9 @@ void main()
                 light_normal,
                 light_emission,
                 light_solid_angle_pdf,
+                light_is_external,
                 light_epsilon);
 
-            const bool light_is_external = sign_bit_set(light_solid_angle_pdf);
             vec3 in_dir_ls;
             if (light_is_external) {
                 in_dir_ls = normalize(light_position_or_extdir*hit_basis);
@@ -343,11 +348,11 @@ void main()
             
             // compute MIS weight
             const bool light_can_be_hit = allow_bsdf_sampling;
-            const float other_ratio = light_can_be_hit ? mis_ratio(hit_solid_angle_pdf/abs(light_solid_angle_pdf)) : 0.f;
+            const float other_ratio = light_can_be_hit ? mis_ratio(hit_solid_angle_pdf/light_solid_angle_pdf) : 0.f;
             const float mis_weight = 1.f/(1.f + other_ratio);
 
             // compute the sample assuming the ray is not occluded
-            const vec3 result = alpha * hit_f * (mis_weight*abs(in_cos_theta/light_solid_angle_pdf)) * light_emission;
+            const vec3 result = alpha * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
 
             // trace an occlusion ray if necessary
             if (any(greaterThan(result, vec3(0.f)))) {

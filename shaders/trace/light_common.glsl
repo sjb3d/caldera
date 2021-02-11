@@ -53,10 +53,10 @@ struct LightEvalData {
 #define LIGHT_EVAL_DATA_IN(NAME)            layout(location = 0) callableDataInEXT LightEvalData NAME
 
 struct LightSampleData {
-    vec3 position_or_extdir;    // input: target position
-    vec3 normal;                // input: target normal
-    vec3 emission;              // input: random numbers
-    float solid_angle_pdf;      // (negative for external)
+    vec3 position_or_extdir;            // input: target position
+    vec3 normal;                        // input: target normal
+    vec3 emission;                      // input: random numbers
+    float solid_angle_pdf_and_extbit;   // (negative for external)
     float unit_scale;
 };
 
