@@ -2,6 +2,7 @@ mod accel;
 mod blender;
 mod renderer;
 mod scene;
+mod tungsten;
 
 use crate::renderer::*;
 use crate::scene::*;
@@ -219,10 +220,11 @@ impl App {
 
         let scene = Arc::new(match &params.scene_desc {
             SceneDesc::CornellBox(variant) => create_cornell_box_scene(variant),
-            SceneDesc::File(filename) => {
+            SceneDesc::BlenderExport(filename) => {
                 let contents = std::fs::read_to_string(filename.as_str()).unwrap();
                 blender::load_export(&contents)
             }
+            SceneDesc::Tungsten(filename) => tungsten::load_scene(filename),
         });
         let renderer = Renderer::new(
             &context,
@@ -514,7 +516,8 @@ impl App {
 
 enum SceneDesc {
     CornellBox(CornellBoxVariant),
-    File(String),
+    BlenderExport(String),
+    Tungsten(String),
 }
 
 struct AppParams {
@@ -555,7 +558,10 @@ fn main() {
                     }
                 }
                 "-f" => {
-                    app_params.scene_desc = SceneDesc::File(it.next().unwrap());
+                    app_params.scene_desc = SceneDesc::BlenderExport(it.next().unwrap());
+                }
+                "-t" => {
+                    app_params.scene_desc = SceneDesc::Tungsten(it.next().unwrap());
                 }
                 _ => {
                     if !context_params.parse_arg(arg.as_str()) {
