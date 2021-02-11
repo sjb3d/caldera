@@ -16,6 +16,18 @@ impl AsSigned for UVec2 {
     }
 }
 
+pub trait AsUnsigned {
+    type Output;
+    fn as_unsigned(&self) -> Self::Output;
+}
+
+impl AsUnsigned for IVec3 {
+    type Output = UVec3;
+    fn as_unsigned(&self) -> Self::Output {
+        UVec3::new(self.x as u32, self.y as u32, self.z as u32)
+    }
+}
+
 pub trait AsFloat {
     type Output;
     fn as_float(&self) -> Self::Output;

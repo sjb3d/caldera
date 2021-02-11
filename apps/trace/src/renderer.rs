@@ -804,14 +804,13 @@ impl Renderer {
         render_color_space: RenderColorSpace,
         sample_image_view: vk::ImageView,
         sample_index: u32,
-        camera_ref: CameraRef,
         world_from_camera: Similarity3,
+        fov_y: f32,
         result_image_views: &(vk::ImageView, vk::ImageView, vk::ImageView),
         trace_size: UVec2,
     ) {
-        let camera = self.scene.camera(camera_ref);
         let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
-        let fov_size_at_unit_z = 2.0 * (0.5 * camera.fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
+        let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
         let shader_binding_table = self.shader_binding_table.as_ref().unwrap();
 

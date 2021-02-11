@@ -199,11 +199,11 @@ pub fn load_export(i: &str) -> Scene {
                     surface,
                     emission: None,
                 });
-                scene.add_instance(Instance {
-                    transform_ref: *transform_refs.get(transform_ref).unwrap(),
-                    geometry_ref: *geometry_refs.get(geometry_ref).unwrap(),
+                scene.add_instance(Instance::new(
+                    *transform_refs.get(transform_ref).unwrap(),
+                    *geometry_refs.get(geometry_ref).unwrap(),
                     shader_ref,
-                });
+                ));
             }
             Element::Camera { transform_ref, fov_y } => {
                 scene.add_camera(Camera {

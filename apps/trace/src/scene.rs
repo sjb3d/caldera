@@ -95,7 +95,7 @@ pub struct LightRef(pub u32);
 pub struct CameraRef(pub u32);
 
 impl Instance {
-    fn new(transform_ref: TransformRef, geometry_ref: GeometryRef, shader_ref: ShaderRef) -> Self {
+    pub fn new(transform_ref: TransformRef, geometry_ref: GeometryRef, shader_ref: ShaderRef) -> Self {
         Self {
             transform_ref,
             geometry_ref,

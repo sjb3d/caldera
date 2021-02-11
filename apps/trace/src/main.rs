@@ -152,12 +152,12 @@ struct App {
 
     scene: Arc<Scene>,
     renderer: Renderer,
-    camera_ref: CameraRef,
 
     log2_exposure_scale: f32,
     render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
     view_adjust: ViewAdjust,
+    fov_y: f32,
 }
 
 impl App {
@@ -235,8 +235,9 @@ impl App {
             params.max_bounces,
         );
 
-        let camera_ref = CameraRef(0);
-        let world_from_camera = scene.transform(scene.camera(camera_ref).transform_ref).world_from_local;
+        let camera = scene.cameras.first().unwrap();
+        let world_from_camera = scene.transform(camera.transform_ref).world_from_local;
+        let fov_y = camera.fov_y;
 
         Self {
             context: Arc::clone(&context),
@@ -247,11 +248,11 @@ impl App {
             next_sample_index: 0,
             scene,
             renderer,
-            camera_ref,
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
             view_adjust: ViewAdjust::new(world_from_camera),
+            fov_y,
         }
     }
 
@@ -303,14 +304,17 @@ impl App {
                         let scene = self.scene.deref();
                         ui.text("Cameras:");
                         for camera_ref in scene.camera_ref_iter() {
-                            if ui.radio_button(&im_str!("Camera {}", camera_ref.0), &mut self.camera_ref, camera_ref) {
+                            if ui.small_button(&im_str!("Camera {}", camera_ref.0)) {
                                 let camera = scene.camera(camera_ref);
                                 let world_from_camera = scene.transform(camera.transform_ref).world_from_local;
-                                self.camera_ref = camera_ref;
                                 self.view_adjust = ViewAdjust::new(world_from_camera);
+                                self.fov_y = camera.fov_y;
                                 needs_reset = true;
                             }
                         }
+                        needs_reset |= Drag::new(im_str!("Camera FOV"))
+                            .speed(0.005)
+                            .build(&ui, &mut self.fov_y);
                         needs_reset |= Drag::new(im_str!("Camera Scale Bias"))
                             .speed(0.05)
                             .build(&ui, &mut self.view_adjust.log2_scale);
@@ -331,9 +335,7 @@ impl App {
                 }
             });
 
-        let camera = self.scene.camera(self.camera_ref);
-        let fov_y = camera.fov_y;
-        if self.view_adjust.update(ui.io(), fov_y) {
+        if self.view_adjust.update(ui.io(), self.fov_y) {
             self.next_sample_index = 0;
         }
         let world_from_camera = self.view_adjust.world_from_camera();
@@ -395,7 +397,7 @@ impl App {
                     let render_color_space = self.render_color_space;
                     let renderer = &self.renderer;
                     let next_sample_index = self.next_sample_index;
-                    let camera_ref = self.camera_ref;
+                    let fov_y = self.fov_y;
                     let result_images = &self.result_images;
                     move |params, cmd| {
                         let result_image_views = (
@@ -411,8 +413,8 @@ impl App {
                             render_color_space,
                             sample_image_view,
                             next_sample_index,
-                            camera_ref,
                             world_from_camera,
+                            fov_y,
                             &result_image_views,
                             trace_size,
                         );
