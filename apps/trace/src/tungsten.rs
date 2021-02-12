@@ -175,7 +175,7 @@ fn load_mesh<P: AsRef<Path>>(path: P) -> scene::Geometry {
 
     scene::Geometry::TriangleMesh {
         positions: vertices.iter().map(|v| v.pos).collect(),
-        uvs: vertices.iter().map(|v| v.uv).collect(),
+        uvs: vertices.iter().map(|v| Vec2::new(v.uv.x, 1.0 - v.uv.y)).collect(),
         indices: triangles.drain(..).map(|t| t.indices.as_unsigned()).collect(),
         min,
         max,
