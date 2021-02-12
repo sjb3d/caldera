@@ -4,7 +4,7 @@ use crate::RenderColorSpace;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::{im_str, Slider, StyleColor, Ui};
-use spark::vk;
+use spark::{vk, Builder};
 use std::{
     collections::HashMap,
     fs::File,
@@ -142,9 +142,13 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     result_b: StorageImage,
 });
 
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+struct TextureIndex(u16);
+
 #[derive(Clone, Copy)]
 struct ShaderData {
-    reflectance: StaticImageHandle,
+    reflectance: TextureIndex,
 }
 
 #[derive(Clone, Copy)]
@@ -169,17 +173,37 @@ enum SamplingTechnique {
     LightsAndSurfaces,
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
+enum BsdfType {
+    Diffuse,
+    GGX,
+    Mirror,
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy, Zeroable, Pod, Default)]
 struct ExtendShaderFlags(u32);
 
 impl ExtendShaderFlags {
-    const BSDF_TYPE_DIFFUSE: ExtendShaderFlags = ExtendShaderFlags(0x0);
-    const BSDF_TYPE_GGX: ExtendShaderFlags = ExtendShaderFlags(0x1);
-    const BSDF_TYPE_MIRROR: ExtendShaderFlags = ExtendShaderFlags(0x2);
-    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x4);
+    const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0004_0000);
+    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0008_0000);
+
+    fn new(bsdf_type: BsdfType, texture_index: Option<TextureIndex>) -> Self {
+        let mut flags = Self(bsdf_type.into_integer() << 16);
+        if let Some(texture_index) = texture_index {
+            flags |= Self(texture_index.0 as u32) | Self::HAS_TEXTURE;
+        }
+        flags
+    }
 }
 
+impl BitOr for ExtendShaderFlags {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
 impl BitOrAssign for ExtendShaderFlags {
     fn bitor_assign(&mut self, rhs: Self) {
         self.0 |= rhs.0;
@@ -268,6 +292,120 @@ struct ShaderBindingTable {
     external_light_end: u32,
 }
 
+struct TextureBindingSet {
+    context: Arc<Context>,
+    sampler: vk::Sampler,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set: vk::DescriptorSet,
+    images: Vec<StaticImageHandle>,
+    is_written: bool,
+}
+
+impl TextureBindingSet {
+    fn new(context: &Arc<Context>, images: Vec<StaticImageHandle>) -> Self {
+        // create a separate descriptor pool for bindless textures
+        let sampler = {
+            let create_info = vk::SamplerCreateInfo {
+                mag_filter: vk::Filter::LINEAR,
+                min_filter: vk::Filter::LINEAR,
+                ..Default::default()
+            };
+            unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
+        };
+        let descriptor_set_layout = {
+            let bindings = [vk::DescriptorSetLayoutBinding {
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: images.len() as u32,
+                stage_flags: vk::ShaderStageFlags::ALL,
+                ..Default::default()
+            }];
+            let create_info = vk::DescriptorSetLayoutCreateInfo::builder().p_bindings(&bindings);
+            unsafe { context.device.create_descriptor_set_layout(&create_info, None) }.unwrap()
+        };
+        let descriptor_pool = {
+            let pool_sizes = [vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: (images.len() as u32).max(1),
+            }];
+            let create_info = vk::DescriptorPoolCreateInfo::builder()
+                .max_sets(1)
+                .p_pool_sizes(&pool_sizes);
+            unsafe { context.device.create_descriptor_pool(&create_info, None) }.unwrap()
+        };
+        let descriptor_set = {
+            let variable_count = images.len() as u32;
+            let mut variable_count_allocate_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
+                .p_descriptor_counts(slice::from_ref(&variable_count));
+
+            let allocate_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(descriptor_pool)
+                .p_set_layouts(slice::from_ref(&descriptor_set_layout))
+                .insert_next(&mut variable_count_allocate_info);
+
+            unsafe { context.device.allocate_descriptor_sets_single(&allocate_info) }.unwrap()
+        };
+
+        Self {
+            context: Arc::clone(context),
+            sampler,
+            descriptor_set_layout,
+            descriptor_pool,
+            descriptor_set,
+            images,
+            is_written: false,
+        }
+    }
+
+    fn prepare_write(&self, resource_loader: &ResourceLoader) -> Option<Vec<vk::DescriptorImageInfo>> {
+        let mut image_info = Vec::new();
+        for image in self.images.iter().cloned() {
+            image_info.push(vk::DescriptorImageInfo {
+                sampler: Some(self.sampler),
+                image_view: Some(resource_loader.get_image_view(image)?),
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            });
+        }
+        Some(image_info)
+    }
+
+    fn update(&mut self, resource_loader: &ResourceLoader) {
+        if self.is_written {
+            return;
+        }
+
+        if let Some(image_info) = self.prepare_write(resource_loader) {
+            if !image_info.is_empty() {
+                let write = vk::WriteDescriptorSet::builder()
+                    .dst_set(self.descriptor_set)
+                    .p_image_info(&image_info)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+                unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
+            }
+            self.is_written = true;
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        self.is_written
+    }
+}
+
+impl Drop for TextureBindingSet {
+    fn drop(&mut self) {
+        unsafe {
+            self.context
+                .device
+                .destroy_descriptor_pool(Some(self.descriptor_pool), None);
+            self.context
+                .device
+                .destroy_descriptor_set_layout(Some(self.descriptor_set_layout), None);
+            self.context.device.destroy_sampler(Some(self.sampler), None);
+        }
+    }
+}
+
 pub struct Renderer {
     context: Arc<Context>,
     scene: Arc<Scene>,
@@ -275,6 +413,8 @@ pub struct Renderer {
     path_trace_pipeline_layout: vk::PipelineLayout,
     path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
+    texture_binding_set: TextureBindingSet,
+    shader_data: Vec<Option<ShaderData>>,
     geometry_attrib_data: Vec<Option<GeometryAttribData>>,
     shader_binding_table: Option<ShaderBindingTable>,
     max_bounces: u32,
@@ -299,9 +439,85 @@ impl Renderer {
     ) -> Self {
         let accel = SceneAccel::new(context, scene, resource_loader);
 
+        // start loading textures and attributes for all meshes
+        let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
+        let mut texture_images = Vec::new();
+        let mut shader_data = vec![None; scene.shaders.len()];
+        let mut geometry_attrib_data = vec![None; scene.geometries.len()];
+        for instance_ref in accel.clusters().instance_iter().cloned() {
+            let instance = scene.instance(instance_ref);
+            let shader_ref = instance.shader_ref;
+            let shader = scene.shader(shader_ref);
+            if let Reflectance::Texture(filename) = &shader.reflectance {
+                shader_data
+                    .get_mut(shader_ref.0 as usize)
+                    .unwrap()
+                    .get_or_insert_with(|| ShaderData {
+                        reflectance: *texture_indices.entry(filename.clone()).or_insert_with(|| {
+                            let image_handle = resource_loader.create_image();
+                            resource_loader.async_load({
+                                let filename = filename.clone();
+                                move |allocator| {
+                                    let file = File::open(&filename).unwrap();
+                                    let mut reader = BufReader::new(file);
+                                    let (info, data) =
+                                        stb::image::stbi_load_from_reader(&mut reader, stb::image::Channels::RgbAlpha)
+                                            .unwrap();
+                                    println!("loaded {:?}: {}x{}", filename, info.width, info.height);
+                                    let image_desc = ImageDesc::new_2d(
+                                        UVec2::new(info.width as u32, info.height as u32),
+                                        vk::Format::R8G8B8A8_SRGB,
+                                        vk::ImageAspectFlags::COLOR,
+                                    );
+                                    let mut mapping = allocator
+                                        .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
+                                        .unwrap();
+                                    mapping.write(data.as_slice());
+                                }
+                            });
+
+                            let texture_index = TextureIndex(texture_images.len() as u16);
+                            texture_images.push(image_handle);
+                            texture_index
+                        }),
+                    });
+
+                let geometry_ref = instance.geometry_ref;
+                let geometry = scene.geometry(geometry_ref);
+                geometry_attrib_data
+                    .get_mut(geometry_ref.0 as usize)
+                    .unwrap()
+                    .get_or_insert_with(|| match geometry {
+                        Geometry::TriangleMesh { uvs, .. } if !uvs.is_empty() => {
+                            let uv_buffer = resource_loader.create_buffer();
+                            resource_loader.async_load({
+                                let scene = Arc::clone(scene);
+                                move |allocator| {
+                                    let uvs = match scene.geometry(geometry_ref) {
+                                        Geometry::TriangleMesh { uvs, .. } => uvs.as_slice(),
+                                        _ => unreachable!(),
+                                    };
+
+                                    let uv_buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
+                                    let mut mapping = allocator
+                                        .map_buffer(uv_buffer, &uv_buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                                        .unwrap();
+                                    for uv in uvs.iter() {
+                                        mapping.write(uv);
+                                    }
+                                }
+                            });
+                            GeometryAttribData { uv_buffer }
+                        }
+                        _ => unimplemented!(),
+                    });
+            }
+        }
+
         let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let path_trace_pipeline_layout =
-            descriptor_set_layout_cache.create_pipeline_layout(path_trace_descriptor_set_layout.0);
+        let texture_binding_set = TextureBindingSet::new(context, texture_images);
+        let path_trace_pipeline_layout = descriptor_set_layout_cache
+            .create_pipeline_multi_layout(&[path_trace_descriptor_set_layout.0, texture_binding_set.descriptor_set_layout]);
 
         // make pipeline
         let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
@@ -350,78 +566,6 @@ impl Renderer {
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
-        // start loading textures and attributes for all meshes
-        // TODO: drive from shaders that need them
-        let mut texture_images = HashMap::<PathBuf, StaticImageHandle>::new();
-        let mut shader_data = vec![None; scene.shaders.len()];
-        let mut geometry_attrib_data = vec![None; scene.geometries.len()];
-        for instance_ref in accel.clusters().instance_iter().cloned() {
-            let instance = scene.instance(instance_ref);
-            let shader_ref = instance.shader_ref;
-            let shader = scene.shader(shader_ref);
-            if let Reflectance::Texture(filename) = &shader.reflectance {
-                shader_data
-                    .get_mut(shader_ref.0 as usize)
-                    .unwrap()
-                    .get_or_insert_with(|| ShaderData {
-                        reflectance: *texture_images.entry(filename.clone()).or_insert_with(|| {
-                            let image_handle = resource_loader.create_image();
-                            resource_loader.async_load({
-                                let filename = filename.clone();
-                                move |allocator| {
-                                    let file = File::open(&filename).unwrap();
-                                    let mut reader = BufReader::new(file);
-                                    let (info, data) =
-                                        stb::image::stbi_load_from_reader(&mut reader, stb::image::Channels::RgbAlpha)
-                                            .unwrap();
-                                    println!("loaded {:?}: {}x{}", filename, info.width, info.height);
-                                    let image_desc = ImageDesc::new_2d(
-                                        UVec2::new(info.width as u32, info.height as u32),
-                                        vk::Format::R8G8B8A8_SRGB,
-                                        vk::ImageAspectFlags::COLOR,
-                                    );
-                                    let mut mapping = allocator
-                                        .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
-                                        .unwrap();
-                                    mapping.write(data.as_slice());
-                                }
-                            });
-                            image_handle
-                        }),
-                    });
-
-                let geometry_ref = instance.geometry_ref;
-                let geometry = scene.geometry(geometry_ref);
-                geometry_attrib_data
-                    .get_mut(geometry_ref.0 as usize)
-                    .unwrap()
-                    .get_or_insert_with(|| match geometry {
-                        Geometry::TriangleMesh { uvs, .. } if !uvs.is_empty() => {
-                            let uv_buffer = resource_loader.create_buffer();
-                            resource_loader.async_load({
-                                let scene = Arc::clone(scene);
-                                move |allocator| {
-                                    let uvs = match scene.geometry(geometry_ref) {
-                                        Geometry::TriangleMesh { uvs, .. } => uvs.as_slice(),
-                                        _ => unreachable!(),
-                                    };
-
-                                    let uv_buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
-                                    let mut mapping = allocator
-                                        .map_buffer(uv_buffer, &uv_buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
-                                        .unwrap();
-                                    for uv in uvs.iter() {
-                                        mapping.write(uv);
-                                    }
-                                }
-                            });
-                            GeometryAttribData { uv_buffer }
-                        }
-                        _ => unimplemented!(),
-                    });
-            }
-        }
-
         Self {
             context: Arc::clone(context),
             scene: Arc::clone(scene),
@@ -429,6 +573,8 @@ impl Renderer {
             path_trace_descriptor_set_layout,
             path_trace_pipeline_layout,
             path_trace_pipeline,
+            texture_binding_set,
+            shader_data,
             geometry_attrib_data,
             shader_binding_table: None,
             max_bounces,
@@ -576,6 +722,7 @@ impl Renderer {
         resource_loader.async_load({
             let scene = Arc::clone(&self.scene);
             let clusters = Arc::clone(self.accel.clusters());
+            let shader_data = self.shader_data.clone(); // TODO: fix
             move |allocator| {
                 let shader_group_handle = |group: ShaderGroup| {
                     let begin = (group.into_integer() as usize) * handle_size;
@@ -614,25 +761,27 @@ impl Renderer {
                     let transform = scene.transform(instance.transform_ref);
                     let shader_desc = scene.shader(instance.shader_ref);
 
+                    let shader_data = shader_data[instance.shader_ref.0 as usize];
+                    let texture_index = shader_data.map(|s| s.reflectance);
                     let reflectance = match shader_desc.reflectance {
                         Reflectance::Constant(c) => c,
-                        Reflectance::Texture(_) => Vec3::broadcast(0.8), // TODO
+                        Reflectance::Texture(_) => Vec3::zero(),
                     };
 
                     let mut shader = match shader_desc.surface {
                         Surface::Diffuse => ExtendShader {
-                            flags: ExtendShaderFlags::BSDF_TYPE_DIFFUSE,
+                            flags: ExtendShaderFlags::new(BsdfType::Diffuse, texture_index),
                             reflectance,
                             ..Default::default()
                         },
                         Surface::GGX { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::BSDF_TYPE_GGX,
+                            flags: ExtendShaderFlags::new(BsdfType::GGX, texture_index),
                             reflectance,
-                            roughness: roughness,
+                            roughness,
                             ..Default::default()
                         },
                         Surface::Mirror => ExtendShader {
-                            flags: ExtendShaderFlags::BSDF_TYPE_MIRROR,
+                            flags: ExtendShaderFlags::new(BsdfType::Mirror, texture_index),
                             reflectance,
                             ..Default::default()
                         },
@@ -887,6 +1036,9 @@ impl Renderer {
             Self::HIT_ENTRY_COUNT_PER_INSTANCE,
         );
 
+        // make the bindless texture set
+        self.texture_binding_set.update(resource_loader);
+
         // make shader binding table
         if self.shader_binding_table.is_none() {
             self.shader_binding_table = self.create_shader_binding_table(resource_loader);
@@ -895,6 +1047,7 @@ impl Renderer {
 
     pub fn is_ready(&self, resource_loader: &ResourceLoader) -> bool {
         self.accel.is_ready()
+            && self.texture_binding_set.is_ready()
             && self
                 .shader_binding_table
                 .as_ref()
@@ -976,7 +1129,7 @@ impl Renderer {
                 vk::PipelineBindPoint::RAY_TRACING_KHR,
                 self.path_trace_pipeline_layout,
                 0,
-                slice::from_ref(&path_trace_descriptor_set),
+                &[path_trace_descriptor_set, self.texture_binding_set.descriptor_set],
                 &[],
             );
         }

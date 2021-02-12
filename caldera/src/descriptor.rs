@@ -278,6 +278,16 @@ impl DescriptorSetLayoutCache {
         self.pipeline_layouts.push(pipeline_layout);
         pipeline_layout
     }
+
+    pub fn create_pipeline_multi_layout(
+        &mut self,
+        descriptor_set_layouts: &[vk::DescriptorSetLayout],
+    ) -> vk::PipelineLayout {
+        let create_info = vk::PipelineLayoutCreateInfo::builder().p_set_layouts(descriptor_set_layouts);
+        let pipeline_layout = unsafe { self.context.device.create_pipeline_layout(&create_info, None) }.unwrap();
+        self.pipeline_layouts.push(pipeline_layout);
+        pipeline_layout
+    }
 }
 
 impl Drop for DescriptorSetLayoutCache {
@@ -317,7 +327,7 @@ impl DescriptorPool {
         }
 
         let pools = {
-            let mut descriptor_pool_sizes = ArrayVec::<[_; 5]>::new();
+            let mut descriptor_pool_sizes = Vec::new();
             descriptor_pool_sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,

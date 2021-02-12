@@ -331,6 +331,7 @@ impl Context {
             let mut buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::default();
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
             let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
+            let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
 
             extensions.enable_khr_swapchain();
             params.geometry_shader.apply(
@@ -367,11 +368,13 @@ impl Context {
                 || {
                     extensions.enable_khr_acceleration_structure();
                     extensions.enable_khr_ray_tracing_pipeline();
-                    enabled_features.shader_int64 = vk::TRUE;
                     buffer_device_address_features.buffer_device_address = vk::TRUE;
                     enable_buffer_device_addresses = true;
                     acceleration_structure_features.acceleration_structure = vk::TRUE;
                     ray_tracing_pipeline_features.ray_tracing_pipeline = vk::TRUE;
+                    descriptor_indexing_features.shader_sampled_image_array_non_uniform_indexing = vk::TRUE;
+                    descriptor_indexing_features.descriptor_binding_variable_descriptor_count = vk::TRUE;
+                    descriptor_indexing_features.runtime_descriptor_array = vk::TRUE;
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
             );
@@ -390,7 +393,8 @@ impl Context {
                 .insert_next(&mut pipeline_creation_cache_control_features)
                 .insert_next(&mut buffer_device_address_features)
                 .insert_next(&mut acceleration_structure_features)
-                .insert_next(&mut ray_tracing_pipeline_features);
+                .insert_next(&mut ray_tracing_pipeline_features)
+                .insert_next(&mut descriptor_indexing_features);
 
             unsafe { instance.create_device(physical_device, &device_create_info, None, params.version) }.unwrap()
         };

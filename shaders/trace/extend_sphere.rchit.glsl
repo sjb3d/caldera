@@ -28,7 +28,7 @@ void main()
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
-    const uint bsdf_type = g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
+    const uint bsdf_type = (g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
     g_extend.position_or_extdir = hit_pos_ws;

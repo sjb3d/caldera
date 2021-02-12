@@ -2,12 +2,14 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference2 : require
-#extension GL_ARB_gpu_shader_int64 : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
 #include "extend_common.glsl"
 #include "normal_pack.glsl"
+
+layout(set = 1, binding = 0) uniform sampler2D g_textures[];
 
 layout(buffer_reference, scalar) buffer IndexBuffer {
     uvec3 tri[];
@@ -47,19 +49,6 @@ void main()
         + p2*g_bary_coord.y
         ;
 
-    const uint64_t uv_buffer_addr = uint64_t(g_record.uv_buffer);
-    const bool has_uvs = (uv_buffer_addr != 0);
-    vec2 uv;
-    if (has_uvs) {
-        const vec2 uv0 = g_record.uv_buffer.uv[tri[0]];
-        const vec2 uv1 = g_record.uv_buffer.uv[tri[1]];
-        const vec2 uv2 = g_record.uv_buffer.uv[tri[2]];
-        uv  = uv0*(1.f - g_bary_coord.x - g_bary_coord.y)
-            + uv1*g_bary_coord.x
-            + uv2*g_bary_coord.y
-            ;
-    }
-
     // transform normal vector to world space
     const vec3 hit_normal_vec_ls
         = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT)
@@ -68,14 +57,31 @@ void main()
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
-    const uint bsdf_type = g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK;
+    const uint bsdf_type = (g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
+
+    vec3 reflectance;
+    if ((g_record.shader.flags & EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT) != 0) {
+        const vec2 uv0 = g_record.uv_buffer.uv[tri[0]];
+        const vec2 uv1 = g_record.uv_buffer.uv[tri[1]];
+        const vec2 uv2 = g_record.uv_buffer.uv[tri[2]];
+        const vec2 uv
+            = uv0*(1.f - g_bary_coord.x - g_bary_coord.y)
+            + uv1*g_bary_coord.x
+            + uv2*g_bary_coord.y
+            ;
+
+        const uint texture_index = g_record.shader.flags & EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK;
+        reflectance = texture(g_textures[nonuniformEXT(texture_index)], uv).xyz;        
+    } else {
+        reflectance = g_record.shader.reflectance;
+    }
 
     g_extend.position_or_extdir = hit_pos_ws;
     g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
     g_extend.hit = create_hit_data(
         bsdf_type,
-        g_record.shader.reflectance,
+        reflectance,
         g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
