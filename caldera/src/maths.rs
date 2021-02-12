@@ -101,7 +101,7 @@ impl Transform3 {
         self.cols[3]
     }
 
-    pub fn into_similarity(&self) -> Similarity3 {
+    pub fn into_similarity(self) -> Similarity3 {
         let scale = self.cols[0].cross(self.cols[1]).dot(self.cols[2]).powf(1.0 / 3.0);
         let rotation = Mat3::new(self.cols[0] / scale, self.cols[1] / scale, self.cols[2] / scale).into_rotor3();
         let translation = self.cols[3];
@@ -151,11 +151,11 @@ impl TransformVec3 for Transform3 {
 }
 
 pub trait IntoTransform {
-    fn into_transform(&self) -> Transform3;
+    fn into_transform(self) -> Transform3;
 }
 
 impl IntoTransform for Mat4 {
-    fn into_transform(&self) -> Transform3 {
+    fn into_transform(self) -> Transform3 {
         Transform3::new(
             self.cols[0].truncated(),
             self.cols[1].truncated(),
@@ -165,12 +165,12 @@ impl IntoTransform for Mat4 {
     }
 }
 impl IntoTransform for Isometry3 {
-    fn into_transform(&self) -> Transform3 {
+    fn into_transform(self) -> Transform3 {
         self.into_homogeneous_matrix().into_transform()
     }
 }
 impl IntoTransform for Similarity3 {
-    fn into_transform(&self) -> Transform3 {
+    fn into_transform(self) -> Transform3 {
         self.into_homogeneous_matrix().into_transform()
     }
 }
