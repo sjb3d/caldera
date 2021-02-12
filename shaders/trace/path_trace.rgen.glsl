@@ -32,6 +32,8 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 
 LIGHT_UNIFORM_DATA(g_light);
 
+#define PLASTIC_F0              0.05f
+
 #define RENDER_COLOR_SPACE_REC709   0
 #define RENDER_COLOR_SPACE_ACESCG   1
 
@@ -105,8 +107,9 @@ void sample_all_lights(
 {
     // pick a light source
     const float sampled_count_flt = float(g_light.sampled_count);
-    const uint light_index = min(uint(rand_u01.x*sampled_count_flt), g_light.sampled_count - 1);
-    rand_u01.x = fract(rand_u01.x*sampled_count_flt);
+    const float rand_light_flt = rand_u01.x*sampled_count_flt;
+    const uint light_index = min(uint(rand_light_flt), g_light.sampled_count - 1);
+    rand_u01.x = rand_light_flt - float(light_index);
     const float selection_pdf = 1.f/sampled_count_flt;
 
     // sample this light
@@ -185,7 +188,7 @@ void main()
         const float solid_angle_pdf = 1.f/(fov_area_at_unit_z*cos_theta3);
 
         const vec3 importance = vec3(1.f/fov_area_at_unit_z);
-        const float sensor_area_pdf = 1.f;
+        const float sensor_area_pdf = 1.f/fov_area_at_unit_z;
 
         prev_position = g_path_trace.world_from_camera[3];
         prev_normal = g_path_trace.world_from_camera[2];
@@ -265,17 +268,13 @@ void main()
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
         if (use_max_roughness) {
-            const uint orig_bsdf_type = get_bsdf_type(g_extend.hit);
-            if (orig_bsdf_type == BSDF_TYPE_DIFFUSE) {
-                max_roughness = 1.f;
-            } else if (orig_bsdf_type == BSDF_TYPE_GGX) {
-                max_roughness = max(max_roughness, get_roughness(g_extend.hit));
-            }
-
+            max_roughness = max(max_roughness, get_roughness(g_extend.hit));
             if (max_roughness == 1.f) {
                 g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_DIFFUSE, max_roughness);
             } else if (max_roughness != 0.f) {
-                g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_GGX, max_roughness);
+                const uint orig_bsdf_type = get_bsdf_type(g_extend.hit);
+                const uint new_bsdf_type = (orig_bsdf_type == BSDF_TYPE_MIRROR) ? BSDF_TYPE_DIFFUSE : orig_bsdf_type;
+                g_extend.hit = replace_hit_data(g_extend.hit, new_bsdf_type, max_roughness);
             }
         }
 
@@ -324,21 +323,45 @@ void main()
             vec3 hit_f = vec3(0.f);
             float hit_solid_angle_pdf = 0.f;
             if (sign_bits_match(in_dir_ls.z, out_dir_ls.z)) {
-                if (get_bsdf_type(g_extend.hit) == BSDF_TYPE_GGX) {
-                    const vec2 alpha = vec2(hit_roughness*hit_roughness);
+                switch (get_bsdf_type(g_extend.hit)) {
+                    default:
+                    case BSDF_TYPE_DIFFUSE: {
+                        hit_f = hit_reflectance/PI;
+                        hit_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
+                    } break;
 
-                    const vec3 v = out_dir_ls;
-                    const vec3 l = in_dir_ls;
-                    const vec3 h = normalize(v + l);
-                    const float h_dot_v = dot(h, v);
-                    const vec3 r0 = hit_reflectance;
-                    hit_f = ggx_brdf(r0, h, h_dot_v, v, l, alpha);
+                    case BSDF_TYPE_CONDUCTOR: {
+                        const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
-                    const float n_dot_v = v.z;
-                    hit_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha) / (4.f * n_dot_v);
-                } else {
-                    hit_f = hit_reflectance/PI;
-                    hit_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
+                        const vec3 v = out_dir_ls;
+                        const vec3 l = in_dir_ls;
+                        const vec3 h = normalize(v + l);
+                        const float h_dot_v = dot(h, v);
+                        const vec3 r0 = hit_reflectance;
+                        hit_f = ggx_brdf(r0, h, h_dot_v, v, l, alpha);
+
+                        const float n_dot_v = v.z;
+                        hit_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha) / (4.f * n_dot_v);
+                    } break;
+
+                    case BSDF_TYPE_PLASTIC: {
+                        const vec3 diff_f = hit_reflectance*(1.f - PLASTIC_F0)/PI;
+                        const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
+
+                        const vec2 alpha = vec2(hit_roughness*hit_roughness);
+
+                        const vec3 v = out_dir_ls;
+                        const vec3 l = in_dir_ls;
+                        const vec3 h = normalize(v + l);
+                        const float h_dot_v = dot(h, v);
+                        const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
+
+                        const float n_dot_v = v.z;
+                        const float spec_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha) / (4.f * n_dot_v);
+
+                        hit_f = diff_f + vec3(spec_f);
+                        hit_solid_angle_pdf = .5f*(diff_solid_angle_pdf + spec_solid_angle_pdf);
+                    } break;
                 }
             }
             
@@ -393,7 +416,7 @@ void main()
 
         // sample BSDF
         {
-            const vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
+            vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
             vec3 in_dir_ls;
             vec3 estimator;
             float in_solid_angle_pdf;
@@ -408,7 +431,13 @@ void main()
                     in_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_dir_ls.z);
                 } break;
 
-                case BSDF_TYPE_GGX: {
+                case BSDF_TYPE_MIRROR: {
+                    in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
+                    estimator = hit_reflectance;
+                    in_solid_angle_pdf = 1.f/abs(in_dir_ls.z);
+                } break;
+
+                case BSDF_TYPE_CONDUCTOR: {
                     const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
                     const vec3 h = sample_ggx_vndf(out_dir_ls, alpha, bsdf_rand_u01);
@@ -424,10 +453,33 @@ void main()
                     in_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha);
                 } break;
 
-                case BSDF_TYPE_MIRROR: {
-                    in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
-                    estimator = hit_reflectance;
-                    in_solid_angle_pdf = 1.f/abs(in_dir_ls.z);
+                case BSDF_TYPE_PLASTIC: {
+                    const float rand_layer_flt = 2.f*bsdf_rand_u01.x;
+                    bsdf_rand_u01.x = rand_layer_flt - floor(rand_layer_flt);
+                    if (rand_layer_flt > 1.f) {
+                        in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
+
+                        const vec3 f = hit_reflectance*(1.f - PLASTIC_F0)/PI;
+                        estimator = f/get_hemisphere_cosine_weighted_proj_pdf();
+
+                        in_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_dir_ls.z);
+                    } else {
+                        const vec2 alpha = vec2(hit_roughness*hit_roughness);
+
+                        const vec3 h = sample_ggx_vndf(out_dir_ls, alpha, bsdf_rand_u01);
+                        in_dir_ls = reflect(-out_dir_ls, h);
+                        in_dir_ls.z = abs(in_dir_ls.z);
+
+                        const vec3 v = out_dir_ls;
+                        const vec3 l = in_dir_ls;
+                        const float h_dot_v = dot(h, v);
+                        estimator = vec3(ggx_vndf_sampled_estimator(PLASTIC_F0, h_dot_v, v, l, alpha));
+
+                        in_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha);
+                    }
+                    const float selection_pdf = .5f;
+                    estimator /= selection_pdf;
+                    in_solid_angle_pdf *= selection_pdf;
                 } break;
             }
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);

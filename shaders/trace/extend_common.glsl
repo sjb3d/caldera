@@ -11,8 +11,9 @@ struct HitData {
 #define HIT_DATA_Z_UNIT_SCALE_EXP_MASK  0xff000000
 
 #define BSDF_TYPE_DIFFUSE       0
-#define BSDF_TYPE_GGX           1
-#define BSDF_TYPE_MIRROR        2
+#define BSDF_TYPE_MIRROR        1
+#define BSDF_TYPE_CONDUCTOR     2
+#define BSDF_TYPE_PLASTIC       3
 
 HitData create_hit_data(
     uint bsdf_type,

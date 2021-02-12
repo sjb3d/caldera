@@ -14,6 +14,8 @@ use std::{
 };
 use std::{mem, slice};
 
+const MIN_ROUGHNESS: f32 = 0.01;
+
 trait UnitScale {
     fn unit_scale(&self, world_from_local: Similarity3) -> f32;
 }
@@ -176,8 +178,9 @@ enum SamplingTechnique {
 #[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
 enum BsdfType {
     Diffuse,
-    GGX,
     Mirror,
+    Conductor,
+    Plastic,
 }
 
 #[repr(transparent)]
@@ -702,7 +705,10 @@ impl Renderer {
         next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
 
         // callable shaders
-        let callable_record_size = mem::size_of::<QuadLightRecord>().max(mem::size_of::<SphereLightRecord>()) as u32;
+        let callable_record_size = mem::size_of::<QuadLightRecord>()
+            .max(mem::size_of::<SphereLightRecord>())
+            .max(mem::size_of::<DomeLightRecord>())
+            .max(mem::size_of::<SolidAngleLightRecord>()) as u32;
         let callable_stride = align_up(
             rtpp.shader_group_handle_size + callable_record_size,
             rtpp.shader_group_handle_alignment,
@@ -766,23 +772,31 @@ impl Renderer {
                     let reflectance = match shader_desc.reflectance {
                         Reflectance::Constant(c) => c,
                         Reflectance::Texture(_) => Vec3::zero(),
-                    };
+                    }
+                    .clamped(Vec3::zero(), Vec3::one());
 
                     let mut shader = match shader_desc.surface {
                         Surface::Diffuse => ExtendShader {
                             flags: ExtendShaderFlags::new(BsdfType::Diffuse, texture_index),
                             reflectance,
-                            ..Default::default()
-                        },
-                        Surface::GGX { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::GGX, texture_index),
-                            reflectance,
-                            roughness,
+                            roughness: 1.0,
                             ..Default::default()
                         },
                         Surface::Mirror => ExtendShader {
                             flags: ExtendShaderFlags::new(BsdfType::Mirror, texture_index),
                             reflectance,
+                            ..Default::default()
+                        },
+                        Surface::Conductor { roughness } => ExtendShader {
+                            flags: ExtendShaderFlags::new(BsdfType::Conductor, texture_index),
+                            reflectance,
+                            roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
+                            ..Default::default()
+                        },
+                        Surface::Plastic { roughness } => ExtendShader {
+                            flags: ExtendShaderFlags::new(BsdfType::Plastic, texture_index),
+                            reflectance,
+                            roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
                             ..Default::default()
                         },
                     };

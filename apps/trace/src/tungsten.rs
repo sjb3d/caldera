@@ -208,8 +208,14 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
         let surface = match bsdf.bsdf_type {
             BsdfType::Lambert => scene::Surface::Diffuse,
             BsdfType::Mirror => scene::Surface::Mirror,
-            BsdfType::RoughConductor => scene::Surface::GGX {
-                roughness: bsdf.roughness.unwrap(),
+            BsdfType::RoughConductor => scene::Surface::Conductor {
+                roughness: bsdf.roughness.unwrap().sqrt(),
+            },
+            BsdfType::Plastic => scene::Surface::Plastic {
+                roughness: 0.0,
+            },
+            BsdfType::RoughPlastic => scene::Surface::Plastic {
+                roughness: bsdf.roughness.unwrap().sqrt(),
             },
             _ => scene::Surface::Diffuse,
         };
@@ -226,7 +232,9 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
             PrimitiveType::Quad => {
                 let (world_from_local, extra_scale) = primitive.transform.decompose();
 
-                let size = extra_scale.map(|v| Vec2::new(v.x, v.z)).unwrap_or_else(|| Vec2::broadcast(1.0));
+                let size = extra_scale
+                    .map(|v| Vec2::new(v.x, v.z))
+                    .unwrap_or_else(|| Vec2::broadcast(1.0));
                 let mesh = scene::Geometry::Quad {
                     local_from_quad: Similarity3::new(Vec3::zero(), Rotor3::from_rotation_yz(-PI / 2.0), 1.0),
                     size,

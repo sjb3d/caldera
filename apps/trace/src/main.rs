@@ -552,7 +552,7 @@ fn main() {
                     app_params.scene_desc = match it.next().unwrap().as_str() {
                         "cornell" => SceneDesc::CornellBox(CornellBoxVariant::Original),
                         "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::Mirror),
-                        "cornell-ggx" => SceneDesc::CornellBox(CornellBoxVariant::GGX),
+                        "cornell-conductor" => SceneDesc::CornellBox(CornellBoxVariant::Conductor),
                         "cornell-instances" => SceneDesc::CornellBox(CornellBoxVariant::Instances),
                         "cornell-domelight" => SceneDesc::CornellBox(CornellBoxVariant::DomeLight),
                         "cornell-spherelight" => SceneDesc::CornellBox(CornellBoxVariant::SphereLight),

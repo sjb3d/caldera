@@ -27,8 +27,18 @@ vec3 schlick_fresnel(vec3 r0, float h_dot_v)
 {
     return r0 + (vec3(1.f) - r0)*pow(1.f - h_dot_v, 5.f);
 }
+float schlick_fresnel(float r0, float h_dot_v)
+{
+    return r0 + (1.f - r0)*pow(1.f - h_dot_v, 5.f);
+}
 
 vec3 ggx_brdf(vec3 r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+{
+    const float n_dot_v = v.z;
+    const float n_dot_l = l.z;
+    return schlick_fresnel(r0, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
+}
+float ggx_brdf(float r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
     const float n_dot_v = v.z;
     const float n_dot_l = l.z;
@@ -63,7 +73,15 @@ float ggx_vndf_pdf(vec3 v, vec3 h, float h_dot_v, vec2 alpha)
 // reference: http://jcgt.org/published/0007/04/01/
 vec3 ggx_vndf_sampled_estimator(vec3 r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
-    // let ggx_pdf = ggx_vndf_pdf / (4.f * n_dot_v)
-    // return ggx_brdf * n_dot_l / ggx_pdf
+    /*
+        Algebraic simplification of:
+
+        let ggx_pdf = ggx_vndf_pdf / (4.f * n_dot_v);
+        return ggx_brdf * n_dot_l / ggx_pdf;
+    */
+    return schlick_fresnel(r0, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
+}
+float ggx_vndf_sampled_estimator(float r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+{
     return schlick_fresnel(r0, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
 }

@@ -40,8 +40,9 @@ pub enum Reflectance {
 #[derive(Debug)]
 pub enum Surface {
     Diffuse,
-    GGX { roughness: f32 },
     Mirror,
+    Conductor { roughness: f32 },
+    Plastic { roughness: f32 },
 }
 
 /*
@@ -284,10 +285,10 @@ impl ShaderBuilder {
         })
     }
 
-    pub fn new_ggx(reflectance: Vec3, roughness: f32) -> Self {
+    pub fn new_conductor(reflectance: Vec3, roughness: f32) -> Self {
         Self(Shader {
             reflectance: Reflectance::Constant(reflectance),
-            surface: Surface::GGX { roughness },
+            surface: Surface::Conductor { roughness },
             emission: None,
         })
     }
@@ -301,10 +302,7 @@ impl ShaderBuilder {
     }
 
     pub fn with_emission(mut self, emission: Vec3) -> Self {
-        let emission = emission.max_by_component(Vec3::zero());
-        if emission.as_slice().iter().any(|&c| c > 0.0) {
-            self.0.emission = Some(emission);
-        }
+        self.0.emission = Some(emission);
         self
     }
 
@@ -408,7 +406,7 @@ fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
 pub enum CornellBoxVariant {
     Original,
     Mirror,
-    GGX,
+    Conductor,
     Instances,
     DomeLight,
     SphereLight,
@@ -547,7 +545,9 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let green_shader = scene.add_shader(ShaderBuilder::new_diffuse(green_reflectance).build());
     let tall_block_shader = match variant {
         CornellBoxVariant::Mirror => scene.add_shader(ShaderBuilder::new_mirror(Vec3::broadcast(1.0)).build()),
-        CornellBoxVariant::GGX => scene.add_shader(ShaderBuilder::new_ggx(Vec3::broadcast(1.0), 0.2).build()),
+        CornellBoxVariant::Conductor => {
+            scene.add_shader(ShaderBuilder::new_conductor(Vec3::broadcast(1.0), 0.2).build())
+        }
         _ => white_shader,
     };
 
