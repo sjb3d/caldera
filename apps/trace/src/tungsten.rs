@@ -14,7 +14,7 @@ enum ScalarOrVec3 {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-enum Albedo {
+enum TextureOrValue {
     Value(ScalarOrVec3),
     Texture(String),
 }
@@ -29,10 +29,13 @@ enum BsdfType {
     RoughPlastic,
     Dielectric,
     RoughDielectric,
+    Conductor,
     RoughConductor,
     Transparency,
     #[serde(rename = "thinsheet")]
     ThinSheet,
+    OrenNayar,
+    LambertianFiber,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,7 +51,7 @@ struct Bsdf {
     name: Option<String>,
     #[serde(rename = "type")]
     bsdf_type: BsdfType,
-    albedo: Albedo,
+    albedo: TextureOrValue,
     distribution: Option<Distribution>,
     roughness: Option<f32>,
 }
@@ -65,6 +68,13 @@ impl ScalarOrVec3 {
         match self {
             ScalarOrVec3::Scalar(s) => Vec3::broadcast(*s),
             ScalarOrVec3::Vec3(v) => v.into(),
+        }
+    }
+
+    fn into_linear(&self) -> Vec3 {
+        match self {
+            ScalarOrVec3::Scalar(s) => Vec3::broadcast(*s),
+            ScalarOrVec3::Vec3(v) => Vec3::from(v).into_linear(),
         }
     }
 }
@@ -96,6 +106,13 @@ impl PrimitiveTransform {
 enum PrimitiveType {
     Mesh,
     Quad,
+    Sphere,
+    InfiniteSphereCap,
+    InfiniteSphere,
+    Skydome,
+    Curves,
+    #[serde(rename = "disk")]
+    Disc,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -112,8 +129,9 @@ struct Primitive {
     primitive_type: PrimitiveType,
     file: Option<String>,
     power: Option<f32>,
-    emission: Option<ScalarOrVec3>,
-    bsdf: BsdfRef,
+    emission: Option<TextureOrValue>,
+    bsdf: Option<BsdfRef>,
+    cap_angle: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,9 +142,25 @@ struct CameraTransform {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Resolution {
+    Square(f32),
+    Rectangular(f32, f32),
+}
+
+impl Resolution {
+    fn aspect_ratio(&self) -> f32 {
+        match self {
+            Resolution::Square(_) => 1.0,
+            Resolution::Rectangular(width, height) => width / height,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct Camera {
     transform: CameraTransform,
-    resolution: [f32; 2],
+    resolution: Resolution,
     fov: f32,
 }
 
@@ -152,7 +186,7 @@ struct Triangle {
     mat: i32,
 }
 
-fn load_mesh<P: AsRef<Path>>(path: P) -> scene::Geometry {
+fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geometry {
     let mut reader = BufReader::new(File::open(path).unwrap());
 
     let mut vertex_count = 0u64;
@@ -170,6 +204,12 @@ fn load_mesh<P: AsRef<Path>>(path: P) -> scene::Geometry {
     reader
         .read_exact(bytemuck::cast_slice_mut(triangles.as_mut_slice()))
         .unwrap();
+
+    if let Some(extra_scale) = extra_scale {
+        for v in vertices.iter_mut() {
+            v.pos *= extra_scale;
+        }
+    }
 
     let mut min = Vec3::broadcast(f32::INFINITY);
     let mut max = Vec3::broadcast(-f32::INFINITY);
@@ -201,19 +241,22 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 .find(|bsdf| bsdf.name.as_ref() == Some(name))
                 .unwrap(),
         };
-        let reflectance = match &bsdf.albedo {
-            Albedo::Value(value) => scene::Reflectance::Constant(value.into_vec3()),
-            Albedo::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
+        let mut reflectance = match &bsdf.albedo {
+            TextureOrValue::Value(value) => scene::Reflectance::Constant(value.into_linear()),
+            TextureOrValue::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
         };
         let surface = match bsdf.bsdf_type {
+            BsdfType::Null => {
+                reflectance = scene::Reflectance::Constant(Vec3::zero());
+                scene::Surface::Diffuse
+            }
             BsdfType::Lambert => scene::Surface::Diffuse,
             BsdfType::Mirror => scene::Surface::Mirror,
+            BsdfType::Conductor => scene::Surface::Conductor { roughness: 0.0 },
             BsdfType::RoughConductor => scene::Surface::Conductor {
                 roughness: bsdf.roughness.unwrap().sqrt(),
             },
-            BsdfType::Plastic => scene::Surface::Plastic {
-                roughness: 0.0,
-            },
+            BsdfType::Plastic => scene::Surface::Plastic { roughness: 0.0 },
             BsdfType::RoughPlastic => scene::Surface::Plastic {
                 roughness: bsdf.roughness.unwrap().sqrt(),
             },
@@ -240,11 +283,12 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                     size,
                 };
 
-                let mut shader = load_shader(&primitive.bsdf);
+                let mut shader = load_shader(primitive.bsdf.as_ref().unwrap());
                 if let Some(s) = primitive.power {
-                    shader.emission = Some(Vec3::broadcast(s * size.x * size.y * world_from_local.scale.abs() / PI));
+                    let area = size.x * size.y * world_from_local.scale.abs() * world_from_local.scale.abs();
+                    shader.emission = Some(Vec3::broadcast(s / (area * PI)));
                 }
-                if let Some(v) = &primitive.emission {
+                if let Some(TextureOrValue::Value(v)) = &primitive.emission {
                     shader.emission = Some(v.into_vec3());
                 }
 
@@ -255,17 +299,75 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
             }
             PrimitiveType::Mesh => {
                 let (world_from_local, extra_scale) = primitive.transform.decompose();
-                if extra_scale.is_some() {
-                    unimplemented!();
-                }
 
-                let mesh = load_mesh(path.as_ref().with_file_name(primitive.file.as_ref().unwrap()));
-                let shader = load_shader(&primitive.bsdf);
+                let mesh = load_mesh(
+                    path.as_ref().with_file_name(primitive.file.as_ref().unwrap()),
+                    extra_scale,
+                );
+                let shader = load_shader(&primitive.bsdf.as_ref().unwrap());
 
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
                 let shader_ref = output.add_shader(shader);
                 output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
+            }
+            PrimitiveType::Sphere => {
+                let (world_from_local, extra_scale) = primitive.transform.decompose();
+                if extra_scale.is_some() {
+                    unimplemented!();
+                }
+
+                let centre = world_from_local.translation;
+                let radius = world_from_local.scale.abs();
+
+                let mut shader = load_shader(&primitive.bsdf.as_ref().unwrap());
+                if let Some(s) = primitive.power {
+                    let area = 4.0 * PI * radius * radius;
+                    shader.emission = Some(Vec3::broadcast(s / (area * PI)));
+                }
+
+                let geometry_ref = output.add_geometry(scene::Geometry::Sphere { centre, radius });
+                let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
+                let shader_ref = output.add_shader(shader);
+                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
+            }
+            PrimitiveType::InfiniteSphereCap => {
+                let (world_from_local, _extra_scale) = primitive.transform.decompose();
+
+                let theta = primitive.cap_angle.unwrap() * PI / 180.0;
+                let solid_angle = 2.0 * PI * (1.0 - theta.cos());
+
+                let emission = primitive.power.map(|p| Vec3::broadcast(p / solid_angle)).unwrap();
+
+                let direction_ws = world_from_local.rotation * Vec3::unit_y();
+
+                output.add_light(scene::Light::SolidAngle {
+                    emission,
+                    direction_ws,
+                    solid_angle,
+                });
+            }
+            PrimitiveType::InfiniteSphere => {
+                let emission = match primitive.emission.as_ref().unwrap() {
+                    TextureOrValue::Value(v) => v.into_vec3(),
+                    TextureOrValue::Texture(_) => {
+                        println!("TODO: InfiniteSphere texture!");
+                        Vec3::new(0.2, 0.3, 0.4)
+                    }
+                };
+                output.add_light(scene::Light::Dome { emission });
+            }
+            PrimitiveType::Skydome => {
+                println!("TODO: convert Skydome geometry!");
+                output.add_light(scene::Light::Dome {
+                    emission: Vec3::new(0.2, 0.3, 0.4),
+                });
+            }
+            PrimitiveType::Curves => {
+                println!("TODO: curves!");
+            }
+            PrimitiveType::Disc => {
+                println!("TODO: disc!");
             }
         }
     }
@@ -286,7 +388,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
             )
         };
         let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
-        let aspect_ratio = camera.resolution[0] / camera.resolution[1];
+        let aspect_ratio = camera.resolution.aspect_ratio();
         output.add_camera(scene::Camera {
             transform_ref,
             fov_y: camera.fov * (PI / 180.0) / aspect_ratio,

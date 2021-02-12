@@ -4,6 +4,23 @@ fn lerp_mat3(a: &Mat3, b: &Mat3, t: f32) -> Mat3 {
     (*a) * (1.0 - t) + (*b) * t
 }
 
+pub trait Gamma {
+    fn into_linear(self) -> Self;
+}
+
+impl Gamma for Vec3 {
+    fn into_linear(self) -> Self {
+        let f = |x: f32| {
+            if x < 0.04045 {
+                x / 12.92
+            } else {
+                ((x + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        Vec3::new(f(self.x), f(self.y), f(self.z))
+    }
+}
+
 #[allow(clippy::excessive_precision)]
 pub fn xyz_from_rec709_matrix() -> Mat3 {
     // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
