@@ -4,6 +4,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "color_space.glsl"
 #include "sampler.glsl"
+#include "ggx.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -210,13 +211,8 @@ void main()
             const vec3 h = sample_ggx_vndf(out_dir, alpha, ray_rand_u01);
             const vec3 in_dir = reflect(-out_dir, h);
 
-            // compute weight
-            const vec3 weight
-                = schlick_fresnel(r0, abs(dot(out_dir, h)))
-                * smith_g2(out_dir, in_dir, alpha)
-                / smith_g1(out_dir, alpha)
-                ;
-            sample_value *= weight;
+            // compute estimator
+            sample_value *= ggx_vndf_sampled_estimator(r0, dot(out_dir, h), out_dir, in_dir, alpha);
 
             // continue ray
             ray_origin = hit_pos + eps_hack*normal;

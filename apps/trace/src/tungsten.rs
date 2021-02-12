@@ -60,28 +60,34 @@ struct PrimitiveTransform {
     scale: Option<ScalarOrVec3>,
 }
 
+impl ScalarOrVec3 {
+    fn into_vec3(&self) -> Vec3 {
+        match self {
+            ScalarOrVec3::Scalar(s) => Vec3::broadcast(*s),
+            ScalarOrVec3::Vec3(v) => v.into(),
+        }
+    }
+}
+
 impl PrimitiveTransform {
-    fn into_similarity3(self) -> (Similarity3, Option<Vec3>) {
+    fn decompose(&self) -> (Similarity3, Option<Vec3>) {
         let translation = self.position.map(Vec3::from).unwrap_or_else(Vec3::zero);
         let rotation = self
             .rotation
-            .map(|r| Rotor3::from_euler_angles(r[0], r[1], r[2]))
+            .map(|r| {
+                let r = Vec3::from(r) * PI / 180.0;
+                Rotor3::from_euler_angles(r.z, r.x, r.y)
+            })
             .unwrap_or_else(Rotor3::identity);
         let (scale, vector_scale) = self
             .scale
+            .as_ref()
             .map(|s| match s {
-                ScalarOrVec3::Scalar(s) => (s, None),
+                ScalarOrVec3::Scalar(s) => (*s, None),
                 ScalarOrVec3::Vec3(v) => (1.0, Some(v.into())),
             })
             .unwrap_or((1.0, None));
-        (
-            Similarity3 {
-                translation,
-                rotation,
-                scale,
-            },
-            vector_scale,
-        )
+        (Similarity3::new(translation, rotation, scale), vector_scale)
     }
 }
 
@@ -147,8 +153,7 @@ struct Triangle {
 }
 
 fn load_mesh<P: AsRef<Path>>(path: P) -> scene::Geometry {
-    let file = File::open(path).unwrap();
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::new(File::open(path).unwrap());
 
     let mut vertex_count = 0u64;
     reader.read_exact(bytemuck::bytes_of_mut(&mut vertex_count)).unwrap();
@@ -183,54 +188,79 @@ fn load_mesh<P: AsRef<Path>>(path: P) -> scene::Geometry {
 }
 
 pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
-    let file = File::open(&path).unwrap();
-    let reader = BufReader::new(file);
+    let reader = BufReader::new(File::open(&path).unwrap());
 
     let scene: Scene = serde_json::from_reader(reader).unwrap();
 
+    let load_shader = |bsdf_ref: &BsdfRef| {
+        let bsdf = match bsdf_ref {
+            BsdfRef::Inline(bsdf) => bsdf,
+            BsdfRef::Named(name) => scene
+                .bsdfs
+                .iter()
+                .find(|bsdf| bsdf.name.as_ref() == Some(name))
+                .unwrap(),
+        };
+        let reflectance = match &bsdf.albedo {
+            Albedo::Value(value) => scene::Reflectance::Constant(value.into_vec3()),
+            Albedo::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
+        };
+        let surface = match bsdf.bsdf_type {
+            BsdfType::Lambert => scene::Surface::Diffuse,
+            BsdfType::Mirror => scene::Surface::Mirror,
+            BsdfType::RoughConductor => scene::Surface::GGX {
+                roughness: bsdf.roughness.unwrap(),
+            },
+            _ => scene::Surface::Diffuse,
+        };
+        scene::Shader {
+            reflectance,
+            surface,
+            emission: None,
+        }
+    };
+
     let mut output = scene::Scene::default();
-    for primitive in scene.primitives {
+    for primitive in scene.primitives.iter() {
         match primitive.primitive_type {
-            PrimitiveType::Quad => {}
+            PrimitiveType::Quad => {
+                let (world_from_local, extra_scale) = primitive.transform.decompose();
+
+                let size = extra_scale.map(|v| Vec2::new(v.x, v.z)).unwrap_or_else(|| Vec2::broadcast(1.0));
+                let mesh = scene::Geometry::Quad {
+                    local_from_quad: Similarity3::new(Vec3::zero(), Rotor3::from_rotation_yz(-PI / 2.0), 1.0),
+                    size,
+                };
+
+                let mut shader = load_shader(&primitive.bsdf);
+                if let Some(s) = primitive.power {
+                    shader.emission = Some(Vec3::broadcast(s * size.x * size.y * world_from_local.scale.abs() / PI));
+                }
+                if let Some(v) = &primitive.emission {
+                    shader.emission = Some(v.into_vec3());
+                }
+
+                let geometry_ref = output.add_geometry(mesh);
+                let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
+                let shader_ref = output.add_shader(shader);
+                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
+            }
             PrimitiveType::Mesh => {
-                let (world_from_local, extra_scale) = primitive.transform.into_similarity3();
+                let (world_from_local, extra_scale) = primitive.transform.decompose();
                 if extra_scale.is_some() {
                     unimplemented!();
                 }
 
                 let mesh = load_mesh(path.as_ref().with_file_name(primitive.file.as_ref().unwrap()));
+                let shader = load_shader(&primitive.bsdf);
 
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
-
-                let bsdf = match &primitive.bsdf {
-                    BsdfRef::Inline(bsdf) => bsdf,
-                    BsdfRef::Named(name) => scene
-                        .bsdfs
-                        .iter()
-                        .find(|bsdf| bsdf.name.as_ref() == Some(name))
-                        .unwrap(),
-                };
-                let reflectance = match &bsdf.albedo {
-                    Albedo::Value(value) => scene::Reflectance::Constant(match value {
-                        ScalarOrVec3::Scalar(s) => Vec3::broadcast(*s),
-                        ScalarOrVec3::Vec3(v) => v.into(),
-                    }),
-                    Albedo::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
-                };
-                let shader_ref = output.add_shader(scene::Shader {
-                    reflectance,
-                    surface: scene::Surface::Diffuse,
-                    emission: None,
-                });
-
+                let shader_ref = output.add_shader(shader);
                 output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
             }
         }
     }
-    output.add_light(scene::Light::Dome {
-        emission: Vec3::new(0.2, 0.3, 0.4),
-    });
     {
         let camera = &scene.camera;
         let world_from_local = {

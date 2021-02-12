@@ -9,6 +9,7 @@ INC=\
 	common/maths.glsl \
 	common/normal_pack.glsl \
 	common/sampler.glsl \
+	common/ggx.glsl \
 	trace/extend_common.glsl \
 	trace/light_common.glsl \
 	trace/occlusion_common.glsl \

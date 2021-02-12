@@ -8,7 +8,6 @@ use spark::{vk, Builder};
 use std::{
     collections::HashMap,
     fs::File,
-    io::BufReader,
     ops::{BitOr, BitOrAssign},
     path::PathBuf,
     sync::Arc,
@@ -515,8 +514,10 @@ impl Renderer {
 
         let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache);
         let texture_binding_set = TextureBindingSet::new(context, texture_images);
-        let path_trace_pipeline_layout = descriptor_set_layout_cache
-            .create_pipeline_multi_layout(&[path_trace_descriptor_set_layout.0, texture_binding_set.descriptor_set_layout]);
+        let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_multi_layout(&[
+            path_trace_descriptor_set_layout.0,
+            texture_binding_set.descriptor_set_layout,
+        ]);
 
         // make pipeline
         let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
@@ -752,7 +753,7 @@ impl Renderer {
                     writer.write_zeros(end_offset - writer.written());
                 }
 
-                let mut light_indexer = 0u32..;
+                let mut next_light_index = 0;
                 writer.write_zeros(hit_region.offset as usize - writer.written());
                 for instance_ref in clusters.instance_iter().cloned() {
                     let instance = scene.instance(instance_ref);
@@ -787,7 +788,8 @@ impl Renderer {
                     };
                     if shader_desc.emission.is_some() {
                         shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
-                        shader.light_index = light_indexer.next().unwrap();
+                        shader.light_index = next_light_index;
+                        next_light_index += 1;
                     }
 
                     let unit_scale = geometry.unit_scale(transform.world_from_local);
@@ -841,7 +843,7 @@ impl Renderer {
                         }
                     }
                 }
-                assert_eq!(light_indexer.next().unwrap(), emissive_instance_count);
+                assert_eq!(next_light_index, emissive_instance_count);
 
                 writer.write_zeros(callable_region.offset as usize - writer.written());
                 for instance_ref in clusters.instance_iter().cloned() {

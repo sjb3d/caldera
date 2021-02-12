@@ -10,6 +10,7 @@
 #include "sampler.glsl"
 #include "color_space.glsl"
 #include "light_common.glsl"
+#include "ggx.glsl"
 
 #define PATH_TRACE_FLAG_USE_MAX_ROUGHNESS       0x01
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
@@ -324,22 +325,17 @@ void main()
             float hit_solid_angle_pdf = 0.f;
             if (sign_bits_match(in_dir_ls.z, out_dir_ls.z)) {
                 if (get_bsdf_type(g_extend.hit) == BSDF_TYPE_GGX) {
-                    const vec2 a = vec2(hit_roughness*hit_roughness);
-                    const vec3 h = normalize(in_dir_ls + out_dir_ls);
+                    const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
-                    const float g1v = smith_g1(out_dir_ls, a);
-                    const float dh = ggx_d(h, a);
-
-                    const float h_dot_o = dot(h, out_dir_ls);
-                    const float n_dot_o = out_dir_ls.z;
-                    const float n_dot_i = in_dir_ls.z;
-
+                    const vec3 v = out_dir_ls;
+                    const vec3 l = in_dir_ls;
+                    const vec3 h = normalize(v + l);
+                    const float h_dot_v = dot(h, v);
                     const vec3 r0 = hit_reflectance;
-                    hit_f 
-                        = schlick_fresnel(r0, abs(h_dot_o))*dh*smith_g2(out_dir_ls, in_dir_ls, a)
-                        / (4.f*abs(n_dot_o*n_dot_i));
+                    hit_f = ggx_brdf(r0, h, h_dot_v, v, l, alpha);
 
-                    hit_solid_angle_pdf = g1v*max(0.f, h_dot_o)*dh/(4.f*abs(n_dot_o*h.z));
+                    const float n_dot_v = v.z;
+                    hit_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha) / (4.f * n_dot_v);
                 } else {
                     hit_f = hit_reflectance/PI;
                     hit_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
@@ -413,21 +409,19 @@ void main()
                 } break;
 
                 case BSDF_TYPE_GGX: {
-                    const vec2 a = vec2(hit_roughness*hit_roughness);
-                    const vec3 h = sample_ggx_vndf(out_dir_ls, a, bsdf_rand_u01);
-                    
+                    const vec2 alpha = vec2(hit_roughness*hit_roughness);
+
+                    const vec3 h = sample_ggx_vndf(out_dir_ls, alpha, bsdf_rand_u01);
                     in_dir_ls = reflect(-out_dir_ls, h);
                     in_dir_ls.z = abs(in_dir_ls.z);
 
-                    const float g1v = smith_g1(out_dir_ls, a);
-                    const float dh = ggx_d(h, a);
-                    const float h_dot_o = dot(h, out_dir_ls);
-                    const float n_dot_o = out_dir_ls.z;
-
+                    const vec3 v = out_dir_ls;
+                    const vec3 l = in_dir_ls;
+                    const float h_dot_v = dot(h, v);
                     const vec3 r0 = hit_reflectance;
-                    estimator = schlick_fresnel(r0, abs(h_dot_o))*smith_g2(out_dir_ls, in_dir_ls, a)/g1v;
+                    estimator = ggx_vndf_sampled_estimator(r0, h_dot_v, v, l, alpha);
 
-                    in_solid_angle_pdf = g1v*max(0.f, h_dot_o)*dh/(4.f*abs(n_dot_o*h.z));
+                    in_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha);
                 } break;
 
                 case BSDF_TYPE_MIRROR: {
