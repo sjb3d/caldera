@@ -458,8 +458,7 @@ impl Renderer {
                             resource_loader.async_load({
                                 let filename = filename.clone();
                                 move |allocator| {
-                                    let file = File::open(&filename).unwrap();
-                                    let mut reader = BufReader::new(file);
+                                    let mut reader = File::open(&filename).unwrap();
                                     let (info, data) =
                                         stb::image::stbi_load_from_reader(&mut reader, stb::image::Channels::RgbAlpha)
                                             .unwrap();
