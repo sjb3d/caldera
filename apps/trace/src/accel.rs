@@ -50,8 +50,8 @@ enum PrimitiveType {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Cluster {
     transform_refs: Vec<TransformRef>,
-    elements: Vec<ClusterElement>,
     primitive_type: PrimitiveType,
+    elements: Vec<ClusterElement>,
 }
 
 pub struct SceneClusters(Vec<Cluster>);
@@ -86,11 +86,11 @@ impl SceneClusters {
                 };
                 Cluster {
                     transform_refs,
+                    primitive_type,
                     elements: vec![ClusterElement {
                         geometry_ref,
                         instance_refs,
                     }],
-                    primitive_type,
                 }
             })
             .collect();
