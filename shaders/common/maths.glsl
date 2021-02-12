@@ -86,7 +86,7 @@ bool ray_vs_sphere(vec3 p, vec3 d, float r, out vec2 t)
     
     const bool has_hit = (q > 0.f);
     if (has_hit) {
-        const float k = b + copysign(a*sqrt(q), b);
+        const float k = b + copysign(sqrt(a*q), b);
         t = vec2(k/a, c/k);
     }
     return has_hit;
@@ -103,7 +103,7 @@ vec2 ray_vs_sphere_force_hit(vec3 p, vec3 d, float r)
     const vec3 tmp = p + d*(b/a);
     const float q = max(r*r - dot(tmp, tmp), 0.f);
     
-    const float k = b + copysign(a*sqrt(q), b);
+    const float k = b + copysign(sqrt(a*q), b);
     return vec2(k/a, c/k);
 }
 
