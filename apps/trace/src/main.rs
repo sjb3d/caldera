@@ -315,7 +315,7 @@ impl App {
                         needs_reset |= Drag::new(im_str!("Camera FOV"))
                             .speed(0.005)
                             .build(&ui, &mut self.fov_y);
-                        needs_reset |= Drag::new(im_str!("Camera Scale Bias"))
+                        Drag::new(im_str!("Camera Scale Bias"))
                             .speed(0.05)
                             .build(&ui, &mut self.view_adjust.log2_scale);
                         ui.text(format!(
