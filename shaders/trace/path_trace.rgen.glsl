@@ -335,8 +335,7 @@ void main()
                         const vec3 r0 = hit_reflectance;
                         hit_f = ggx_brdf(r0, h, h_dot_v, v, l, alpha);
 
-                        const float n_dot_v = v.z;
-                        hit_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha) / (4.f * n_dot_v);
+                        hit_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
                     } break;
 
                     case BSDF_TYPE_PLASTIC: {
@@ -351,8 +350,7 @@ void main()
                         const float h_dot_v = dot(h, v);
                         const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
 
-                        const float n_dot_v = v.z;
-                        const float spec_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha) / (4.f * n_dot_v);
+                        const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
 
                         hit_f = diff_f + vec3(spec_f);
                         hit_solid_angle_pdf = .5f*(diff_solid_angle_pdf + spec_solid_angle_pdf);
@@ -435,7 +433,7 @@ void main()
                 case BSDF_TYPE_CONDUCTOR: {
                     const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
-                    const vec3 h = sample_ggx_vndf(out_dir_ls, alpha, bsdf_rand_u01);
+                    const vec3 h = sample_vndf(out_dir_ls, alpha, bsdf_rand_u01);
                     in_dir_ls = reflect(-out_dir_ls, h);
                     in_dir_ls.z = abs(in_dir_ls.z);
 
@@ -445,7 +443,7 @@ void main()
                     const vec3 r0 = hit_reflectance;
                     estimator = ggx_vndf_sampled_estimator(r0, h_dot_v, v, l, alpha);
 
-                    in_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha);
+                    in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
                 } break;
 
                 case BSDF_TYPE_PLASTIC: {
@@ -461,7 +459,7 @@ void main()
                     } else {
                         const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
-                        const vec3 h = sample_ggx_vndf(out_dir_ls, alpha, bsdf_rand_u01);
+                        const vec3 h = sample_vndf(out_dir_ls, alpha, bsdf_rand_u01);
                         in_dir_ls = reflect(-out_dir_ls, h);
                         in_dir_ls.z = abs(in_dir_ls.z);
 
@@ -470,7 +468,7 @@ void main()
                         const float h_dot_v = dot(h, v);
                         estimator = vec3(ggx_vndf_sampled_estimator(PLASTIC_F0, h_dot_v, v, l, alpha));
 
-                        in_solid_angle_pdf = ggx_vndf_pdf(v, h, h_dot_v, alpha);
+                        in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
                     }
                     const float selection_pdf = .5f;
                     estimator /= selection_pdf;

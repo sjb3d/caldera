@@ -205,7 +205,7 @@ void main()
 
             // sample GGX
             const vec2 ray_rand_u01 = rand_u01(pixel_coord, 1 + ray_index, seq_sample_index);
-            const vec3 h = sample_ggx_vndf(out_dir, alpha, ray_rand_u01);
+            const vec3 h = sample_vndf(out_dir, alpha, ray_rand_u01);
             const vec3 in_dir = reflect(-out_dir, h);
 
             // compute estimator

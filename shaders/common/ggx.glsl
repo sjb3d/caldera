@@ -46,7 +46,7 @@ float ggx_brdf(float r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 }
 
 // reference: http://jcgt.org/published/0007/04/01/
-vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
+vec3 sample_vndf(vec3 Ve, vec2 alpha, vec2 u)
 {
     // transforming the view direction to the hemisphere configuration
     const vec3 Vh = normalize(vec3(alpha.x*Ve.x, alpha.y*Ve.y, Ve.z));
@@ -64,21 +64,23 @@ vec3 sample_ggx_vndf(vec3 Ve, vec2 alpha, vec2 u)
     return normalize(vec3(alpha.x*Nh.x, alpha.y*Nh.y, max(0.f, Nh.z)));
 }
 
-float ggx_vndf_pdf(vec3 v, vec3 h, float h_dot_v, vec2 alpha)
+float vndf_pdf(vec3 v, vec3 h, float h_dot_v, vec2 alpha)
 {
     const float n_dot_v = v.z;
-    return smith_g1(v, alpha) * max(0, h_dot_v) * ggx_d(h, alpha) / abs(n_dot_v);
+    return smith_g1(v, alpha) * max(0, h_dot_v) * ggx_d(h, alpha) / n_dot_v;
+}
+
+float ggx_vndf_sampled_pdf(vec3 v, vec3 h, float h_dot_v, vec2 alpha)
+{
+    // Algebraic simplification of: vndf_pdf / (4.f * h_dot_v)
+    const float n_dot_v = v.z;
+    return smith_g1(v, alpha) * ggx_d(h, alpha) / (4.f * n_dot_v);
 }
 
 // reference: http://jcgt.org/published/0007/04/01/
 vec3 ggx_vndf_sampled_estimator(vec3 r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
-    /*
-        Algebraic simplification of:
-
-        let ggx_pdf = ggx_vndf_pdf / (4.f * n_dot_v);
-        return ggx_brdf * n_dot_l / ggx_pdf;
-    */
+    // Algebraic simplification of: ggx_brdf * n_dot_l / ggx_vndf_sampled_pdf
     return schlick_fresnel(r0, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
 }
 float ggx_vndf_sampled_estimator(float r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
