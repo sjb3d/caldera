@@ -87,7 +87,7 @@ struct SolidAngleLightRecord {
 struct PathTraceFlags(u32);
 
 impl PathTraceFlags {
-    const USE_MAX_ROUGHNESS: PathTraceFlags = PathTraceFlags(0x1);
+    const ACCUMULATE_ROUGHNESS: PathTraceFlags = PathTraceFlags(0x1);
     const ALLOW_LIGHT_SAMPLING: PathTraceFlags = PathTraceFlags(0x2);
     const ALLOW_BSDF_SAMPLING: PathTraceFlags = PathTraceFlags(0x4);
 }
@@ -418,7 +418,7 @@ pub struct Renderer {
     geometry_attrib_data: Vec<Option<GeometryAttribData>>,
     shader_binding_table: Option<ShaderBindingTable>,
     max_bounces: u32,
-    use_max_roughness: bool,
+    accumulate_roughness: bool,
     sample_sphere_solid_angle: bool,
     sampling_technique: SamplingTechnique,
     mis_heuristic: MultipleImportanceHeuristic,
@@ -579,7 +579,7 @@ impl Renderer {
             geometry_attrib_data,
             shader_binding_table: None,
             max_bounces,
-            use_max_roughness: true,
+            accumulate_roughness: true,
             sample_sphere_solid_angle: true,
             sampling_technique: SamplingTechnique::LightsAndSurfaces,
             mis_heuristic: MultipleImportanceHeuristic::Balance,
@@ -1025,7 +1025,7 @@ impl Renderer {
         needs_reset |= Slider::new(im_str!("Max Bounces"))
             .range(0..=8)
             .build(&ui, &mut self.max_bounces);
-        needs_reset |= ui.checkbox(im_str!("Use Max Roughness"), &mut self.use_max_roughness);
+        needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.accumulate_roughness);
         needs_reset |= ui.checkbox(
             im_str!("Sample Sphere Solid Angle"),
             &mut self.sample_sphere_solid_angle,
@@ -1097,8 +1097,8 @@ impl Renderer {
                 PathTraceFlags::ALLOW_LIGHT_SAMPLING | PathTraceFlags::ALLOW_BSDF_SAMPLING
             }
         };
-        if self.use_max_roughness {
-            path_trace_flags |= PathTraceFlags::USE_MAX_ROUGHNESS;
+        if self.accumulate_roughness {
+            path_trace_flags |= PathTraceFlags::ACCUMULATE_ROUGHNESS;
         }
 
         let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(

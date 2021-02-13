@@ -13,7 +13,7 @@
 #include "ggx.glsl"
 #include "rand_common.glsl"
 
-#define PATH_TRACE_FLAG_USE_MAX_ROUGHNESS       0x01
+#define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS    0x01
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
 #define PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING     0x04
 
@@ -158,7 +158,7 @@ void main()
 {
     const bool allow_light_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING) != 0);
     const bool allow_bsdf_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING) != 0);
-    const bool use_max_roughness = ((g_path_trace.flags & PATH_TRACE_FLAG_USE_MAX_ROUGHNESS) != 0);
+    const bool accumulate_roughness = ((g_path_trace.flags & PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS) != 0);
 
     vec3 prev_position;
     vec3 prev_normal;
@@ -167,7 +167,7 @@ void main()
     vec3 prev_in_dir;
     float prev_in_solid_angle_pdf;
     vec3 alpha;
-    float max_roughness;
+    float roughness_acc;
 
     // sample the camera
     {
@@ -192,7 +192,7 @@ void main()
         prev_in_dir = ray_dir;
         prev_in_solid_angle_pdf = solid_angle_pdf;
         alpha = importance/sensor_area_pdf;
-        max_roughness = 0.f;
+        roughness_acc = 0.f;
     }
 
     // trace a path from the camera
@@ -217,7 +217,7 @@ void main()
         // handle ray hitting a light source
         uint light_index_begin = 0;
         uint light_index_end = 0;
-        if (allow_bsdf_sampling || segment_index == 1) {
+        if (allow_bsdf_sampling || roughness_acc == 0.f) {
             if (has_light(g_extend.hit)) {
                 light_index_begin = get_light_index(g_extend.hit);
                 light_index_end = light_index_begin + 1;
@@ -262,14 +262,15 @@ void main()
         }
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
-        if (use_max_roughness) {
-            max_roughness = max(max_roughness, get_roughness(g_extend.hit));
-            if (max_roughness == 1.f) {
-                g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_DIFFUSE, max_roughness);
-            } else if (max_roughness != 0.f) {
+        if (accumulate_roughness) {
+            const float orig_roughness = get_roughness(g_extend.hit);
+            roughness_acc = min(sqrt(roughness_acc*roughness_acc + orig_roughness*orig_roughness), 1.f);
+            if (roughness_acc == 1.f) {
+                g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_DIFFUSE, roughness_acc);
+            } else if (roughness_acc != 0.f) {
                 const uint orig_bsdf_type = get_bsdf_type(g_extend.hit);
                 const uint new_bsdf_type = (orig_bsdf_type == BSDF_TYPE_MIRROR) ? BSDF_TYPE_DIFFUSE : orig_bsdf_type;
-                g_extend.hit = replace_hit_data(g_extend.hit, new_bsdf_type, max_roughness);
+                g_extend.hit = replace_hit_data(g_extend.hit, new_bsdf_type, roughness_acc);
             }
         }
 
