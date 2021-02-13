@@ -175,7 +175,7 @@ impl Drop for UniformDataPool {
 #[derive(Debug, Clone, Copy)]
 pub enum DescriptorSetLayoutBinding {
     SampledImage { sampler: vk::Sampler },
-    StorageImage,
+    StorageImage { count: u32 },
     UniformData { size: u32 },
     StorageBuffer,
     AccelerationStructure,
@@ -183,7 +183,7 @@ pub enum DescriptorSetLayoutBinding {
 
 pub enum DescriptorSetBindingData<'a> {
     SampledImage { image_view: vk::ImageView },
-    StorageImage { image_view: vk::ImageView },
+    StorageImage { image_views: &'a [vk::ImageView] },
     UniformData { size: u32, writer: &'a dyn Fn(&mut [u8]) },
     StorageBuffer { buffer: vk::Buffer },
     AccelerationStructure { accel: vk::AccelerationStructureKHR },
@@ -220,11 +220,11 @@ impl DescriptorSetLayoutCache {
                         p_immutable_samplers: sampler,
                     });
                 }
-                DescriptorSetLayoutBinding::StorageImage => {
+                DescriptorSetLayoutBinding::StorageImage { count } => {
                     bindings_vk.push(vk::DescriptorSetLayoutBinding {
                         binding: i as u32,
                         descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                        descriptor_count: 1,
+                        descriptor_count: *count,
                         stage_flags: vk::ShaderStageFlags::ALL,
                         ..Default::default()
                     });
@@ -447,19 +447,22 @@ impl DescriptorPool {
                         ..Default::default()
                     });
                 }
-                DescriptorSetBindingData::StorageImage { image_view } => {
-                    image_info.push(vk::DescriptorImageInfo {
-                        sampler: None,
-                        image_view: Some(*image_view),
-                        image_layout: vk::ImageLayout::GENERAL,
-                    });
+                DescriptorSetBindingData::StorageImage { image_views } => {
+                    let offset = image_info.len();
+                    for image_view in image_views.iter() {
+                        image_info.push(vk::DescriptorImageInfo {
+                            sampler: None,
+                            image_view: Some(*image_view),
+                            image_layout: vk::ImageLayout::GENERAL,
+                        });
+                    }
 
                     writes.push(vk::WriteDescriptorSet {
                         dst_set: Some(descriptor_set),
                         dst_binding: i as u32,
-                        descriptor_count: 1,
+                        descriptor_count: image_views.len() as u32,
                         descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                        p_image_info: image_info.last().unwrap(),
+                        p_image_info: image_info.get(offset).unwrap(),
                         ..Default::default()
                     });
                 }

@@ -54,9 +54,7 @@ enum ToneMapMethod {
 
 descriptor_set_layout!(CopyDescriptorSetLayout {
     data: UniformData<CopyData>,
-    result_r: StorageImage,
-    result_g: StorageImage,
-    result_b: StorageImage,
+    result: [StorageImage; 3],
 });
 
 struct ViewAdjust {
@@ -400,11 +398,11 @@ impl App {
                     let fov_y = self.fov_y;
                     let result_images = &self.result_images;
                     move |params, cmd| {
-                        let result_image_views = (
+                        let result_image_views = [
                             params.get_image_view(result_images.0),
                             params.get_image_view(result_images.1),
                             params.get_image_view(result_images.2),
-                        );
+                        ];
 
                         renderer.emit_trace(
                             cmd,
@@ -457,11 +455,11 @@ impl App {
                     set_viewport_helper(&context.device, cmd, swap_size);
 
                     if next_sample_index != 0 {
-                        let result_image_views = (
+                        let result_image_views = [
                             params.get_image_view(result_images.0),
                             params.get_image_view(result_images.1),
                             params.get_image_view(result_images.2),
-                        );
+                        ];
 
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
                             &descriptor_pool,
@@ -472,9 +470,7 @@ impl App {
                                     tone_map_method: tone_map_method.into_integer(),
                                 }
                             },
-                            result_image_views.0,
-                            result_image_views.1,
-                            result_image_views.2,
+                            &result_image_views,
                         );
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);

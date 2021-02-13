@@ -60,14 +60,23 @@ _TODO: document_
 
 ### Procedural Macro for Descriptor Set Layout
 
-The macro `descriptor_set_layout!` is implemented in `caldera-macro`, and used in the test apps.  This allows the layout to be declared using struct-like syntax, here is an example:
+The macro `descriptor_set_layout!` is implemented in `caldera-macro`, and used in the test apps.  This allows the layout to be declared using struct-like syntax.  For example, consider the following bindings in GLSL:
+
+```glsl
+layout(set = 0, binding = 0, scalar) uniform CopyData {
+    vec2 params;
+    float more;
+} g_copy;
+
+layout(set = 0, binding = 1, r32f) uniform restrict image2D g_images[3];
+```
+
+The descriptor set layout for set 0 above can be generated using the macro as follows:
 
 ```rust
 descriptor_set_layout!(CopyDescriptorSetLayout {
     copy: UniformData<CopyData>,
-    image_r: StorageImage,
-    image_g: StorageImage,
-    image_b: StorageImage,
+    images: [StorageImage; 3],
 });
 ```
 

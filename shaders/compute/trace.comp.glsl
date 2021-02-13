@@ -18,11 +18,8 @@ layout(set = 0, binding = 0, scalar) uniform TraceData {
 #define RENDER_COLOR_SPACE_REC709   0
 #define RENDER_COLOR_SPACE_ACESCG   1
 
-layout(set = 0, binding = 1, r32f) uniform restrict image2D g_result_r;
-layout(set = 0, binding = 2, r32f) uniform restrict image2D g_result_g;
-layout(set = 0, binding = 3, r32f) uniform restrict image2D g_result_b;
-
-layout(set = 0, binding = 4, rg16ui) uniform restrict readonly uimage2D g_samples;
+layout(set = 0, binding = 1, r32f) uniform restrict image2D g_result[3];
+layout(set = 0, binding = 2, rg16ui) uniform restrict readonly uimage2D g_samples;
 
 #define LOG2_SEQUENCE_COUNT         12
 
@@ -221,11 +218,11 @@ void main()
     }
     vec3 col = sum/float(sample_count);
     if (g_trace.pass_index > 0) {
-        col.x += imageLoad(g_result_r, ivec2(pixel_coord)).x;
-        col.y += imageLoad(g_result_g, ivec2(pixel_coord)).x;
-        col.z += imageLoad(g_result_b, ivec2(pixel_coord)).x;
+        col.x += imageLoad(g_result[0], ivec2(pixel_coord)).x;
+        col.y += imageLoad(g_result[1], ivec2(pixel_coord)).x;
+        col.z += imageLoad(g_result[2], ivec2(pixel_coord)).x;
     }
-    imageStore(g_result_r, ivec2(pixel_coord), vec4(col.x));
-    imageStore(g_result_g, ivec2(pixel_coord), vec4(col.y));
-    imageStore(g_result_b, ivec2(pixel_coord), vec4(col.z));
+    imageStore(g_result[0], ivec2(pixel_coord), vec4(col.x));
+    imageStore(g_result[1], ivec2(pixel_coord), vec4(col.y));
+    imageStore(g_result[2], ivec2(pixel_coord), vec4(col.z));
 }

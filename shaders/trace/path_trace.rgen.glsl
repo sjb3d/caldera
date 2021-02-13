@@ -39,9 +39,7 @@ LIGHT_UNIFORM_DATA(g_light);
 
 layout(set = 0, binding = 2) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 3, r16ui) uniform restrict readonly uimage2D g_samples;
-layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result_r;
-layout(set = 0, binding = 5, r32f) uniform restrict image2D g_result_g;
-layout(set = 0, binding = 6, r32f) uniform restrict image2D g_result_b;
+layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result[3];
 
 #define LOG2_SEQUENCE_COUNT     10
 
@@ -495,11 +493,11 @@ void main()
     }
 
     if (g_path_trace.sample_index != 0) {
-        result_sum.r += imageLoad(g_result_r, ivec2(gl_LaunchIDEXT.xy)).x;
-        result_sum.g += imageLoad(g_result_g, ivec2(gl_LaunchIDEXT.xy)).x;
-        result_sum.b += imageLoad(g_result_b, ivec2(gl_LaunchIDEXT.xy)).x;
+        result_sum.r += imageLoad(g_result[0], ivec2(gl_LaunchIDEXT.xy)).x;
+        result_sum.g += imageLoad(g_result[1], ivec2(gl_LaunchIDEXT.xy)).x;
+        result_sum.b += imageLoad(g_result[2], ivec2(gl_LaunchIDEXT.xy)).x;
     }
-    imageStore(g_result_r, ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
-    imageStore(g_result_g, ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
-    imageStore(g_result_b, ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));
+    imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
+    imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
+    imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));
 }

@@ -3,9 +3,13 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
-use syn::{braced, parse_macro_input, token, Ident, Result, Token};
+use syn::{
+    braced, bracketed,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
+    token, Error, Ident, LitInt, Result, Token,
+};
 
 mod kw {
     syn::custom_keyword!(SampledImage);
@@ -26,6 +30,7 @@ enum BindingType {
 struct Binding {
     name: Ident,
     ty: BindingType,
+    array: Option<usize>,
 }
 
 struct Layout {
@@ -65,8 +70,29 @@ impl Parse for Binding {
     fn parse(input: ParseStream) -> Result<Self> {
         let name = input.parse()?;
         input.parse::<token::Colon>()?;
-        let ty = input.parse()?;
-        Ok(Self { name, ty })
+        let lookahead = input.lookahead1();
+        let (ty, array) = if lookahead.peek(token::Bracket) {
+            let content;
+            let _bracket_token: token::Bracket = bracketed!(content in input);
+            let ty = content.parse()?;
+            content.parse::<token::Semi>()?;
+            let array_lit = content.parse::<LitInt>()?;
+            let array = array_lit.base10_parse()?;
+            if !matches!(ty, BindingType::StorageImage) {
+                return Err(Error::new(
+                    content.span(),
+                    "expected `StorageImage` for descriptor array",
+                ));
+            }
+            if array == 0 {
+                return Err(Error::new(array_lit.span(), "array length must be non-zero"));
+            }
+            (ty, Some(array))
+        } else {
+            let ty = input.parse()?;
+            (ty, None)
+        };
+        Ok(Self { name, ty, array })
     }
 }
 
@@ -95,7 +121,10 @@ impl Binding {
                     quote!(DescriptorSetLayoutBinding::SampledImage { sampler: #sampler }),
                 )
             }
-            BindingType::StorageImage => (None, quote!(DescriptorSetLayoutBinding::StorageImage)),
+            BindingType::StorageImage => {
+                let count = self.array.unwrap_or(1) as u32;
+                (None, quote!(DescriptorSetLayoutBinding::StorageImage { count: #count }))
+            }
             BindingType::UniformData { ref ty } => (
                 None,
                 quote!(DescriptorSetLayoutBinding::UniformData {
@@ -117,11 +146,22 @@ impl Binding {
                 )
             }
             BindingType::StorageImage => {
-                let image_view = format_ident!("{}_image_view", self.name);
-                (
-                    quote!(#image_view: vk::ImageView),
-                    quote!(DescriptorSetBindingData::StorageImage { image_view: #image_view }),
-                )
+                if let Some(count) = self.array {
+                    let image_views = format_ident!("{}_image_views", self.name);
+                    (
+                        quote!(#image_views: &[vk::ImageView]),
+                        quote!({
+                            assert_eq!(#image_views.len(), #count);
+                            DescriptorSetBindingData::StorageImage { image_views: #image_views }
+                        }),
+                    )
+                } else {
+                    let image_view = format_ident!("{}_image_view", self.name);
+                    (
+                        quote!(#image_view: vk::ImageView),
+                        quote!(DescriptorSetBindingData::StorageImage { image_views: std::slice::from_ref(&#image_view) }),
+                    )
+                }
             }
             BindingType::UniformData { ref ty } => {
                 let writer = format_ident!("{}_writer", self.name);

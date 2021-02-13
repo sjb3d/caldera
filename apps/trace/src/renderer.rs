@@ -138,9 +138,7 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     light_uniforms: UniformData<LightUniforms>,
     accel: AccelerationStructure,
     samples: StorageImage,
-    result_r: StorageImage,
-    result_g: StorageImage,
-    result_b: StorageImage,
+    result: [StorageImage; 3],
 });
 
 #[repr(transparent)]
@@ -1084,7 +1082,7 @@ impl Renderer {
         sample_index: u32,
         world_from_camera: Similarity3,
         fov_y: f32,
-        result_image_views: &(vk::ImageView, vk::ImageView, vk::ImageView),
+        result_image_views: &[vk::ImageView],
         trace_size: UVec2,
     ) {
         let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
@@ -1126,9 +1124,7 @@ impl Renderer {
             },
             self.accel.top_level_accel().unwrap(),
             sample_image_view,
-            result_image_views.0,
-            result_image_views.1,
-            result_image_views.2,
+            result_image_views,
         );
 
         let device = &self.context.device;

@@ -33,9 +33,7 @@ struct TraceData {
 
 descriptor_set_layout!(TraceDescriptorSetLayout {
     trace: UniformData<TraceData>,
-    result_r: StorageImage,
-    result_g: StorageImage,
-    result_b: StorageImage,
+    result: [StorageImage; 3],
     samples: StorageImage,
 });
 
@@ -261,11 +259,11 @@ impl App {
                     let render_color_space = self.render_color_space;
                     move |params, cmd| {
                         let sample_image_view = sample_image_view;
-                        let trace_image_views = (
+                        let trace_image_views = [
                             params.get_image_view(trace_images.0),
                             params.get_image_view(trace_images.1),
                             params.get_image_view(trace_images.2),
-                        );
+                        ];
 
                         let descriptor_set = trace_descriptor_set_layout.write(
                             &descriptor_pool,
@@ -278,9 +276,7 @@ impl App {
                                     render_color_space: render_color_space.into_integer(),
                                 };
                             },
-                            trace_image_views.0,
-                            trace_image_views.1,
-                            trace_image_views.2,
+                            &trace_image_views,
                             sample_image_view,
                         );
 
