@@ -71,9 +71,17 @@ layout(set = 0, binding = 0, scalar) uniform CopyData {
 layout(set = 0, binding = 1, r32f) uniform restrict image2D g_images[3];
 ```
 
-The descriptor set layout for set 0 above can be generated using the macro as follows:
+The descriptor set layout for set 0 above can be generated using the macro (and the [bytemuck](https://crates.io/crates/bytemuck) crate) as follows:
 
 ```rust
+// uses bytemuck::Pod to safely alias as bytes
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct CopyData {
+    params: Vec2, // [f32; 2] layout
+    more: f32,
+}
+
 descriptor_set_layout!(CopyDescriptorSetLayout {
     copy: UniformData<CopyData>,
     images: [StorageImage; 3],
