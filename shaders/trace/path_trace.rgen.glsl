@@ -11,6 +11,7 @@
 #include "color_space.glsl"
 #include "light_common.glsl"
 #include "ggx.glsl"
+#include "rand_common.glsl"
 
 #define PATH_TRACE_FLAG_USE_MAX_ROUGHNESS       0x01
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
@@ -39,9 +40,7 @@ LIGHT_UNIFORM_DATA(g_light);
 
 layout(set = 0, binding = 2) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 3, rg16ui) uniform restrict readonly uimage2D g_samples;
-layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result[3];
-
-#define LOG2_SEQUENCE_COUNT     10
+layout(set = 0, binding = 4, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -56,9 +55,7 @@ vec3 sample_from_rec709(vec3 c)
 
 vec2 rand_u01(uint seq_index)
 {
-    // hash the pixel coordinate and ray index to pick a sequence
-    const uint seq_hash = hash((seq_index << 24) ^ (gl_LaunchIDEXT.y << 12) ^ gl_LaunchIDEXT.x);
-    const ivec2 sample_coord = ivec2(g_path_trace.sample_index, seq_hash >> (32 - LOG2_SEQUENCE_COUNT));
+    const ivec2 sample_coord = rand_sample_coord(gl_LaunchIDEXT.xy, seq_index, g_path_trace.sample_index);
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
 }
@@ -492,11 +489,6 @@ void main()
         }
     }
 
-    if (g_path_trace.sample_index != 0) {
-        result_sum.r += imageLoad(g_result[0], ivec2(gl_LaunchIDEXT.xy)).x;
-        result_sum.g += imageLoad(g_result[1], ivec2(gl_LaunchIDEXT.xy)).x;
-        result_sum.b += imageLoad(g_result[2], ivec2(gl_LaunchIDEXT.xy)).x;
-    }
     imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
     imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
     imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));

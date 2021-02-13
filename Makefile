@@ -13,6 +13,7 @@ INC=\
 	trace/extend_common.glsl \
 	trace/light_common.glsl \
 	trace/occlusion_common.glsl \
+	trace/rand_common.glsl \
 	trace/sphere_common.glsl
 
 SRC=\
@@ -32,6 +33,7 @@ SRC=\
 	trace/extend.rmiss.glsl \
 	trace/extend_sphere.rchit.glsl \
 	trace/extend_triangle.rchit.glsl \
+	trace/filter.comp.glsl \
 	trace/occlusion.rchit.glsl \
 	trace/occlusion.rmiss.glsl \
 	trace/path_trace.rgen.glsl \

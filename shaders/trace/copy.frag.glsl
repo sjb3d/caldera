@@ -7,7 +7,7 @@
 layout(location = 0) out vec4 o_col;
 
 layout(set = 0, binding = 0, scalar) uniform CopyData {
-    float sample_scale;
+    float exposure_scale;
     uint render_color_space;
     uint tone_map_method;
 } g_copy;
@@ -19,7 +19,7 @@ layout(set = 0, binding = 0, scalar) uniform CopyData {
 #define TONE_MAP_METHOD_FILMIC_SRGB 1
 #define TONE_MAP_METHOD_ACES_FIT    2
 
-layout(set = 0, binding = 1, r32f) uniform restrict readonly image2D g_result[3];
+layout(set = 0, binding = 1, rgba32f) uniform restrict readonly image2D g_result;
 
 vec3 acescg_from_sample(vec3 c)
 {
@@ -61,10 +61,8 @@ vec3 tone_map_sample(vec3 c)
 
 void main()
 {
-    vec3 col = vec3(
-        imageLoad(g_result[0], ivec2(gl_FragCoord.xy)).x,
-        imageLoad(g_result[1], ivec2(gl_FragCoord.xy)).x,
-        imageLoad(g_result[2], ivec2(gl_FragCoord.xy)).x)*g_copy.sample_scale;
+    vec4 result = imageLoad(g_result, ivec2(gl_FragCoord));
+    vec3 col = max(result.xyz*(g_copy.exposure_scale/result.w), vec3(0.f));
     col = tone_map_sample(col);
     o_col = vec4(col, 1.f);
 }

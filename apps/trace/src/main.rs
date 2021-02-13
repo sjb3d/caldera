@@ -13,8 +13,7 @@ use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
 use spark::vk;
-use std::sync::Arc;
-use std::{env, ops::Deref};
+use std::{env, ops::Deref, sync::Arc};
 use winit::{
     dpi::{LogicalSize, Size},
     event::VirtualKeyCode,
@@ -29,10 +28,33 @@ struct SamplePixel {
     y: u16,
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
+enum FilterType {
+    Box,
+    Gaussian,
+    Mitchell,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct FilterData {
+    image_size: UVec2,
+    sample_index: u32,
+    filter_type: u32,
+}
+
+descriptor_set_layout!(FilterDescriptorSetLayout {
+    data: UniformData<FilterData>,
+    samples: StorageImage,
+    input: [StorageImage; 3],
+    result: StorageImage,
+});
+
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct CopyData {
-    sample_scale: f32,
+    exposure_scale: f32,
     render_color_space: u32,
     tone_map_method: u32,
 }
@@ -54,7 +76,7 @@ enum ToneMapMethod {
 
 descriptor_set_layout!(CopyDescriptorSetLayout {
     data: UniformData<CopyData>,
-    result: [StorageImage; 3],
+    result: StorageImage,
 });
 
 struct ViewAdjust {
@@ -141,11 +163,14 @@ impl ViewAdjust {
 struct App {
     context: Arc<Context>,
 
+    filter_descriptor_set_layout: FilterDescriptorSetLayout,
+    filter_pipeline_layout: vk::PipelineLayout,
+
     copy_descriptor_set_layout: CopyDescriptorSetLayout,
     copy_pipeline_layout: vk::PipelineLayout,
 
     sample_image: StaticImageHandle,
-    result_images: (ImageHandle, ImageHandle, ImageHandle),
+    result_image: ImageHandle,
     next_sample_index: u32,
 
     scene: Arc<Scene>,
@@ -155,6 +180,7 @@ struct App {
     log2_exposure_scale: f32,
     render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
+    filter_type: FilterType,
     view_adjust: ViewAdjust,
     fov_y: f32,
 }
@@ -170,6 +196,9 @@ impl App {
     fn new(base: &mut AppBase, params: &AppParams) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
+
+        let filter_descriptor_set_layout = FilterDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
 
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
         let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
@@ -202,19 +231,15 @@ impl App {
             }
         });
 
-        let result_images = {
+        let result_image = {
             let trace_size = Self::trace_size();
-            let desc = ImageDesc::new_2d(trace_size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let desc = ImageDesc::new_2d(trace_size, vk::Format::R32G32B32A32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let usage = ImageUsage::FRAGMENT_STORAGE_READ
-                | ImageUsage::RAY_TRACING_STORAGE_READ
-                | ImageUsage::RAY_TRACING_STORAGE_WRITE;
+                | ImageUsage::COMPUTE_STORAGE_READ
+                | ImageUsage::COMPUTE_STORAGE_WRITE;
             let render_graph = &mut base.systems.render_graph;
             let global_allocator = &mut base.systems.global_allocator;
-            (
-                render_graph.create_image(&desc, usage, global_allocator),
-                render_graph.create_image(&desc, usage, global_allocator),
-                render_graph.create_image(&desc, usage, global_allocator),
-            )
+            render_graph.create_image(&desc, usage, global_allocator)
         };
 
         let scene = Arc::new(match &params.scene_desc {
@@ -240,10 +265,12 @@ impl App {
 
         Self {
             context: Arc::clone(&context),
+            filter_descriptor_set_layout,
+            filter_pipeline_layout,
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             sample_image,
-            result_images,
+            result_image,
             next_sample_index: 0,
             scene,
             renderer,
@@ -251,6 +278,7 @@ impl App {
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
+            filter_type: FilterType::Gaussian,
             view_adjust: ViewAdjust::new(world_from_camera),
             fov_y,
         }
@@ -285,11 +313,18 @@ impl App {
                         );
                         needs_reset |= self.renderer.debug_ui(&ui);
                     }
-                    if CollapsingHeader::new(im_str!("Tone Map")).default_open(true).build(&ui) {
+                    if CollapsingHeader::new(im_str!("Film")).default_open(true).build(&ui) {
                         let id = ui.push_id(im_str!("Tone Map"));
                         Drag::new(im_str!("Exposure Bias"))
                             .speed(0.05)
                             .build(&ui, &mut self.log2_exposure_scale);
+                        ui.text("Filter:");
+                        needs_reset |= ui.radio_button(im_str!("Box"), &mut self.filter_type, FilterType::Box);
+                        needs_reset |=
+                            ui.radio_button(im_str!("Gaussian"), &mut self.filter_type, FilterType::Gaussian);
+                        needs_reset |=
+                            ui.radio_button(im_str!("Mitchell"), &mut self.filter_type, FilterType::Mitchell);
+                        ui.text("Tone Map:");
                         ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
                         ui.radio_button(
                             im_str!("Filmic sRGB"),
@@ -377,22 +412,20 @@ impl App {
         ) {
             let trace_size = Self::trace_size();
 
+            let temp_desc = ImageDesc::new_2d(trace_size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let temp_images = (
+                schedule.describe_image(&temp_desc),
+                schedule.describe_image(&temp_desc),
+                schedule.describe_image(&temp_desc),
+            );
+
             schedule.add_compute(
                 command_name!("trace"),
                 |params| {
                     self.renderer.declare_parameters(params);
-                    params.add_image(
-                        self.result_images.0,
-                        ImageUsage::RAY_TRACING_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_WRITE,
-                    );
-                    params.add_image(
-                        self.result_images.1,
-                        ImageUsage::RAY_TRACING_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_WRITE,
-                    );
-                    params.add_image(
-                        self.result_images.2,
-                        ImageUsage::RAY_TRACING_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_WRITE,
-                    );
+                    params.add_image(temp_images.0, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_images.1, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
                 },
                 {
                     let descriptor_pool = &base.systems.descriptor_pool;
@@ -401,12 +434,11 @@ impl App {
                     let renderer = &self.renderer;
                     let next_sample_index = self.next_sample_index;
                     let fov_y = self.fov_y;
-                    let result_images = &self.result_images;
                     move |params, cmd| {
-                        let result_image_views = [
-                            params.get_image_view(result_images.0),
-                            params.get_image_view(result_images.1),
-                            params.get_image_view(result_images.2),
+                        let temp_image_views = [
+                            params.get_image_view(temp_images.0),
+                            params.get_image_view(temp_images.1),
+                            params.get_image_view(temp_images.2),
                         ];
 
                         renderer.emit_trace(
@@ -418,8 +450,64 @@ impl App {
                             next_sample_index,
                             world_from_camera,
                             fov_y,
-                            &result_image_views,
+                            &temp_image_views,
                             trace_size,
+                        );
+                    }
+                },
+            );
+
+            schedule.add_compute(
+                command_name!("filter"),
+                |params| {
+                    self.renderer.declare_parameters(params);
+                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(
+                        self.result_image,
+                        ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
+                    );
+                },
+                {
+                    let context = &base.context;
+                    let descriptor_pool = &base.systems.descriptor_pool;
+                    let pipeline_cache = &base.systems.pipeline_cache;
+                    let result_image = self.result_image;
+                    let filter_descriptor_set_layout = &self.filter_descriptor_set_layout;
+                    let filter_pipeline_layout = self.filter_pipeline_layout;
+                    let filter_type = self.filter_type;
+                    let next_sample_index = self.next_sample_index;
+                    move |params, cmd| {
+                        let temp_image_views = [
+                            params.get_image_view(temp_images.0),
+                            params.get_image_view(temp_images.1),
+                            params.get_image_view(temp_images.2),
+                        ];
+                        let result_image_view = params.get_image_view(result_image);
+
+                        let descriptor_set = filter_descriptor_set_layout.write(
+                            &descriptor_pool,
+                            |buf: &mut FilterData| {
+                                *buf = FilterData {
+                                    image_size: trace_size,
+                                    sample_index: next_sample_index,
+                                    filter_type: filter_type.into_integer(),
+                                };
+                            },
+                            sample_image_view,
+                            &temp_image_views,
+                            result_image_view,
+                        );
+
+                        dispatch_helper(
+                            &context.device,
+                            &pipeline_cache,
+                            cmd,
+                            filter_pipeline_layout,
+                            "trace/filter.comp.spv",
+                            descriptor_set,
+                            trace_size.div_round_up(16),
                         );
                     }
                 },
@@ -438,9 +526,7 @@ impl App {
             main_render_state,
             |params| {
                 if next_sample_index != 0 {
-                    params.add_image(self.result_images.0, ImageUsage::FRAGMENT_STORAGE_READ);
-                    params.add_image(self.result_images.1, ImageUsage::FRAGMENT_STORAGE_READ);
-                    params.add_image(self.result_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
+                    params.add_image(self.result_image, ImageUsage::FRAGMENT_STORAGE_READ);
                 }
             },
             {
@@ -449,7 +535,7 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
                 let copy_pipeline_layout = self.copy_pipeline_layout;
-                let result_images = &self.result_images;
+                let result_image = self.result_image;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
@@ -461,22 +547,18 @@ impl App {
                     set_viewport_helper(&context.device, cmd, swap_size);
 
                     if next_sample_index != 0 {
-                        let result_image_views = [
-                            params.get_image_view(result_images.0),
-                            params.get_image_view(result_images.1),
-                            params.get_image_view(result_images.2),
-                        ];
+                        let result_image_view = params.get_image_view(result_image);
 
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
                             &descriptor_pool,
                             |buf: &mut CopyData| {
                                 *buf = CopyData {
-                                    sample_scale: log2_exposure_scale.exp2() / (next_sample_index as f32),
+                                    exposure_scale: log2_exposure_scale.exp2(),
                                     render_color_space: render_color_space.into_integer(),
                                     tone_map_method: tone_map_method.into_integer(),
                                 }
                             },
-                            &result_image_views,
+                            result_image_view,
                         );
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
