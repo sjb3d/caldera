@@ -317,7 +317,7 @@ void main()
             const float in_cos_theta = in_dir_ls.z;
             vec3 hit_f = vec3(0.f);
             float hit_solid_angle_pdf = 0.f;
-            if (sign_bits_match(in_dir_ls.z, out_dir_ls.z)) {
+            if (in_cos_theta > 0.f) {
                 switch (get_bsdf_type(g_extend.hit)) {
                     default:
                     case BSDF_TYPE_DIFFUSE: {
@@ -331,7 +331,7 @@ void main()
                         const vec3 v = out_dir_ls;
                         const vec3 l = in_dir_ls;
                         const vec3 h = normalize(v + l);
-                        const float h_dot_v = dot(h, v);
+                        const float h_dot_v = abs(dot(h, v));
                         const vec3 r0 = hit_reflectance;
                         hit_f = ggx_brdf(r0, h, h_dot_v, v, l, alpha);
 
@@ -347,7 +347,7 @@ void main()
                         const vec3 v = out_dir_ls;
                         const vec3 l = in_dir_ls;
                         const vec3 h = normalize(v + l);
-                        const float h_dot_v = dot(h, v);
+                        const float h_dot_v = abs(dot(h, v));
                         const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
 
                         const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
@@ -439,7 +439,7 @@ void main()
 
                     const vec3 v = out_dir_ls;
                     const vec3 l = in_dir_ls;
-                    const float h_dot_v = dot(h, v);
+                    const float h_dot_v = abs(dot(h, v));
                     const vec3 r0 = hit_reflectance;
                     estimator = ggx_vndf_sampled_estimator(r0, h_dot_v, v, l, alpha);
 
@@ -465,7 +465,7 @@ void main()
 
                         const vec3 v = out_dir_ls;
                         const vec3 l = in_dir_ls;
-                        const float h_dot_v = dot(h, v);
+                        const float h_dot_v = abs(dot(h, v));
                         estimator = vec3(ggx_vndf_sampled_estimator(PLASTIC_F0, h_dot_v, v, l, alpha));
 
                         in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
