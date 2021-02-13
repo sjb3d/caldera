@@ -336,7 +336,7 @@ void main()
                         const vec3 r0 = hit_reflectance;
                         hit_f = ggx_brdf(r0, h, h_dot_v, v, l, alpha);
 
-                        hit_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
+                        hit_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                     } break;
 
                     case BSDF_TYPE_PLASTIC: {
@@ -351,7 +351,7 @@ void main()
                         const float h_dot_v = abs(dot(h, v));
                         const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
 
-                        const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
+                        const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
 
                         hit_f = diff_f + vec3(spec_f);
                         hit_solid_angle_pdf = .5f*(diff_solid_angle_pdf + spec_solid_angle_pdf);
@@ -444,7 +444,7 @@ void main()
                     const vec3 r0 = hit_reflectance;
                     estimator = ggx_vndf_sampled_estimator(r0, h_dot_v, v, l, alpha);
 
-                    in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
+                    in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                 } break;
 
                 case BSDF_TYPE_PLASTIC: {
@@ -469,7 +469,7 @@ void main()
                         const float h_dot_v = abs(dot(h, v));
                         estimator = vec3(ggx_vndf_sampled_estimator(PLASTIC_F0, h_dot_v, v, l, alpha));
 
-                        in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, h_dot_v, alpha);
+                        in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                     }
                     const float selection_pdf = .5f;
                     estimator /= selection_pdf;

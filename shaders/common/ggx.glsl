@@ -70,7 +70,7 @@ float vndf_pdf(vec3 v, vec3 h, float h_dot_v, vec2 alpha)
     return smith_g1(v, alpha) * max(0, h_dot_v) * ggx_d(h, alpha) / n_dot_v;
 }
 
-float ggx_vndf_sampled_pdf(vec3 v, vec3 h, float h_dot_v, vec2 alpha)
+float ggx_vndf_sampled_pdf(vec3 v, vec3 h, vec2 alpha)
 {
     // Algebraic simplification of: vndf_pdf / (4.f * h_dot_v)
     const float n_dot_v = v.z;
