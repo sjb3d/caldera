@@ -875,7 +875,7 @@ impl Renderer {
                                 let edge0_ws = world_from_quad.transform_vec3(Vec3::new(size.x, 0.0, 0.0));
                                 let edge1_ws = world_from_quad.transform_vec3(Vec3::new(0.0, size.y, 0.0));
                                 let normal_ws = world_from_quad.transform_vec3(Vec3::unit_z()).normalized();
-                                let area_ws = world_from_quad.scale * world_from_quad.scale * size.x * size.y;
+                                let area_ws = (world_from_quad.scale * world_from_quad.scale * size.x * size.y).abs();
 
                                 let light_record = QuadLightRecord {
                                     emission,
@@ -899,7 +899,7 @@ impl Renderer {
                             }
                             Geometry::Sphere { centre, radius } => {
                                 let centre_ws = world_from_local * *centre;
-                                let radius_ws = world_from_local.scale.abs() * *radius;
+                                let radius_ws = (world_from_local.scale * *radius).abs();
 
                                 let light_record = SphereLightRecord {
                                     emission,
@@ -947,7 +947,7 @@ impl Renderer {
                             let light_record = SolidAngleLightRecord {
                                 emission: *emission,
                                 direction_ws: *direction_ws,
-                                solid_angle: *solid_angle,
+                                solid_angle: solid_angle.abs(),
                             };
 
                             let end_offset = writer.written() + callable_region.stride as usize;
