@@ -449,31 +449,48 @@ void main()
 
                 case BSDF_TYPE_PLASTIC: {
                     const float rand_layer_flt = 2.f*bsdf_rand_u01.x;
-                    bsdf_rand_u01.x = rand_layer_flt - floor(rand_layer_flt);
-                    if (rand_layer_flt > 1.f) {
-                        in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
 
-                        const vec3 f = hit_reflectance*(1.f - PLASTIC_F0)/PI;
-                        estimator = f/get_hemisphere_cosine_weighted_proj_pdf();
+                    // estimate which part of the BRDF is strongest                    
+                    const float diffuse_power = 1.f/PI;
+                    const float spec_power = mix(schlick_fresnel(PLASTIC_F0, out_dir_ls.z), 1.f/PI, hit_roughness);
 
-                        in_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_dir_ls.z);
+                    //const float diffuse_chance = .5f;
+                    const float diffuse_chance = diffuse_power/(diffuse_power + spec_power);
+                    const float spec_chance = 1.f - diffuse_chance;
+
+                    const bool sample_diffuse = (bsdf_rand_u01.x < diffuse_chance);
+                    if (sample_diffuse) {
+                        bsdf_rand_u01.x /= diffuse_chance;
                     } else {
-                        const vec2 alpha = vec2(hit_roughness*hit_roughness);
+                        bsdf_rand_u01.x -= diffuse_chance;
+                        bsdf_rand_u01.x /= spec_chance;
+                    }
 
+                    const vec2 alpha = vec2(hit_roughness*hit_roughness);
+
+                    if (sample_diffuse) {
+                        in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
+                    } else {
                         const vec3 h = sample_vndf(out_dir_ls, alpha, bsdf_rand_u01);
                         in_dir_ls = reflect(-out_dir_ls, h);
                         in_dir_ls.z = abs(in_dir_ls.z);
-
-                        const vec3 v = out_dir_ls;
-                        const vec3 l = in_dir_ls;
-                        const float h_dot_v = abs(dot(h, v));
-                        estimator = vec3(ggx_vndf_sampled_estimator(PLASTIC_F0, h_dot_v, v, l, alpha));
-
-                        in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                     }
-                    const float selection_pdf = .5f;
-                    estimator /= selection_pdf;
-                    in_solid_angle_pdf *= selection_pdf;
+
+                    const vec3 v = out_dir_ls;
+                    const vec3 l = in_dir_ls;
+                    const vec3 h = normalize(v + l);
+                    const float h_dot_v = abs(dot(h, v));
+                    const float n_dot_l = l.z;
+
+                    const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
+                    const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
+
+                    const vec3 f
+                        = hit_reflectance*(1.f - PLASTIC_F0)/PI
+                        + vec3(ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha));
+
+                    in_solid_angle_pdf = (diffuse_chance*diff_solid_angle_pdf + spec_chance*spec_solid_angle_pdf);
+                    estimator = f * n_dot_l / in_solid_angle_pdf;
                 } break;
             }
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
