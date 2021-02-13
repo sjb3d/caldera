@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::{fs::File, io::BufReader, io::Read};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(untagged)]
 enum ScalarOrVec3 {
     Scalar(f32),
@@ -64,17 +64,17 @@ struct PrimitiveTransform {
 }
 
 impl ScalarOrVec3 {
-    fn into_vec3(&self) -> Vec3 {
+    fn into_vec3(self) -> Vec3 {
         match self {
-            ScalarOrVec3::Scalar(s) => Vec3::broadcast(*s),
+            ScalarOrVec3::Scalar(s) => Vec3::broadcast(s),
             ScalarOrVec3::Vec3(v) => v.into(),
         }
     }
 
-    fn into_linear(&self) -> Vec3 {
+    fn ungamma_colour(self) -> Self {
         match self {
-            ScalarOrVec3::Scalar(s) => Vec3::broadcast(*s),
-            ScalarOrVec3::Vec3(v) => Vec3::from(v).into_linear(),
+            ScalarOrVec3::Scalar(s) => ScalarOrVec3::Scalar(s),
+            ScalarOrVec3::Vec3(v) => ScalarOrVec3::Vec3(Vec3::from(v).into_linear().into()),
         }
     }
 }
@@ -128,7 +128,7 @@ struct Primitive {
     #[serde(rename = "type")]
     primitive_type: PrimitiveType,
     file: Option<String>,
-    power: Option<f32>,
+    power: Option<ScalarOrVec3>,
     emission: Option<TextureOrValue>,
     bsdf: Option<BsdfRef>,
     cap_angle: Option<f32>,
@@ -242,7 +242,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 .unwrap(),
         };
         let mut reflectance = match &bsdf.albedo {
-            TextureOrValue::Value(value) => scene::Reflectance::Constant(value.into_linear()),
+            TextureOrValue::Value(value) => scene::Reflectance::Constant(value.ungamma_colour().into_vec3()),
             TextureOrValue::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
         };
         let surface = match bsdf.bsdf_type {
@@ -284,9 +284,9 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 };
 
                 let mut shader = load_shader(primitive.bsdf.as_ref().unwrap());
-                if let Some(s) = primitive.power {
+                if let Some(s) = primitive.power.as_ref() {
                     let area = size.x * size.y * world_from_local.scale.abs() * world_from_local.scale.abs();
-                    shader.emission = Some(Vec3::broadcast(s / (area * PI)));
+                    shader.emission = Some(s.into_vec3() / (area * PI));
                 }
                 if let Some(TextureOrValue::Value(v)) = &primitive.emission {
                     shader.emission = Some(v.into_vec3());
@@ -321,9 +321,9 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 let radius = world_from_local.scale.abs();
 
                 let mut shader = load_shader(&primitive.bsdf.as_ref().unwrap());
-                if let Some(s) = primitive.power {
+                if let Some(s) = primitive.power.as_ref() {
                     let area = 4.0 * PI * radius * radius;
-                    shader.emission = Some(Vec3::broadcast(s / (area * PI)));
+                    shader.emission = Some(s.into_vec3() / (area * PI));
                 }
 
                 let geometry_ref = output.add_geometry(scene::Geometry::Sphere { centre, radius });
@@ -337,7 +337,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 let theta = primitive.cap_angle.unwrap() * PI / 180.0;
                 let solid_angle = 2.0 * PI * (1.0 - theta.cos());
 
-                let emission = primitive.power.map(|p| Vec3::broadcast(p / solid_angle)).unwrap();
+                let emission = primitive.power.as_ref().map(|p| p.into_vec3() / solid_angle).unwrap();
 
                 let direction_ws = world_from_local.rotation * Vec3::unit_y();
 

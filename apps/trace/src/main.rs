@@ -151,6 +151,7 @@ struct App {
     scene: Arc<Scene>,
     renderer: Renderer,
 
+    show_debug_ui: bool,
     log2_exposure_scale: f32,
     render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
@@ -246,6 +247,7 @@ impl App {
             next_sample_index: 0,
             scene,
             renderer,
+            show_debug_ui: true,
             log2_exposure_scale: 0f32,
             render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
@@ -259,6 +261,9 @@ impl App {
         let ui = base.ui_context.frame();
         if ui.is_key_pressed(ui.key_index(Key::Escape)) {
             base.exit_requested = true;
+        }
+        if ui.is_mouse_clicked(MouseButton::Right) {
+            self.show_debug_ui = !self.show_debug_ui;
         }
         imgui::Window::new(im_str!("Debug"))
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
@@ -448,6 +453,7 @@ impl App {
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
+                let show_debug_ui = self.show_debug_ui;
                 let log2_exposure_scale = self.log2_exposure_scale;
                 let render_color_space = self.render_color_space;
                 let tone_map_method = self.tone_map_method;
@@ -490,9 +496,10 @@ impl App {
 
                     // draw imgui
                     ui_platform.prepare_render(&ui, window);
-
-                    let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
-                    ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                    if show_debug_ui {
+                        let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
+                        ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                    }
                 }
             },
         );
