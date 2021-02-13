@@ -38,7 +38,7 @@ LIGHT_UNIFORM_DATA(g_light);
 #define RENDER_COLOR_SPACE_ACESCG   1
 
 layout(set = 0, binding = 2) uniform accelerationStructureEXT g_accel;
-layout(set = 0, binding = 3, r16ui) uniform restrict readonly uimage2D g_samples;
+layout(set = 0, binding = 3, rg16ui) uniform restrict readonly uimage2D g_samples;
 layout(set = 0, binding = 4, r32f) uniform restrict image2D g_result[3];
 
 #define LOG2_SEQUENCE_COUNT     10
