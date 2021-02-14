@@ -39,8 +39,9 @@ pub enum Reflectance {
 
 #[derive(Debug)]
 pub enum Surface {
-    Diffuse,
     Mirror,
+    Dielectric,
+    Diffuse,
     Conductor { roughness: f32 },
     Plastic { roughness: f32 },
 }
@@ -560,6 +561,14 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
     scene.add_instance(Instance::new(identity, short_block, white_shader));
     scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
+
+    let glass = scene.add_shader(Shader {
+        surface: Surface::Dielectric,
+        reflectance: Reflectance::Constant(Vec3::one()),
+        emission: None
+    });
+    let sphere = scene.add_geometry(Geometry::Sphere { centre: Vec3::new(0.2, 0.3, 0.2), radius: 0.08 });
+    scene.add_instance(Instance::new(identity, sphere, glass));
 
     if matches!(variant, CornellBoxVariant::DomeLight) {
         scene.add_light(Light::Dome {

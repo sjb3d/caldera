@@ -33,7 +33,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 
 LIGHT_UNIFORM_DATA(g_light);
 
-#define PLASTIC_F0              0.05f
+#define PLASTIC_F0              0.04f
 
 #define RENDER_COLOR_SPACE_REC709   0
 #define RENDER_COLOR_SPACE_ACESCG   1
@@ -58,6 +58,31 @@ vec2 rand_u01(uint seq_index)
     const ivec2 sample_coord = rand_sample_coord(gl_LaunchIDEXT.xy, seq_index, g_path_trace.sample_index);
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
+}
+
+// reference: https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/
+float fresnel_dieletric_reflection(float cos_theta, float eta)
+{
+    const float c = cos_theta;
+    const float temp = eta*eta + c*c - 1.f;
+    if (temp < 0.f) {
+        return 1.f;
+    }
+
+    const float g = sqrt(temp);
+    return .5f
+        *square((g - c)/(g + c))
+        *(1.f + square(((g + c)*c - 1.f)/((g - c)*c + 1.f)));
+}
+
+vec3 refract(vec3 v, float eta)
+{
+    // Snell's law: sin_theta_i = sin_theta_t * eta
+    const float cos_theta_i = abs(v.z);
+    const float sin2_theta_i = 1.f - cos_theta_i*cos_theta_i;
+    const float sin2_theta_t = sin2_theta_i/square(eta);
+    const float cos_theta_t = sqrt(max(1.f - sin2_theta_t, 0.f));
+    return normalize(vec3(0.f, 0.f, cos_theta_i/eta - cos_theta_t) - v/eta);
 }
 
 EXTEND_PAYLOAD(g_extend);
@@ -207,7 +232,7 @@ void main()
             EXTEND_HIT_SHADER_OFFSET,
             HIT_SHADER_COUNT_PER_INSTANCE,
             EXTEND_MISS_SHADER_OFFSET,
-            prev_position + prev_epsilon*prev_normal,
+            prev_position + copysign(prev_epsilon, dot(prev_in_dir, prev_normal))*prev_normal,
             0.f,
             prev_in_dir,
             FLT_INF,
@@ -263,14 +288,17 @@ void main()
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
         if (accumulate_roughness) {
-            const float orig_roughness = get_roughness(g_extend.hit);
-            roughness_acc = min(sqrt(roughness_acc*roughness_acc + orig_roughness*orig_roughness), 1.f);
-            if (roughness_acc == 1.f) {
-                g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_DIFFUSE, roughness_acc);
-            } else if (roughness_acc != 0.f) {
-                const uint orig_bsdf_type = get_bsdf_type(g_extend.hit);
-                const uint new_bsdf_type = (orig_bsdf_type == BSDF_TYPE_MIRROR) ? BSDF_TYPE_DIFFUSE : orig_bsdf_type;
-                g_extend.hit = replace_hit_data(g_extend.hit, new_bsdf_type, roughness_acc);
+            const uint orig_bsdf_type = get_bsdf_type(g_extend.hit);
+            if (orig_bsdf_type != BSDF_TYPE_DIELECTRIC) {
+                const float orig_roughness = get_roughness(g_extend.hit);
+                const float p = 4.f;
+                roughness_acc = min(pow(pow(roughness_acc, p) + pow(orig_roughness, p), 1.f/p), 1.f);
+                if (roughness_acc == 1.f) {
+                    g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_DIFFUSE, roughness_acc);
+                } else if (roughness_acc != 0.f) {
+                    const uint new_bsdf_type = (orig_bsdf_type == BSDF_TYPE_MIRROR) ? BSDF_TYPE_DIFFUSE : orig_bsdf_type;
+                    g_extend.hit = replace_hit_data(g_extend.hit, new_bsdf_type, roughness_acc);
+                }
             }
         }
 
@@ -281,7 +309,7 @@ void main()
         const vec3 hit_position = g_extend.position_or_extdir;
         const mat3 hit_basis = basis_from_z_axis(normalize(vec_from_oct32(g_extend.normal_oct32)));
         const vec3 hit_normal = hit_basis[2];
-        const bool hit_is_delta = (get_bsdf_type(g_extend.hit) == BSDF_TYPE_MIRROR);
+        const bool hit_is_delta = bsdf_is_delta(get_bsdf_type(g_extend.hit));
 
         const vec3 out_dir_ls = normalize(-prev_in_dir * hit_basis);
 
@@ -415,6 +443,27 @@ void main()
             vec3 estimator;
             float in_solid_angle_pdf;
             switch (get_bsdf_type(g_extend.hit)) {
+                case BSDF_TYPE_MIRROR: {
+                    in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
+                    estimator = hit_reflectance;
+                    in_solid_angle_pdf = 0.f;
+                } break;
+
+                case BSDF_TYPE_DIELECTRIC: {
+                    const float eta_front = 1.333f;
+                    const float eta = is_front_hit(g_extend.hit) ? eta_front : (1.f/eta_front);
+                    const float reflect_chance = fresnel_dieletric_reflection(out_dir_ls.z, eta);
+
+                    if (bsdf_rand_u01.x > reflect_chance) {
+                        in_dir_ls = refract(out_dir_ls, eta);
+                    } else {
+                        in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
+                    }
+
+                    estimator = hit_reflectance;
+                    in_solid_angle_pdf = 0.f;
+                } break;
+
                 default:
                 case BSDF_TYPE_DIFFUSE: {
                     in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
@@ -423,12 +472,6 @@ void main()
                     estimator = f/get_hemisphere_cosine_weighted_proj_pdf();
 
                     in_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_dir_ls.z);
-                } break;
-
-                case BSDF_TYPE_MIRROR: {
-                    in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
-                    estimator = hit_reflectance;
-                    in_solid_angle_pdf = 1.f/abs(in_dir_ls.z);
                 } break;
 
                 case BSDF_TYPE_CONDUCTOR: {

@@ -22,7 +22,8 @@ void main()
 {   
     const vec3 hit_from_centre = g_attrib.hit_from_centre;
     const vec3 hit_pos_ls = g_record.geom.centre + hit_from_centre;
-    const vec3 hit_normal_vec_ls = (gl_HitKindEXT == SPHERE_HIT_FRONT) ? hit_from_centre : -hit_from_centre;
+    const bool is_front_hit = (gl_HitKindEXT == SPHERE_HIT_FRONT);
+    const vec3 hit_normal_vec_ls = is_front_hit ? hit_from_centre : -hit_from_centre;
 
     // transform normal vector to world space
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
@@ -39,5 +40,6 @@ void main()
         g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
+        is_front_hit,
         g_record.unit_scale);
 }

@@ -3,17 +3,24 @@ struct HitData {
 };
 
 #define HIT_DATA_Z_LIGHT_INDEX_MASK     0x0000ffff
-#define HIT_DATA_Z_HAS_SURFACE_BIT      0x00010000
-#define HIT_DATA_Z_HAS_LIGHT_BIT        0x00020000
+#define HIT_DATA_Z_IS_FRONT_HIT_BIT     0x00010000
+#define HIT_DATA_Z_HAS_SURFACE_BIT      0x00020000
+#define HIT_DATA_Z_HAS_LIGHT_BIT        0x00040000
 #define HIT_DATA_Z_BSDF_TYPE_SHIFT      20
-#define HIT_DATA_Z_BSDF_TYPE_MASK       0x00300000
+#define HIT_DATA_Z_BSDF_TYPE_MASK       0x00f00000
 #define HIT_DATA_Z_UNIT_SCALE_EXP_SHIFT 24
 #define HIT_DATA_Z_UNIT_SCALE_EXP_MASK  0xff000000
 
-#define BSDF_TYPE_DIFFUSE       0
-#define BSDF_TYPE_MIRROR        1
-#define BSDF_TYPE_CONDUCTOR     2
-#define BSDF_TYPE_PLASTIC       3
+#define BSDF_TYPE_MIRROR        0
+#define BSDF_TYPE_DIELECTRIC    1
+#define BSDF_TYPE_DIFFUSE       2
+#define BSDF_TYPE_CONDUCTOR     3
+#define BSDF_TYPE_PLASTIC       4
+
+bool bsdf_is_delta(uint bsdf_type)
+{
+    return (bsdf_type == BSDF_TYPE_MIRROR || bsdf_type == BSDF_TYPE_DIELECTRIC);
+}
 
 HitData create_hit_data(
     uint bsdf_type,
@@ -21,6 +28,7 @@ HitData create_hit_data(
     float roughness,
     bool is_emissive,
     uint light_index,
+    bool is_front_hit,
     float unit_scale)
 {
     int exponent;
@@ -32,6 +40,7 @@ HitData create_hit_data(
     hit.bits.y = packHalf2x16(vec2(reflectance.z, roughness));
     hit.bits.z
         = light_index
+        | (is_front_hit ? HIT_DATA_Z_IS_FRONT_HIT_BIT : 0)
         | HIT_DATA_Z_HAS_SURFACE_BIT
         | (is_emissive ? HIT_DATA_Z_HAS_LIGHT_BIT : 0)
         | (bsdf_type << HIT_DATA_Z_BSDF_TYPE_SHIFT)
@@ -83,6 +92,10 @@ bool has_surface(HitData hit)
 {
     return (hit.bits.z & HIT_DATA_Z_HAS_SURFACE_BIT) != 0;
 }
+bool is_front_hit(HitData hit)
+{
+    return (hit.bits.z & HIT_DATA_Z_IS_FRONT_HIT_BIT) != 0;
+}
 float get_epsilon(HitData hit, int exponent_offset_from_unit_scale)
 {
     const int exponent = int(hit.bits.z >> HIT_DATA_Z_UNIT_SCALE_EXP_SHIFT) - 128;
@@ -112,6 +125,6 @@ struct ExtendShader {
 
 #define EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK  0x0000ffff
 #define EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT     16
-#define EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK      0x00030000
-#define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x00040000
-#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x00080000
+#define EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK      0x000f0000
+#define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x00100000
+#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x00200000

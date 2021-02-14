@@ -175,8 +175,9 @@ enum SamplingTechnique {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
 enum BsdfType {
-    Diffuse,
     Mirror,
+    Dielectric,
+    Diffuse,
     Conductor,
     Plastic,
 }
@@ -186,8 +187,8 @@ enum BsdfType {
 struct ExtendShaderFlags(u32);
 
 impl ExtendShaderFlags {
-    const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0004_0000);
-    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0008_0000);
+    const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0010_0000);
+    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0020_0000);
 
     fn new(bsdf_type: BsdfType, texture_index: Option<TextureIndex>) -> Self {
         let mut flags = Self(bsdf_type.into_integer() << 16);
@@ -774,15 +775,20 @@ impl Renderer {
                     .clamped(Vec3::zero(), Vec3::one());
 
                     let mut shader = match shader_desc.surface {
+                        Surface::Mirror => ExtendShader {
+                            flags: ExtendShaderFlags::new(BsdfType::Mirror, texture_index),
+                            reflectance,
+                            ..Default::default()
+                        },
+                        Surface::Dielectric => ExtendShader {
+                            flags: ExtendShaderFlags::new(BsdfType::Dielectric, texture_index),
+                            reflectance,
+                            ..Default::default()
+                        },
                         Surface::Diffuse => ExtendShader {
                             flags: ExtendShaderFlags::new(BsdfType::Diffuse, texture_index),
                             reflectance,
                             roughness: 1.0,
-                            ..Default::default()
-                        },
-                        Surface::Mirror => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Mirror, texture_index),
-                            reflectance,
                             ..Default::default()
                         },
                         Surface::Conductor { roughness } => ExtendShader {
@@ -1023,7 +1029,7 @@ impl Renderer {
         }
         id.pop(&ui);
         needs_reset |= Slider::new(im_str!("Max Bounces"))
-            .range(0..=8)
+            .range(0..=16)
             .build(&ui, &mut self.max_bounces);
         needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.accumulate_roughness);
         needs_reset |= ui.checkbox(

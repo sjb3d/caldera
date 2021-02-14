@@ -50,10 +50,8 @@ void main()
         ;
 
     // transform normal vector to world space
-    const vec3 hit_normal_vec_ls
-        = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT)
-        ? face_normal_vec_ls
-        : -face_normal_vec_ls;
+    const bool is_front_hit = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT);
+    const vec3 hit_normal_vec_ls = is_front_hit ? face_normal_vec_ls : -face_normal_vec_ls;
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
@@ -85,5 +83,6 @@ void main()
         g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
+        is_front_hit,
         g_record.unit_scale);
 }
