@@ -39,6 +39,8 @@
 
 #define SPHERE_LIGHT_SIN_THETA_MIN          0.01f
 
+#define QUAD_LIGHT_IS_TWO_SIDED             true
+
 #define CALLABLE_SHADER_COUNT_PER_LIGHT     2
 
 struct LightEvalData {

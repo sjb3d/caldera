@@ -20,7 +20,7 @@ void main()
     const vec3 target_from_light = target_position - light_position;
     const vec3 connection_dir = normalize(target_from_light);
     const float facing_term = dot(connection_dir, light_normal);
-    const vec3 emission = (facing_term > 0.f) ? g_record.emission : vec3(0.f);
+    const vec3 emission = (QUAD_LIGHT_IS_TWO_SIDED || facing_term > 0.f) ? g_record.emission : vec3(0.f);
 
     const float distance_sq = dot(target_from_light, target_from_light);
     const float solid_angle_pdf = solid_angle_pdf_from_area_pdf(g_record.area_pdf, facing_term, distance_sq);
