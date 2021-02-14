@@ -33,6 +33,10 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 
 LIGHT_UNIFORM_DATA(g_light);
 
+// vaguely Aluminium, need to convert some spectral data
+#define CONDUCTOR_ETA           vec3(1.09f)
+#define CONDUCTOR_K             vec3(6.79f)
+
 #define PLASTIC_F0              0.04f
 
 #define RENDER_COLOR_SPACE_REC709   0
@@ -75,11 +79,11 @@ bool split_random_variable(float accept_probability, inout float u01)
 // approximation from http://c0de517e.blogspot.com/2019/08/misunderstanding-multilayering-diffuse.html
 float remaining_diffuse_strength(float n_dot_v, float roughness)
 {
-    return mix(1.f - schlick_fresnel(PLASTIC_F0, n_dot_v), 1.f - PLASTIC_F0, roughness);
+    return mix(1.f - fresnel_schlick(PLASTIC_F0, n_dot_v), 1.f - PLASTIC_F0, roughness);
 }
 
 // reference: https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/
-float fresnel_dieletric_reflection(float cos_theta, float eta)
+float fresnel_dieletric(float eta, float cos_theta)
 {
     const float c = cos_theta;
     const float temp = eta*eta + c*c - 1.f;
@@ -399,8 +403,7 @@ void main()
                         const vec3 l = in_dir_ls;
                         const vec3 h = normalize(v + l);
                         const float h_dot_v = abs(dot(h, v));
-                        const vec3 r0 = hit_reflectance;
-                        hit_f = ggx_brdf(r0, h, h_dot_v, v, l, alpha);
+                        hit_f = hit_reflectance*ggx_conductor_brdf(CONDUCTOR_ETA, CONDUCTOR_K, h, h_dot_v, v, l, alpha);
 
                         hit_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                     } break;
@@ -413,7 +416,7 @@ void main()
                         const vec3 l = in_dir_ls;
                         const vec3 h = normalize(v + l);
                         const float h_dot_v = abs(dot(h, v));
-                        const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
+                        const float spec_f = ggx_dieletric_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
 
                         const vec3 diff_f = hit_reflectance*(diffuse_strength/PI);
 
@@ -502,7 +505,7 @@ void main()
                 case BSDF_TYPE_DIELECTRIC: {
                     const float eta_front = 1.333f;
                     const float eta = is_front_hit(g_extend.hit) ? eta_front : (1.f/eta_front);
-                    const float reflect_chance = fresnel_dieletric_reflection(out_dir_ls.z, eta);
+                    const float reflect_chance = fresnel_dieletric(eta, out_dir_ls.z);
 
                     if (bsdf_rand_u01.x > reflect_chance) {
                         in_dir_ls = refract(out_dir_ls, eta);
@@ -534,8 +537,7 @@ void main()
                     const vec3 v = out_dir_ls;
                     const vec3 l = in_dir_ls;
                     const float h_dot_v = abs(dot(h, v));
-                    const vec3 r0 = hit_reflectance;
-                    estimator = ggx_vndf_sampled_estimator(r0, h_dot_v, v, l, alpha);
+                    estimator = hit_reflectance*ggx_conductor_vndf_sampled_estimator(CONDUCTOR_ETA, CONDUCTOR_K, h_dot_v, v, l, alpha);
 
                     in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                 } break;
@@ -564,7 +566,7 @@ void main()
                     const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                     const float combined_solid_angle_pdf = mix(spec_solid_angle_pdf, diff_solid_angle_pdf, diffuse_strength);
 
-                    const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
+                    const float spec_f = ggx_dieletric_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
                     const vec3 diff_f = hit_reflectance*(diffuse_strength/PI);
                     const vec3 f = vec3(spec_f) + diff_f;
 
@@ -594,7 +596,7 @@ void main()
                         in_solid_angle_pdf = diffuse_strength*get_hemisphere_cosine_weighted_pdf(n_dot_l);
                     } else {
                         const float n_dot_v = out_dir_ls.z;
-                        const float spec_f = schlick_fresnel(PLASTIC_F0, n_dot_v);
+                        const float spec_f = fresnel_schlick(PLASTIC_F0, n_dot_v);
 
                         estimator = vec3(spec_f)/spec_strength;
                         in_solid_angle_pdf = -1.f;

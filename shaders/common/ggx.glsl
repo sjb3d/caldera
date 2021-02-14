@@ -23,28 +23,50 @@ float smith_g2(vec3 v, vec3 l, vec2 alpha)
     return 1.f/(1.f + smith_lambda(v, alpha) + smith_lambda(l, alpha));
 }
 
-vec3 schlick_fresnel(vec3 r0, float h_dot_v)
+// reference: https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/ and PBRT book
+vec3 fresnel_conductor(vec3 eta, vec3 k, float cos_theta)
+{
+    const float cos_theta2 = cos_theta*cos_theta;
+    const vec3 two_eta_cos_theta = 2.f*eta*cos_theta;
+
+    const vec3 t0 = eta*eta + k*k;
+    const vec3 t1 = t0 * cos_theta2;
+    const vec3 Rs = (t0 - two_eta_cos_theta + cos_theta2)/(t0 + two_eta_cos_theta + cos_theta2);
+    const vec3 Rp = (t1 - two_eta_cos_theta + 1.f)/(t1 + two_eta_cos_theta + 1.f);
+
+    return .5f*(Rp + Rs);
+}
+
+// dielectric approximation given r0
+// TODO: merge with fresnel_dieletric
+vec3 fresnel_schlick(vec3 r0, float h_dot_v)
 {
     h_dot_v = abs(h_dot_v);
     return r0 + (vec3(1.f) - r0)*pow(1.f - h_dot_v, 5.f);
 }
-float schlick_fresnel(float r0, float h_dot_v)
+float fresnel_schlick(float r0, float h_dot_v)
 {
     h_dot_v = abs(h_dot_v);
     return r0 + (1.f - r0)*pow(1.f - h_dot_v, 5.f);
 }
 
-vec3 ggx_brdf(vec3 r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+vec3 ggx_dieletric_brdf(vec3 r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
     const float n_dot_v = abs(v.z);
     const float n_dot_l = abs(l.z);
-    return schlick_fresnel(r0, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
+    return fresnel_schlick(r0, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
 }
-float ggx_brdf(float r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+float ggx_dieletric_brdf(float r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
     const float n_dot_v = abs(v.z);
     const float n_dot_l = abs(l.z);
-    return schlick_fresnel(r0, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
+    return fresnel_schlick(r0, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
+}
+vec3 ggx_conductor_brdf(vec3 eta, vec3 k, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+{
+    const float n_dot_v = abs(v.z);
+    const float n_dot_l = abs(l.z);
+    return fresnel_conductor(eta, k, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
 }
 
 // reference: http://jcgt.org/published/0007/04/01/
@@ -80,12 +102,18 @@ float ggx_vndf_sampled_pdf(vec3 v, vec3 h, vec2 alpha)
 }
 
 // reference: http://jcgt.org/published/0007/04/01/
-vec3 ggx_vndf_sampled_estimator(vec3 r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+vec3 ggx_dieletric_vndf_sampled_estimator(vec3 r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
-    // Algebraic simplification of: ggx_brdf * n_dot_l / ggx_vndf_sampled_pdf
-    return schlick_fresnel(r0, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
+    // Algebraic simplification of: ggx_dieletric_brdf * n_dot_l / ggx_vndf_sampled_pdf
+    return fresnel_schlick(r0, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
 }
-float ggx_vndf_sampled_estimator(float r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+float ggx_dieletric_vndf_sampled_estimator(float r0, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
-    return schlick_fresnel(r0, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
+    // Algebraic simplification of: ggx_dieletric_brdf * n_dot_l / ggx_vndf_sampled_pdf
+    return fresnel_schlick(r0, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
+}
+vec3 ggx_conductor_vndf_sampled_estimator(vec3 eta, vec3 k, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
+{
+    // Algebraic simplification of: ggx_conductor_brdf * n_dot_l / ggx_vndf_sampled_pdf
+    return fresnel_conductor(eta, k, h_dot_v) * smith_g2(v, l, alpha) / smith_g1(v, alpha);
 }

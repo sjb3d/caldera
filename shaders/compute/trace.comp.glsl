@@ -209,7 +209,7 @@ void main()
             const vec3 in_dir = reflect(-out_dir, h);
 
             // compute estimator
-            sample_value *= ggx_vndf_sampled_estimator(r0, dot(out_dir, h), out_dir, in_dir, alpha);
+            sample_value *= ggx_dieletric_vndf_sampled_estimator(r0, dot(out_dir, h), out_dir, in_dir, alpha);
 
             // continue ray
             ray_origin = hit_pos + eps_hack*normal;
