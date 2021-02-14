@@ -182,6 +182,7 @@ enum BsdfType {
     Diffuse,
     Conductor,
     Plastic,
+    SmoothPlastic,
 }
 
 #[repr(transparent)]
@@ -851,6 +852,11 @@ impl Renderer {
                             flags: ExtendShaderFlags::new(BsdfType::Plastic, reflectance_texture),
                             reflectance,
                             roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
+                            ..Default::default()
+                        },
+                        Surface::SmoothPlastic => ExtendShader {
+                            flags: ExtendShaderFlags::new(BsdfType::SmoothPlastic, reflectance_texture),
+                            reflectance,
                             ..Default::default()
                         },
                     };

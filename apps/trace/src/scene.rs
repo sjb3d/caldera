@@ -45,6 +45,7 @@ pub enum Surface {
     Diffuse,
     Conductor { roughness: f32 },
     Plastic { roughness: f32 },
+    SmoothPlastic,
 }
 
 /*

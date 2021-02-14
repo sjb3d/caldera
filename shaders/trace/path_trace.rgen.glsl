@@ -60,6 +60,24 @@ vec2 rand_u01(uint seq_index)
     return (vec2(sample_bits) + .5f)/65536.f;
 }
 
+bool split_random_variable(float accept_probability, inout float u01)
+{
+    const bool is_accept = (u01 <= accept_probability);
+    if (is_accept) {
+        u01 /= accept_probability;
+    } else {
+        u01 -= accept_probability;
+        u01 /= (1.f - accept_probability);
+    }
+    return is_accept;
+}
+
+// approximation from http://c0de517e.blogspot.com/2019/08/misunderstanding-multilayering-diffuse.html
+float remaining_diffuse_strength(float n_dot_v, float roughness)
+{
+    return mix(1.f - schlick_fresnel(PLASTIC_F0, n_dot_v), 1.f - PLASTIC_F0, roughness);
+}
+
 // reference: https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/
 float fresnel_dieletric_reflection(float cos_theta, float eta)
 {
@@ -187,11 +205,10 @@ void main()
 
     vec3 prev_position;
     ExtendPackedNormal prev_geom_normal_packed;
-    bool prev_is_delta;
     float prev_epsilon;
     vec3 prev_in_dir;
-    float prev_in_solid_angle_pdf;
-    vec3 alpha;
+    float prev_in_solid_angle_pdf; // negative for delta
+    vec3 prev_sample;
     float roughness_acc;
 
     // sample the camera
@@ -212,11 +229,10 @@ void main()
 
         prev_position = g_path_trace.world_from_camera[3];
         prev_geom_normal_packed = make_packed_normal(g_path_trace.world_from_camera[2]);
-        prev_is_delta = false;
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
         prev_in_solid_angle_pdf = solid_angle_pdf;
-        alpha = importance/sensor_area_pdf;
+        prev_sample = importance/sensor_area_pdf;
         roughness_acc = 0.f;
     }
 
@@ -278,12 +294,13 @@ void main()
             }
 
             // compute MIS weight
+            const bool prev_is_delta = sign_bit_set(prev_in_solid_angle_pdf);
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
             const float other_ratio = can_be_sampled ? mis_ratio(light_solid_angle_pdf / prev_in_solid_angle_pdf) : 0.f;
             const float mis_weight = 1.f/(1.f + other_ratio);
 
             // accumulate this sample
-            result_sum += alpha * light_emission * mis_weight;
+            result_sum += prev_sample * light_emission * mis_weight;
         }
 
         // end the ray if we didn't hit any surface
@@ -296,17 +313,29 @@ void main()
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
         if (accumulate_roughness) {
-            const uint orig_bsdf_type = get_bsdf_type(g_extend.hit);
-            if (orig_bsdf_type != BSDF_TYPE_DIELECTRIC) {
-                const float orig_roughness = get_roughness(g_extend.hit);
-                const float p = 4.f;
-                roughness_acc = min(pow(pow(roughness_acc, p) + pow(orig_roughness, p), 1.f/p), 1.f);
-                if (roughness_acc == 1.f) {
-                    g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_DIFFUSE, roughness_acc);
-                } else if (roughness_acc != 0.f) {
-                    const uint new_bsdf_type = (orig_bsdf_type == BSDF_TYPE_MIRROR) ? BSDF_TYPE_DIFFUSE : orig_bsdf_type;
-                    g_extend.hit = replace_hit_data(g_extend.hit, new_bsdf_type, roughness_acc);
-                }
+            const float orig_roughness = get_roughness(g_extend.hit);
+            const float p = 4.f;
+            roughness_acc = min(pow(pow(roughness_acc, p) + pow(orig_roughness, p), 1.f/p), 1.f);
+
+            switch (get_bsdf_type(g_extend.hit)) {
+                case BSDF_TYPE_MIRROR:
+                case BSDF_TYPE_CONDUCTOR:
+                    if (roughness_acc != 0.f) {
+                        g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_CONDUCTOR, roughness_acc);
+                    }
+                    break;
+                case BSDF_TYPE_DIELECTRIC:
+                    // TODO: degrade to rough dielectric
+                    break;
+                case BSDF_TYPE_DIFFUSE:
+                    // nothing to do
+                    break;
+                case BSDF_TYPE_PLASTIC:
+                case BSDF_TYPE_SMOOTH_PLASTIC:
+                    if (roughness_acc != 0.f) {
+                        g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_PLASTIC, roughness_acc);
+                    }
+                    break;
             }
         }
 
@@ -318,14 +347,14 @@ void main()
         const mat3 hit_basis = basis_from_z_axis(get_dir(g_extend.shading_normal));
         const vec3 hit_shading_normal = hit_basis[2];
         const vec3 hit_geom_normal = get_dir(g_extend.geom_normal);
-        const bool hit_is_delta = bsdf_is_delta(get_bsdf_type(g_extend.hit));
+        const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(g_extend.hit));
 
         const vec3 out_dir_ls = normalize(-prev_in_dir * hit_basis);
 
         const float hit_epsilon = get_epsilon(g_extend.hit, LOG2_EPSILON_FACTOR);
 
         // sample a light source
-        if (g_light.sampled_count != 0 && allow_light_sampling && !hit_is_delta) {
+        if (g_light.sampled_count != 0 && allow_light_sampling && !hit_is_always_delta) {
             // sample from all light sources
             vec3 light_position_or_extdir;
             vec3 light_normal;
@@ -377,6 +406,7 @@ void main()
                     } break;
 
                     case BSDF_TYPE_PLASTIC: {
+                        const float diffuse_strength = remaining_diffuse_strength(out_dir_ls.z, hit_roughness);
                         const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
                         const vec3 v = out_dir_ls;
@@ -385,13 +415,24 @@ void main()
                         const float h_dot_v = abs(dot(h, v));
                         const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
 
-                        const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
+                        const vec3 diff_f = hit_reflectance*(diffuse_strength/PI);
 
-                        const vec3 diff_f = hit_reflectance*(max(1.f - spec_f, 0.f)/PI);
                         const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
+                        const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
+                        const float combined_solid_angle_pdf = mix(spec_solid_angle_pdf, diff_solid_angle_pdf, diffuse_strength);
 
                         hit_f = diff_f + vec3(spec_f);
-                        hit_solid_angle_pdf = .5f*(diff_solid_angle_pdf + spec_solid_angle_pdf);
+                        hit_solid_angle_pdf = combined_solid_angle_pdf;
+                    } break;
+
+                    case BSDF_TYPE_SMOOTH_PLASTIC: {
+                        const float diffuse_strength = remaining_diffuse_strength(out_dir_ls.z, 0.f);
+
+                        const vec3 diff_f = hit_reflectance*(diffuse_strength/PI);
+                        const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
+
+                        hit_f = diff_f;
+                        hit_solid_angle_pdf = diffuse_strength*diff_solid_angle_pdf;
                     } break;
                 }
             }
@@ -402,7 +443,7 @@ void main()
             const float mis_weight = 1.f/(1.f + other_ratio);
 
             // compute the sample assuming the ray is not occluded
-            const vec3 result = alpha * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
+            const vec3 result = prev_sample * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
 
             // trace an occlusion ray if necessary
             if (any(greaterThan(result, vec3(0.f)))) {
@@ -455,7 +496,7 @@ void main()
                 case BSDF_TYPE_MIRROR: {
                     in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
                     estimator = hit_reflectance;
-                    in_solid_angle_pdf = 0.f;
+                    in_solid_angle_pdf = -1.f;
                 } break;
 
                 case BSDF_TYPE_DIELECTRIC: {
@@ -470,7 +511,7 @@ void main()
                     }
 
                     estimator = hit_reflectance;
-                    in_solid_angle_pdf = 0.f;
+                    in_solid_angle_pdf = -1.f;
                 } break;
 
                 default:
@@ -500,23 +541,8 @@ void main()
                 } break;
 
                 case BSDF_TYPE_PLASTIC: {
-                    const float rand_layer_flt = 2.f*bsdf_rand_u01.x;
-
-                    // estimate which part of the BRDF is strongest                    
-                    const float diffuse_power = 1.f/PI;
-                    const float spec_power = mix(schlick_fresnel(PLASTIC_F0, out_dir_ls.z), 1.f/PI, hit_roughness);
-
-                    //const float diffuse_chance = .5f;
-                    const float diffuse_chance = diffuse_power/(diffuse_power + spec_power);
-                    const float spec_chance = 1.f - diffuse_chance;
-
-                    const bool sample_diffuse = (bsdf_rand_u01.x < diffuse_chance);
-                    if (sample_diffuse) {
-                        bsdf_rand_u01.x /= diffuse_chance;
-                    } else {
-                        bsdf_rand_u01.x -= diffuse_chance;
-                        bsdf_rand_u01.x /= spec_chance;
-                    }
+                    const float diffuse_strength = remaining_diffuse_strength(out_dir_ls.z, hit_roughness);
+                    const bool sample_diffuse = split_random_variable(diffuse_strength, bsdf_rand_u01.x);
 
                     const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
@@ -536,24 +562,53 @@ void main()
 
                     const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
                     const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
+                    const float combined_solid_angle_pdf = mix(spec_solid_angle_pdf, diff_solid_angle_pdf, diffuse_strength);
 
                     const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
-                    const vec3 diff_f = hit_reflectance*(max(1.f - spec_f, 0.f)/PI);
+                    const vec3 diff_f = hit_reflectance*(diffuse_strength/PI);
                     const vec3 f = vec3(spec_f) + diff_f;
 
-                    in_solid_angle_pdf = (diffuse_chance*diff_solid_angle_pdf + spec_chance*spec_solid_angle_pdf);
-                    estimator = f * n_dot_l / in_solid_angle_pdf;
+                    estimator = f * n_dot_l / combined_solid_angle_pdf;
+                    in_solid_angle_pdf = combined_solid_angle_pdf;
+                } break;
+
+                case BSDF_TYPE_SMOOTH_PLASTIC: {
+                    const float diffuse_strength = remaining_diffuse_strength(out_dir_ls.z, 0.f);
+                    const float spec_strength = 1.f - diffuse_strength;
+    
+                    const bool sample_diffuse = split_random_variable(diffuse_strength, bsdf_rand_u01.x);
+                    if (sample_diffuse) {
+                        in_dir_ls = sample_hemisphere_cosine_weighted(bsdf_rand_u01);
+                        roughness_acc = 1.f;
+                    } else {
+                        in_dir_ls = vec3(-out_dir_ls.xy, out_dir_ls.z);
+                    }
+
+                    const float spec_proj_solid_angle_pdf = 1.f;
+
+                    if (sample_diffuse) {
+                        const float n_dot_l = in_dir_ls.z;
+                        const vec3 diff_f = hit_reflectance*(diffuse_strength/PI);
+
+                        estimator = diff_f/(diffuse_strength*get_hemisphere_cosine_weighted_proj_pdf());
+                        in_solid_angle_pdf = diffuse_strength*get_hemisphere_cosine_weighted_pdf(n_dot_l);
+                    } else {
+                        const float n_dot_v = out_dir_ls.z;
+                        const float spec_f = schlick_fresnel(PLASTIC_F0, n_dot_v);
+
+                        estimator = vec3(spec_f)/spec_strength;
+                        in_solid_angle_pdf = -1.f;
+                    }
                 } break;
             }
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
 
             prev_position = hit_position;
             prev_geom_normal_packed = g_extend.geom_normal;
-            prev_is_delta = hit_is_delta;
             prev_epsilon = copysign(hit_epsilon, in_dir_ls.z);
             prev_in_dir = in_dir;
             prev_in_solid_angle_pdf = in_solid_angle_pdf;
-            alpha *= estimator;
+            prev_sample *= estimator;
         }
     }
 

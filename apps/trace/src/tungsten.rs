@@ -259,7 +259,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
             BsdfType::RoughConductor => scene::Surface::Conductor {
                 roughness: bsdf.roughness.unwrap().sqrt(),
             },
-            BsdfType::Plastic => scene::Surface::Plastic { roughness: 0.0 },
+            BsdfType::Plastic => scene::Surface::SmoothPlastic,
             BsdfType::RoughPlastic => scene::Surface::Plastic {
                 roughness: bsdf.roughness.unwrap().sqrt(),
             },

@@ -13,13 +13,14 @@ struct HitData {
 #define HIT_DATA_Z_UNIT_SCALE_EXP_SHIFT 24
 #define HIT_DATA_Z_UNIT_SCALE_EXP_MASK  0xff000000
 
-#define BSDF_TYPE_MIRROR        0
-#define BSDF_TYPE_DIELECTRIC    1
-#define BSDF_TYPE_DIFFUSE       2
-#define BSDF_TYPE_CONDUCTOR     3
-#define BSDF_TYPE_PLASTIC       4
+#define BSDF_TYPE_MIRROR            0
+#define BSDF_TYPE_DIELECTRIC        1
+#define BSDF_TYPE_DIFFUSE           2
+#define BSDF_TYPE_CONDUCTOR         3
+#define BSDF_TYPE_PLASTIC           4
+#define BSDF_TYPE_SMOOTH_PLASTIC    5
 
-bool bsdf_is_delta(uint bsdf_type)
+bool bsdf_is_always_delta(uint bsdf_type)
 {
     return (bsdf_type == BSDF_TYPE_MIRROR || bsdf_type == BSDF_TYPE_DIELECTRIC);
 }
