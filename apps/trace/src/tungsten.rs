@@ -288,7 +288,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
 
                 let mut shader = load_shader(primitive.bsdf.as_ref().unwrap());
                 if let Some(s) = primitive.power.as_ref() {
-                    let area = size.x * size.y * world_from_local.scale.abs() * world_from_local.scale.abs();
+                    let area = (size.x * size.y * world_from_local.scale * world_from_local.scale).abs();
                     shader.emission = Some(s.into_vec3() / (area * PI));
                 }
                 if let Some(TextureOrValue::Value(v)) = &primitive.emission {
