@@ -208,6 +208,7 @@ fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geome
     if let Some(extra_scale) = extra_scale {
         for v in vertices.iter_mut() {
             v.pos *= extra_scale;
+            v.normal /= extra_scale;
         }
     }
 
@@ -220,7 +221,8 @@ fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geome
 
     scene::Geometry::TriangleMesh {
         positions: vertices.iter().map(|v| v.pos).collect(),
-        uvs: vertices.iter().map(|v| Vec2::new(v.uv.x, 1.0 - v.uv.y)).collect(),
+        normals: Some(vertices.iter().map(|v| v.normal.normalized()).collect()),
+        uvs: Some(vertices.iter().map(|v| Vec2::new(v.uv.x, 1.0 - v.uv.y)).collect()),
         indices: triangles.drain(..).map(|t| t.indices.as_unsigned()).collect(),
         min,
         max,

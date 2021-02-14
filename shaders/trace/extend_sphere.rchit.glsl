@@ -33,7 +33,8 @@ void main()
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
     g_extend.position_or_extdir = hit_pos_ws;
-    g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
+    g_extend.geom_normal = make_packed_normal(hit_normal_vec_ws);
+    g_extend.shading_normal = g_extend.geom_normal;
     g_extend.hit = create_hit_data(
         bsdf_type,
         g_record.shader.reflectance,

@@ -179,7 +179,8 @@ pub fn load_export(i: &str) -> Scene {
                 }
                 let geometry_ref = scene.add_geometry(Geometry::TriangleMesh {
                     positions,
-                    uvs: Vec::new(),
+                    normals: None,
+                    uvs: None,
                     indices,
                     min,
                     max,

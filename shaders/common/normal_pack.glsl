@@ -1,3 +1,6 @@
+#ifndef INCLUDED_COMMON_NORMAL_PACK
+#define INCLUDED_COMMON_NORMAL_PACK
+
 #include "maths.glsl"
 
 // reference: "Survey of Efficient Representations for Independent Unit Vectors"
@@ -22,3 +25,5 @@ vec3 vec_from_oct32(uint p)
 {
     return vec_from_oct(unpackSnorm2x16(p));
 }
+
+#endif

@@ -186,7 +186,7 @@ void main()
     const bool accumulate_roughness = ((g_path_trace.flags & PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS) != 0);
 
     vec3 prev_position;
-    vec3 prev_normal;
+    ExtendPackedNormal prev_geom_normal_packed;
     bool prev_is_delta;
     float prev_epsilon;
     vec3 prev_in_dir;
@@ -211,7 +211,7 @@ void main()
         const float sensor_area_pdf = 1.f/fov_area_at_unit_z;
 
         prev_position = g_path_trace.world_from_camera[3];
-        prev_normal = g_path_trace.world_from_camera[2];
+        prev_geom_normal_packed = make_packed_normal(g_path_trace.world_from_camera[2]);
         prev_is_delta = false;
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
@@ -232,12 +232,20 @@ void main()
             EXTEND_HIT_SHADER_OFFSET,
             HIT_SHADER_COUNT_PER_INSTANCE,
             EXTEND_MISS_SHADER_OFFSET,
-            prev_position + copysign(prev_epsilon, dot(prev_in_dir, prev_normal))*prev_normal,
+            prev_position + prev_epsilon*get_dir(prev_geom_normal_packed),
             0.f,
             prev_in_dir,
             FLT_INF,
             EXTEND_PAYLOAD_INDEX);
         ++segment_index;
+
+        // reject implausible shading normals
+        {
+            const vec3 hit_shading_normal_vec = get_vec(g_extend.shading_normal);
+            if (has_surface(g_extend.hit) && dot(hit_shading_normal_vec, prev_in_dir) >= 0.f) {
+                break;
+            }
+        }
 
         // handle ray hitting a light source
         uint light_index_begin = 0;
@@ -307,8 +315,9 @@ void main()
         const float hit_roughness = get_roughness(g_extend.hit);
 
         const vec3 hit_position = g_extend.position_or_extdir;
-        const mat3 hit_basis = basis_from_z_axis(normalize(vec_from_oct32(g_extend.normal_oct32)));
-        const vec3 hit_normal = hit_basis[2];
+        const mat3 hit_basis = basis_from_z_axis(get_dir(g_extend.shading_normal));
+        const vec3 hit_shading_normal = hit_basis[2];
+        const vec3 hit_geom_normal = get_dir(g_extend.geom_normal);
         const bool hit_is_delta = bsdf_is_delta(get_bsdf_type(g_extend.hit));
 
         const vec3 out_dir_ls = normalize(-prev_in_dir * hit_basis);
@@ -326,7 +335,7 @@ void main()
             float light_epsilon;
             sample_all_lights(
                 hit_position,
-                hit_normal,
+                hit_shading_normal,
                 rand_u01(2*segment_index - 1),
                 light_position_or_extdir,
                 light_normal,
@@ -397,7 +406,7 @@ void main()
 
             // trace an occlusion ray if necessary
             if (any(greaterThan(result, vec3(0.f)))) {
-                const vec3 adjusted_hit_position = hit_position + hit_normal*hit_epsilon;
+                const vec3 adjusted_hit_position = hit_position + hit_geom_normal*hit_epsilon;
 
                 vec3 ray_origin;
                 vec3 ray_dir;
@@ -539,9 +548,9 @@ void main()
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
 
             prev_position = hit_position;
-            prev_normal = hit_normal;
+            prev_geom_normal_packed = g_extend.geom_normal;
             prev_is_delta = hit_is_delta;
-            prev_epsilon = hit_epsilon;
+            prev_epsilon = copysign(hit_epsilon, in_dir_ls.z);
             prev_in_dir = in_dir;
             prev_in_solid_angle_pdf = in_solid_angle_pdf;
             alpha *= estimator;

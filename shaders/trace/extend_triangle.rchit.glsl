@@ -18,6 +18,9 @@ layout(buffer_reference, scalar) buffer IndexBuffer {
 layout(buffer_reference, scalar) buffer PositionBuffer {
     vec3 pos[];
 };
+layout(buffer_reference, scalar) buffer NormalBuffer {
+    vec3 normal[];
+};
 layout(buffer_reference, scalar) buffer UvBuffer {
     vec2 uv[];
 };
@@ -25,6 +28,7 @@ layout(buffer_reference, scalar) buffer UvBuffer {
 layout(shaderRecordEXT, scalar) buffer ExtendTriangleHitRecord {
     IndexBuffer index_buffer;
     PositionBuffer position_buffer;
+    NormalBuffer normal_buffer;
     UvBuffer uv_buffer;
     float unit_scale;
     ExtendShader shader;
@@ -37,23 +41,32 @@ EXTEND_PAYLOAD_IN(g_extend);
 
 void main()
 {   
+    const bool is_front_hit = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT);
+
     const uvec3 tri = g_record.index_buffer.tri[gl_PrimitiveID];
     const vec3 p0 = g_record.position_buffer.pos[tri[0]];
     const vec3 p1 = g_record.position_buffer.pos[tri[1]];
     const vec3 p2 = g_record.position_buffer.pos[tri[2]];
 
-    const vec3 face_normal_vec_ls = cross(p1 - p0, p2 - p0);
+    const vec3 geom_normal_vec_ls = cross(p1 - p0, p2 - p0);
     const vec3 hit_pos_ls
         = p0*(1.f - g_bary_coord.x - g_bary_coord.y)
         + p1*g_bary_coord.x
         + p2*g_bary_coord.y
         ;
 
-    // transform normal vector to world space
-    const bool is_front_hit = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT);
-    const vec3 hit_normal_vec_ls = is_front_hit ? face_normal_vec_ls : -face_normal_vec_ls;
-    const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
-    const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
+    vec3 shading_normal_vec_ls = geom_normal_vec_ls;
+    if ((g_record.shader.flags & EXTEND_SHADER_FLAGS_HAS_NORMALS_BIT) != 0) {
+        const vec3 n0 = g_record.normal_buffer.normal[tri[0]];
+        const vec3 n1 = g_record.normal_buffer.normal[tri[1]];
+        const vec3 n2 = g_record.normal_buffer.normal[tri[2]];
+
+        shading_normal_vec_ls
+            = n0*(1.f - g_bary_coord.x - g_bary_coord.y)
+            + n1*g_bary_coord.x
+            + n2*g_bary_coord.y
+            ;         
+    }
 
     const uint bsdf_type = (g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
@@ -75,8 +88,16 @@ void main()
         reflectance = g_record.shader.reflectance;
     }
 
+    // transform to world space
+    const vec3 hit_geom_normal_vec_ls = is_front_hit ? geom_normal_vec_ls : -geom_normal_vec_ls;
+    const vec3 hit_shading_normal_vec_ls = is_front_hit ? shading_normal_vec_ls : -shading_normal_vec_ls;
+    const vec3 hit_geom_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_geom_normal_vec_ls, 0.f);
+    const vec3 hit_shading_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_shading_normal_vec_ls, 0.f);
+    const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
+
     g_extend.position_or_extdir = hit_pos_ws;
-    g_extend.normal_oct32 = oct32_from_vec(hit_normal_vec_ws);
+    g_extend.geom_normal = make_packed_normal(hit_geom_normal_vec_ws);
+    g_extend.shading_normal = make_packed_normal(hit_shading_normal_vec_ws);
     g_extend.hit = create_hit_data(
         bsdf_type,
         reflectance,

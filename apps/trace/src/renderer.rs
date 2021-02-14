@@ -145,14 +145,15 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 struct TextureIndex(u16);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct ShaderData {
-    reflectance: TextureIndex,
+    reflectance_texture: Option<TextureIndex>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct GeometryAttribData {
-    uv_buffer: StaticBufferHandle,
+    normal_buffer: Option<StaticBufferHandle>,
+    uv_buffer: Option<StaticBufferHandle>,
 }
 
 #[derive(Clone, Copy)]
@@ -160,6 +161,7 @@ enum GeometryRecordData {
     Triangles {
         index_buffer_address: u64,
         position_buffer_address: u64,
+        normal_buffer_address: u64,
         uv_buffer_address: u64,
     },
     Sphere,
@@ -187,8 +189,9 @@ enum BsdfType {
 struct ExtendShaderFlags(u32);
 
 impl ExtendShaderFlags {
-    const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0010_0000);
-    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0020_0000);
+    const HAS_NORMALS: ExtendShaderFlags = ExtendShaderFlags(0x0010_0000);
+    const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0020_0000);
+    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0040_0000);
 
     fn new(bsdf_type: BsdfType, texture_index: Option<TextureIndex>) -> Self {
         let mut flags = Self(bsdf_type.into_integer() << 16);
@@ -225,6 +228,7 @@ struct ExtendShader {
 struct ExtendTriangleHitRecord {
     index_buffer_address: u64,
     position_buffer_address: u64,
+    normal_buffer_address: u64,
     uv_buffer_address: u64,
     unit_scale: f32,
     shader: ExtendShader,
@@ -415,8 +419,8 @@ pub struct Renderer {
     path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
     texture_binding_set: TextureBindingSet,
-    shader_data: Vec<Option<ShaderData>>,
-    geometry_attrib_data: Vec<Option<GeometryAttribData>>,
+    shader_data: Vec<ShaderData>,
+    geometry_attrib_data: Vec<GeometryAttribData>,
     shader_binding_table: Option<ShaderBindingTable>,
     max_bounces: u32,
     accumulate_roughness: bool,
@@ -443,18 +447,74 @@ impl Renderer {
         // start loading textures and attributes for all meshes
         let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
         let mut texture_images = Vec::new();
-        let mut shader_data = vec![None; scene.shaders.len()];
-        let mut geometry_attrib_data = vec![None; scene.geometries.len()];
+        let mut shader_data = vec![ShaderData::default(); scene.shaders.len()];
+        let mut geometry_attrib_data = vec![GeometryAttribData::default(); scene.geometries.len()];
         for instance_ref in accel.clusters().instance_iter().cloned() {
             let instance = scene.instance(instance_ref);
             let shader_ref = instance.shader_ref;
+            let geometry_ref = instance.geometry_ref;
             let shader = scene.shader(shader_ref);
-            if let Reflectance::Texture(filename) = &shader.reflectance {
-                shader_data
-                    .get_mut(shader_ref.0 as usize)
+            let geometry = scene.geometry(geometry_ref);
+
+            let has_normals = matches!(geometry, Geometry::TriangleMesh { normals: Some(_), .. });
+            let has_uvs_and_texture = matches!(geometry, Geometry::TriangleMesh { uvs: Some(_), .. })
+                && matches!(shader.reflectance, Reflectance::Texture(_));
+
+            if has_normals {
+                geometry_attrib_data
+                    .get_mut(geometry_ref.0 as usize)
                     .unwrap()
-                    .get_or_insert_with(|| ShaderData {
-                        reflectance: *texture_indices.entry(filename.clone()).or_insert_with(|| {
+                    .normal_buffer = {
+                    let normal_buffer = resource_loader.create_buffer();
+                    resource_loader.async_load({
+                        let scene = Arc::clone(scene);
+                        move |allocator| {
+                            let normals = match scene.geometry(geometry_ref) {
+                                Geometry::TriangleMesh {
+                                    normals: Some(normals), ..
+                                } => normals.as_slice(),
+                                _ => unreachable!(),
+                            };
+
+                            let buffer_desc = BufferDesc::new(normals.len() * mem::size_of::<Vec3>());
+                            let mut mapping = allocator
+                                .map_buffer(normal_buffer, &buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                                .unwrap();
+                            for n in normals.iter() {
+                                mapping.write(n);
+                            }
+                        }
+                    });
+                    Some(normal_buffer)
+                };
+            }
+
+            if has_uvs_and_texture {
+                geometry_attrib_data.get_mut(geometry_ref.0 as usize).unwrap().uv_buffer = {
+                    let uv_buffer = resource_loader.create_buffer();
+                    resource_loader.async_load({
+                        let scene = Arc::clone(scene);
+                        move |allocator| {
+                            let uvs = match scene.geometry(geometry_ref) {
+                                Geometry::TriangleMesh { uvs: Some(uvs), .. } => uvs.as_slice(),
+                                _ => unreachable!(),
+                            };
+
+                            let buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
+                            let mut mapping = allocator
+                                .map_buffer(uv_buffer, &buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                                .unwrap();
+                            for uv in uvs.iter() {
+                                mapping.write(uv);
+                            }
+                        }
+                    });
+                    Some(uv_buffer)
+                };
+
+                shader_data.get_mut(shader_ref.0 as usize).unwrap().reflectance_texture = match &shader.reflectance {
+                    Reflectance::Texture(filename) => {
+                        Some(*texture_indices.entry(filename.clone()).or_insert_with(|| {
                             let image_handle = resource_loader.create_image();
                             resource_loader.async_load({
                                 let filename = filename.clone();
@@ -479,38 +539,10 @@ impl Renderer {
                             let texture_index = TextureIndex(texture_images.len() as u16);
                             texture_images.push(image_handle);
                             texture_index
-                        }),
-                    });
-
-                let geometry_ref = instance.geometry_ref;
-                let geometry = scene.geometry(geometry_ref);
-                geometry_attrib_data
-                    .get_mut(geometry_ref.0 as usize)
-                    .unwrap()
-                    .get_or_insert_with(|| match geometry {
-                        Geometry::TriangleMesh { uvs, .. } if !uvs.is_empty() => {
-                            let uv_buffer = resource_loader.create_buffer();
-                            resource_loader.async_load({
-                                let scene = Arc::clone(scene);
-                                move |allocator| {
-                                    let uvs = match scene.geometry(geometry_ref) {
-                                        Geometry::TriangleMesh { uvs, .. } => uvs.as_slice(),
-                                        _ => unreachable!(),
-                                    };
-
-                                    let uv_buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
-                                    let mut mapping = allocator
-                                        .map_buffer(uv_buffer, &uv_buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
-                                        .unwrap();
-                                    for uv in uvs.iter() {
-                                        mapping.write(uv);
-                                    }
-                                }
-                            });
-                            GeometryAttribData { uv_buffer }
-                        }
-                        _ => unimplemented!(),
-                    });
+                        }))
+                    }
+                    _ => unreachable!(),
+                };
             }
         }
 
@@ -587,8 +619,8 @@ impl Renderer {
         }
     }
 
-    fn geometry_attrib_data(&self, geometry_ref: GeometryRef) -> Option<&GeometryAttribData> {
-        self.geometry_attrib_data[geometry_ref.0 as usize].as_ref()
+    fn geometry_attrib_data(&self, geometry_ref: GeometryRef) -> &GeometryAttribData {
+        &self.geometry_attrib_data[geometry_ref.0 as usize]
     }
 
     fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingTable> {
@@ -601,21 +633,40 @@ impl Renderer {
                     index_buffer,
                     position_buffer,
                 } => {
-                    let index_buffer = resource_loader.get_buffer(*index_buffer)?;
-                    let position_buffer = resource_loader.get_buffer(*position_buffer)?;
-                    let index_buffer_address =
-                        unsafe { self.context.device.get_buffer_device_address_helper(index_buffer) };
-                    let position_buffer_address =
-                        unsafe { self.context.device.get_buffer_device_address_helper(position_buffer) };
-                    let uv_buffer_address = if let Some(attrib_data) = self.geometry_attrib_data(geometry_ref) {
-                        let uv_buffer = resource_loader.get_buffer(attrib_data.uv_buffer)?;
-                        unsafe { self.context.device.get_buffer_device_address_helper(uv_buffer) }
+                    let index_buffer_address = unsafe {
+                        self.context
+                            .device
+                            .get_buffer_device_address_helper(resource_loader.get_buffer(*index_buffer)?)
+                    };
+                    let position_buffer_address = unsafe {
+                        self.context
+                            .device
+                            .get_buffer_device_address_helper(resource_loader.get_buffer(*position_buffer)?)
+                    };
+
+                    let attrib_data = self.geometry_attrib_data(geometry_ref);
+                    let normal_buffer_address = if let Some(buffer) = attrib_data.normal_buffer {
+                        unsafe {
+                            self.context
+                                .device
+                                .get_buffer_device_address_helper(resource_loader.get_buffer(buffer)?)
+                        }
+                    } else {
+                        0
+                    };
+                    let uv_buffer_address = if let Some(buffer) = attrib_data.uv_buffer {
+                        unsafe {
+                            self.context
+                                .device
+                                .get_buffer_device_address_helper(resource_loader.get_buffer(buffer)?)
+                        }
                     } else {
                         0
                     };
                     Some(GeometryRecordData::Triangles {
                         index_buffer_address,
                         position_buffer_address,
+                        normal_buffer_address,
                         uv_buffer_address,
                     })
                 }
@@ -766,8 +817,7 @@ impl Renderer {
                     let transform = scene.transform(instance.transform_ref);
                     let shader_desc = scene.shader(instance.shader_ref);
 
-                    let shader_data = shader_data[instance.shader_ref.0 as usize];
-                    let texture_index = shader_data.map(|s| s.reflectance);
+                    let reflectance_texture = shader_data[instance.shader_ref.0 as usize].reflectance_texture;
                     let reflectance = match shader_desc.reflectance {
                         Reflectance::Constant(c) => c,
                         Reflectance::Texture(_) => Vec3::zero(),
@@ -776,29 +826,29 @@ impl Renderer {
 
                     let mut shader = match shader_desc.surface {
                         Surface::Mirror => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Mirror, texture_index),
+                            flags: ExtendShaderFlags::new(BsdfType::Mirror, reflectance_texture),
                             reflectance,
                             ..Default::default()
                         },
                         Surface::Dielectric => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Dielectric, texture_index),
+                            flags: ExtendShaderFlags::new(BsdfType::Dielectric, reflectance_texture),
                             reflectance,
                             ..Default::default()
                         },
                         Surface::Diffuse => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Diffuse, texture_index),
+                            flags: ExtendShaderFlags::new(BsdfType::Diffuse, reflectance_texture),
                             reflectance,
                             roughness: 1.0,
                             ..Default::default()
                         },
                         Surface::Conductor { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Conductor, texture_index),
+                            flags: ExtendShaderFlags::new(BsdfType::Conductor, reflectance_texture),
                             reflectance,
                             roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
                             ..Default::default()
                         },
                         Surface::Plastic { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Plastic, texture_index),
+                            flags: ExtendShaderFlags::new(BsdfType::Plastic, reflectance_texture),
                             reflectance,
                             roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
                             ..Default::default()
@@ -815,11 +865,16 @@ impl Renderer {
                         GeometryRecordData::Triangles {
                             index_buffer_address,
                             position_buffer_address,
+                            normal_buffer_address,
                             uv_buffer_address,
                         } => {
+                            if normal_buffer_address != 0 {
+                                shader.flags |= ExtendShaderFlags::HAS_NORMALS;
+                            }
                             let hit_record = ExtendTriangleHitRecord {
                                 index_buffer_address,
                                 position_buffer_address,
+                                normal_buffer_address,
                                 uv_buffer_address,
                                 unit_scale,
                                 shader,

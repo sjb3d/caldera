@@ -16,7 +16,8 @@ impl Transform {
 pub enum Geometry {
     TriangleMesh {
         positions: Vec<Vec3>,
-        uvs: Vec<Vec2>,
+        normals: Option<Vec<Vec3>>,
+        uvs: Option<Vec<Vec2>>,
         indices: Vec<UVec3>,
         min: Vec3,
         max: Vec3,
@@ -209,9 +210,14 @@ impl Scene {
                     .unwrap()
                     .world_from_local;
                 match self.geometries.get_mut(instance.geometry_ref.0 as usize).unwrap() {
-                    Geometry::TriangleMesh { positions, .. } => {
+                    Geometry::TriangleMesh { positions, normals, .. } => {
                         for pos in positions.iter_mut() {
                             *pos = world_from_local * *pos;
+                        }
+                        if let Some(normals) = normals {
+                            for normal in normals.iter_mut() {
+                                *normal = world_from_local.transform_vec3(*normal).normalized();
+                            }
                         }
                     }
                     Geometry::Quad { local_from_quad, .. } => {
@@ -230,6 +236,7 @@ impl Scene {
 
 pub struct TriangleMeshBuilder {
     pub positions: Vec<Vec3>,
+    pub normals: Vec<Vec3>,
     pub uvs: Vec<Vec2>,
     pub indices: Vec<UVec3>,
 }
@@ -238,6 +245,7 @@ impl TriangleMeshBuilder {
     pub fn new() -> Self {
         Self {
             positions: Vec::new(),
+            normals: Vec::new(),
             uvs: Vec::new(),
             indices: Vec::new(),
         }
@@ -245,10 +253,17 @@ impl TriangleMeshBuilder {
 
     pub fn with_quad(mut self, v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3) -> Self {
         let base = UVec3::broadcast(self.positions.len() as u32);
+        let normal0 = (v1 - v0).cross(v2 - v0);
+        let normal1 = (v3 - v2).cross(v0 - v2);
+        let normal = (normal0 + normal1).normalized();
         self.positions.push(v0);
         self.positions.push(v1);
         self.positions.push(v2);
         self.positions.push(v3);
+        self.normals.push(normal);
+        self.normals.push(normal);
+        self.normals.push(normal);
+        self.normals.push(normal);
         self.uvs.push(Vec2::new(0.0, 0.0));
         self.uvs.push(Vec2::new(1.0, 0.0));
         self.uvs.push(Vec2::new(1.0, 1.0));
@@ -267,8 +282,9 @@ impl TriangleMeshBuilder {
         }
         Geometry::TriangleMesh {
             positions: self.positions,
+            normals: Some(self.normals),
+            uvs: Some(self.uvs),
             indices: self.indices,
-            uvs: self.uvs,
             min,
             max,
         }
@@ -561,14 +577,6 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     scene.add_instance(Instance::new(identity, green_wall, green_shader));
     scene.add_instance(Instance::new(identity, short_block, white_shader));
     scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
-
-    let glass = scene.add_shader(Shader {
-        surface: Surface::Dielectric,
-        reflectance: Reflectance::Constant(Vec3::one()),
-        emission: None
-    });
-    let sphere = scene.add_geometry(Geometry::Sphere { centre: Vec3::new(0.2, 0.3, 0.2), radius: 0.08 });
-    scene.add_instance(Instance::new(identity, sphere, glass));
 
     if matches!(variant, CornellBoxVariant::DomeLight) {
         scene.add_light(Light::Dome {

@@ -1,3 +1,5 @@
+#include "normal_pack.glsl"
+
 struct HitData {
     uvec3 bits;
 };
@@ -102,9 +104,23 @@ float get_epsilon(HitData hit, int exponent_offset_from_unit_scale)
     return ldexp(1.f, exponent + exponent_offset_from_unit_scale);
 }
 
+struct ExtendPackedNormal {
+    uint oct32;
+};
+
+ExtendPackedNormal make_packed_normal(vec3 vec) 
+{
+    ExtendPackedNormal pn;
+    pn.oct32 = oct32_from_vec(vec);
+    return pn;
+}
+vec3 get_vec(ExtendPackedNormal pn) { return vec_from_oct32(pn.oct32); }
+vec3 get_dir(ExtendPackedNormal pn) { return normalize(get_vec(pn)); }
+
 struct ExtendPayload {
     vec3 position_or_extdir;
-    uint normal_oct32;
+    ExtendPackedNormal geom_normal;
+    ExtendPackedNormal shading_normal;
     HitData hit;
 };
 
@@ -126,5 +142,6 @@ struct ExtendShader {
 #define EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK  0x0000ffff
 #define EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT     16
 #define EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK      0x000f0000
-#define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x00100000
-#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x00200000
+#define EXTEND_SHADER_FLAGS_HAS_NORMALS_BIT     0x00100000
+#define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x00200000
+#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x00400000
