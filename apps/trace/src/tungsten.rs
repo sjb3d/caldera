@@ -255,6 +255,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
             BsdfType::Lambert => scene::Surface::Diffuse,
             BsdfType::Mirror => scene::Surface::Mirror,
             BsdfType::Dielectric => scene::Surface::Dielectric,
+            BsdfType::RoughDielectric => scene::Surface::Dielectric,
             BsdfType::Conductor => scene::Surface::Conductor { roughness: 0.0 },
             BsdfType::RoughConductor => scene::Surface::Conductor {
                 roughness: bsdf.roughness.unwrap().sqrt(),
