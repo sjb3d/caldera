@@ -39,11 +39,7 @@ vec2 sample_disc_uniform(vec2 u)
     }
 
     // convert to xy coordinate
-    vec2 dir = vec2(0.f);
-    if (!isinf(phi)) {
-        dir = vec2(cos(phi), sin(phi));
-    }
-    return r*dir;
+    return r*vec2(cos(phi), sin(phi));
 }
 
 vec3 sample_hemisphere_cosine_weighted(vec2 u)

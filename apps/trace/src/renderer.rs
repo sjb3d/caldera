@@ -14,7 +14,7 @@ use std::{
 };
 use std::{mem, slice};
 
-const MIN_ROUGHNESS: f32 = 0.01;
+const MIN_ROUGHNESS: f32 = 0.03;
 
 trait UnitScale {
     fn unit_scale(&self, world_from_local: Similarity3) -> f32;

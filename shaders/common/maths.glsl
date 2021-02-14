@@ -19,6 +19,10 @@ float min_element(vec2 v)   { return min(v.x, v.y); }
 float max_element(vec2 v)   { return max(v.x, v.y); }
 float max_element(vec3 v)   { return max(max(v.x, v.y), v.z); }
 
+float square(float x)       { return x*x; }
+vec2 square(vec2 x)         { return x*x; }
+vec3 square(vec3 x)         { return x*x; }
+
 float copysign(float x, float s)
 {
     const uint x_bits = floatBitsToUint(x);

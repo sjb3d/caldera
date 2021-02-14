@@ -25,23 +25,25 @@ float smith_g2(vec3 v, vec3 l, vec2 alpha)
 
 vec3 schlick_fresnel(vec3 r0, float h_dot_v)
 {
+    h_dot_v = abs(h_dot_v);
     return r0 + (vec3(1.f) - r0)*pow(1.f - h_dot_v, 5.f);
 }
 float schlick_fresnel(float r0, float h_dot_v)
 {
+    h_dot_v = abs(h_dot_v);
     return r0 + (1.f - r0)*pow(1.f - h_dot_v, 5.f);
 }
 
 vec3 ggx_brdf(vec3 r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
-    const float n_dot_v = v.z;
-    const float n_dot_l = l.z;
+    const float n_dot_v = abs(v.z);
+    const float n_dot_l = abs(l.z);
     return schlick_fresnel(r0, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
 }
 float ggx_brdf(float r0, vec3 h, float h_dot_v, vec3 v, vec3 l, vec2 alpha)
 {
-    const float n_dot_v = v.z;
-    const float n_dot_l = l.z;
+    const float n_dot_v = abs(v.z);
+    const float n_dot_l = abs(l.z);
     return schlick_fresnel(r0, h_dot_v) * ggx_d(h, alpha) * smith_g2(v, l, alpha) / (4.f * n_dot_v * n_dot_l);
 }
 
@@ -66,14 +68,14 @@ vec3 sample_vndf(vec3 Ve, vec2 alpha, vec2 u)
 
 float vndf_pdf(vec3 v, vec3 h, float h_dot_v, vec2 alpha)
 {
-    const float n_dot_v = v.z;
-    return smith_g1(v, alpha) * max(0, h_dot_v) * ggx_d(h, alpha) / n_dot_v;
+    const float n_dot_v = abs(v.z);
+    return smith_g1(v, alpha) * h_dot_v * ggx_d(h, alpha) / n_dot_v;
 }
 
 float ggx_vndf_sampled_pdf(vec3 v, vec3 h, vec2 alpha)
 {
     // Algebraic simplification of: vndf_pdf / (4.f * h_dot_v)
-    const float n_dot_v = v.z;
+    const float n_dot_v = abs(v.z);
     return smith_g1(v, alpha) * ggx_d(h, alpha) / (4.f * n_dot_v);
 }
 
