@@ -5,6 +5,7 @@
 #include "color_space.glsl"
 #include "sampler.glsl"
 #include "ggx.glsl"
+#include "fresnel.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -209,7 +210,10 @@ void main()
             const vec3 in_dir = reflect(-out_dir, h);
 
             // compute estimator
-            sample_value *= ggx_dieletric_vndf_sampled_estimator(r0, dot(out_dir, h), out_dir, in_dir, alpha);
+            const vec3 estimator
+                = fresnel_schlick(r0, dot(out_dir, h))
+                * ggx_vndf_sampled_estimator_without_fresnel(out_dir, in_dir, alpha);
+            sample_value *= estimator;
 
             // continue ray
             ray_origin = hit_pos + eps_hack*normal;
