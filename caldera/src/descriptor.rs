@@ -3,15 +3,19 @@ use crate::context::Context;
 use arrayvec::{Array, ArrayVec};
 use imgui::{ProgressBar, Ui};
 use spark::{vk, Builder};
-use std::slice;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::{
+    slice,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 fn align_up(x: u32, alignment: u32) -> u32 {
     (x + alignment - 1) & !(alignment - 1)
 }
 
-#[repr(align(4))]
+#[repr(align(16))]
 struct AlignedArray<A: Array>(A);
 
 unsafe impl<A: Array> Array for AlignedArray<A> {
@@ -129,8 +133,8 @@ impl UniformDataPool {
         self.buffers[self.buffer_index]
     }
 
-    pub fn alloc(&self, size: u32) -> Option<(&mut [u8], u32)> {
-        let aligned_size = align_up(size, self.min_alignment);
+    pub fn alloc(&self, size: u32, align: u32) -> Option<(&mut [u8], u32)> {
+        let aligned_size = align_up(size, self.min_alignment.max(align));
 
         let base = self.next_offset.fetch_add(aligned_size as usize, Ordering::SeqCst) as u32;
         let end = base + aligned_size;
@@ -182,11 +186,23 @@ pub enum DescriptorSetLayoutBinding {
 }
 
 pub enum DescriptorSetBindingData<'a> {
-    SampledImage { image_view: vk::ImageView },
-    StorageImage { image_views: &'a [vk::ImageView] },
-    UniformData { size: u32, writer: &'a dyn Fn(&mut [u8]) },
-    StorageBuffer { buffer: vk::Buffer },
-    AccelerationStructure { accel: vk::AccelerationStructureKHR },
+    SampledImage {
+        image_view: vk::ImageView,
+    },
+    StorageImage {
+        image_views: &'a [vk::ImageView],
+    },
+    UniformData {
+        size: u32,
+        align: u32,
+        writer: &'a dyn Fn(&mut [u8]),
+    },
+    StorageBuffer {
+        buffer: vk::Buffer,
+    },
+    AccelerationStructure {
+        accel: vk::AccelerationStructureKHR,
+    },
 }
 
 pub struct DescriptorSetLayoutCache {
@@ -466,11 +482,11 @@ impl DescriptorPool {
                         ..Default::default()
                     });
                 }
-                DescriptorSetBindingData::UniformData { size, writer } => {
+                DescriptorSetBindingData::UniformData { size, align, writer } => {
                     if let Some(uniform_data_pool) = self.uniform_data_pool.as_ref() {
                         // write uniform data into buffer
                         let size = *size;
-                        let (addr, offset) = uniform_data_pool.alloc(size).unwrap();
+                        let (addr, offset) = uniform_data_pool.alloc(size, *align).unwrap();
                         writer(addr);
 
                         buffer_info.push(vk::DescriptorBufferInfo {
@@ -489,26 +505,27 @@ impl DescriptorPool {
                         });
                     } else {
                         // write uniform data to the stack
-                        let size = *size as usize;
-                        let data_ptr = inline_uniform_data.as_mut_ptr().wrapping_add(inline_uniform_data.len());
-                        if inline_uniform_data.len() + size > inline_uniform_data.capacity() {
+                        let size = *size;
+                        let start_offset = align_up(inline_uniform_data.len() as u32, *align) as usize;
+                        let end_offset = start_offset + (size as usize);
+                        if end_offset > inline_uniform_data.capacity() {
                             panic!("not enough space to write inline uniform data");
                         }
                         unsafe {
-                            inline_uniform_data.set_len(inline_uniform_data.len() + size);
+                            inline_uniform_data.set_len(end_offset);
                         }
-                        writer(unsafe { slice::from_raw_parts_mut(data_ptr, size) });
+                        writer(&mut inline_uniform_data[start_offset..end_offset]);
 
                         inline_writes.push(vk::WriteDescriptorSetInlineUniformBlockEXT {
-                            data_size: size as u32,
-                            p_data: data_ptr as *const _,
+                            data_size: size,
+                            p_data: &inline_uniform_data[start_offset] as *const _ as *const _,
                             ..Default::default()
                         });
 
                         writes.push(vk::WriteDescriptorSet {
                             dst_set: Some(descriptor_set),
                             dst_binding: i as u32,
-                            descriptor_count: size as u32,
+                            descriptor_count: size,
                             descriptor_type: vk::DescriptorType::INLINE_UNIFORM_BLOCK_EXT,
                             p_next: inline_writes.last().unwrap() as *const _ as *const _,
                             ..Default::default()

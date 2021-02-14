@@ -159,7 +159,7 @@ impl Binding {
                     let image_view = format_ident!("{}_image_view", self.name);
                     (
                         quote!(#image_view: vk::ImageView),
-                        quote!(DescriptorSetBindingData::StorageImage { image_views: std::slice::from_ref(&#image_view) }),
+                        quote!(DescriptorSetBindingData::StorageImage { image_views: ::std::slice::from_ref(&#image_view) }),
                     )
                 }
             }
@@ -169,6 +169,7 @@ impl Binding {
                     quote!(#writer: impl Fn(&mut #ty)),
                     quote!(DescriptorSetBindingData::UniformData {
                         size: ::std::mem::size_of::<#ty>() as u32,
+                        align: ::std::mem::align_of::<#ty>() as u32,
                         writer: &move |s: &mut [u8]| {
                             #writer(bytemuck::from_bytes_mut(s));
                         },
