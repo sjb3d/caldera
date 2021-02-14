@@ -340,9 +340,6 @@ void main()
                     } break;
 
                     case BSDF_TYPE_PLASTIC: {
-                        const vec3 diff_f = hit_reflectance*(1.f - PLASTIC_F0)/PI;
-                        const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
-
                         const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
                         const vec3 v = out_dir_ls;
@@ -352,6 +349,9 @@ void main()
                         const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
 
                         const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
+
+                        const vec3 diff_f = hit_reflectance*(max(1.f - spec_f, 0.f)/PI);
+                        const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
 
                         hit_f = diff_f + vec3(spec_f);
                         hit_solid_angle_pdf = .5f*(diff_solid_angle_pdf + spec_solid_angle_pdf);
@@ -485,9 +485,9 @@ void main()
                     const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
                     const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
 
-                    const vec3 f
-                        = hit_reflectance*(1.f - PLASTIC_F0)/PI
-                        + vec3(ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha));
+                    const float spec_f = ggx_brdf(PLASTIC_F0, h, h_dot_v, v, l, alpha);
+                    const vec3 diff_f = hit_reflectance*(max(1.f - spec_f, 0.f)/PI);
+                    const vec3 f = vec3(spec_f) + diff_f;
 
                     in_solid_angle_pdf = (diffuse_chance*diff_solid_angle_pdf + spec_chance*spec_solid_angle_pdf);
                     estimator = f * n_dot_l / in_solid_angle_pdf;
