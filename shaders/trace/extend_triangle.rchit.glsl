@@ -103,7 +103,7 @@ void main()
     g_extend.position_or_extdir = hit_pos_ws;
     g_extend.geom_normal = make_packed_normal(hit_geom_normal_vec_ws);
     g_extend.shading_normal = make_packed_normal(hit_shading_normal_vec_ws);
-    g_extend.bsdf_data = create_bsdf_data(
+    g_extend.bsdf_params = create_bsdf_params(
         reflectance,
         g_record.shader.roughness);
 }

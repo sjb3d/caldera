@@ -40,6 +40,8 @@ SRC=\
 	trace/path_trace.rgen.glsl \
 	trace/quad_light_eval.rcall.glsl \
 	trace/quad_light_sample.rcall.glsl \
+	trace/smooth_plastic_bsdf_eval.rcall.glsl \
+	trace/smooth_plastic_bsdf_sample.rcall.glsl \
 	trace/solid_angle_light_eval.rcall.glsl \
 	trace/solid_angle_light_sample.rcall.glsl \
 	trace/sphere.rint.glsl \

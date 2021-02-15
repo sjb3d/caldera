@@ -1,6 +1,8 @@
 #ifndef INCLUDED_COMMON_FRESNEL
 #define INCLUDED_COMMON_FRESNEL
 
+#include "maths.glsl"
+
 // reference: https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/ and PBRT book
 vec3 fresnel_conductor(vec3 eta, vec3 k, float cos_theta)
 {

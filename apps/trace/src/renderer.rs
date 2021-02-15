@@ -270,6 +270,8 @@ enum ShaderGroup {
     OcclusionMiss,
     OcclusionHitTriangle,
     OcclusionHitSphere,
+    SmoothPlasticBsdfEval,
+    SmoothPlasticBsdfSample,
     QuadLightEval,
     QuadLightSample,
     SphereLightEval,
@@ -443,6 +445,7 @@ pub struct Renderer {
 impl Renderer {
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
     const MISS_ENTRY_COUNT: u32 = 2;
+    const CALLABLE_ENTRY_COUNT_PER_BSDF_TYPE: u32 = 2;
     const CALLABLE_ENTRY_COUNT_PER_LIGHT: u32 = 2;
 
     pub fn new(
@@ -590,6 +593,8 @@ impl Renderer {
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
                 },
+                ShaderGroup::SmoothPlasticBsdfEval => RayTracingShaderGroupDesc::Callable("trace/smooth_plastic_bsdf_eval.rcall.spv"),
+                ShaderGroup::SmoothPlasticBsdfSample => RayTracingShaderGroupDesc::Callable("trace/smooth_plastic_bsdf_sample.rcall.spv"),
                 ShaderGroup::QuadLightEval => RayTracingShaderGroupDesc::Callable("trace/quad_light_eval.rcall.spv"),
                 ShaderGroup::QuadLightSample => {
                     RayTracingShaderGroupDesc::Callable("trace/quad_light_sample.rcall.spv")
@@ -774,7 +779,7 @@ impl Renderer {
             rtpp.shader_group_handle_size + callable_record_size,
             rtpp.shader_group_handle_alignment,
         );
-        let callable_entry_count = (total_light_count as u32) * Self::CALLABLE_ENTRY_COUNT_PER_LIGHT;
+        let callable_entry_count = Self::CALLABLE_ENTRY_COUNT_PER_BSDF_TYPE + (total_light_count as u32) * Self::CALLABLE_ENTRY_COUNT_PER_LIGHT;
         let callable_region = ShaderBindingRegion {
             offset: next_offset,
             stride: callable_stride,
@@ -935,8 +940,18 @@ impl Renderer {
                 }
                 assert_eq!(next_light_index, emissive_instance_count);
 
-                let mut sampled_light_power = Vec::new();
                 writer.write_zeros(callable_region.offset as usize - writer.written());
+                {
+                    let end_offset = writer.written() + callable_region.stride as usize;
+                    writer.write(shader_group_handle(ShaderGroup::SmoothPlasticBsdfEval));
+                    writer.write_zeros(end_offset - writer.written());
+
+                    let end_offset = writer.written() + callable_region.stride as usize;
+                    writer.write(shader_group_handle(ShaderGroup::SmoothPlasticBsdfSample));
+                    writer.write_zeros(end_offset - writer.written());
+                }
+
+                let mut sampled_light_power = Vec::new();
                 for instance_ref in clusters.instance_iter().cloned() {
                     let instance = scene.instance(instance_ref);
                     let shader = scene.shader(instance.shader_ref);

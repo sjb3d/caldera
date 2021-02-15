@@ -16,6 +16,18 @@ uint hash(uint a)
     return a;
 }
 
+bool split_random_variable(float accept_probability, inout float u01)
+{
+    const bool is_accept = (u01 <= accept_probability);
+    if (is_accept) {
+        u01 /= accept_probability;
+    } else {
+        u01 -= accept_probability;
+        u01 /= (1.f - accept_probability);
+    }
+    return is_accept;
+}
+
 float solid_angle_pdf_from_area_pdf(float area_pdf, float cos_theta, float distance_sq)
 {
     return area_pdf * distance_sq / abs(cos_theta);

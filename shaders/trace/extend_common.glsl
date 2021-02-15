@@ -109,7 +109,7 @@ struct ExtendPayload {
     vec3 position_or_extdir;
     ExtendPackedNormal geom_normal;
     ExtendPackedNormal shading_normal;
-    BsdfData bsdf_data;
+    BsdfParams bsdf_params;
 };
 
 struct ExtendShader {
