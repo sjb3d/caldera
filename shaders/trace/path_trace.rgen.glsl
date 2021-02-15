@@ -92,6 +92,15 @@ float remaining_diffuse_strength(float n_dot_v, float roughness)
     return mix(1.f - fresnel_schlick(PLASTIC_F0, n_dot_v), 1.f - PLASTIC_F0, roughness);
 }
 
+float luminance(vec3 c)
+{
+    switch (g_path_trace.render_color_space) {
+        default:
+        case RENDER_COLOR_SPACE_REC709: return dot(c, vec3(0.2126729f, 0.7151522f, 0.0721750f));
+        case RENDER_COLOR_SPACE_ACESCG: return dot(c, vec3(0.2722287f, 0.6740818f, 0.0536895f));
+    }
+}
+
 vec3 refract(vec3 v, float eta)
 {
     // Snell's law: sin_theta_i = sin_theta_t * eta
@@ -323,7 +332,8 @@ void main()
                 case BSDF_TYPE_MIRROR:
                 case BSDF_TYPE_CONDUCTOR:
                     if (roughness_acc != 0.f) {
-                        g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_CONDUCTOR, roughness_acc);
+                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_CONDUCTOR : BSDF_TYPE_DIFFUSE;
+                        g_extend.hit = replace_hit_data(g_extend.hit, bsdf_type, roughness_acc);
                     }
                     break;
                 case BSDF_TYPE_DIELECTRIC:
@@ -335,7 +345,8 @@ void main()
                 case BSDF_TYPE_PLASTIC:
                 case BSDF_TYPE_SMOOTH_PLASTIC:
                     if (roughness_acc != 0.f) {
-                        g_extend.hit = replace_hit_data(g_extend.hit, BSDF_TYPE_PLASTIC, roughness_acc);
+                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_PLASTIC : BSDF_TYPE_DIFFUSE;
+                        g_extend.hit = replace_hit_data(g_extend.hit, bsdf_type, roughness_acc);
                     }
                     break;
             }
@@ -488,11 +499,19 @@ void main()
             }
         }
 
-        // TODO: RR once indirect
-
         // sample BSDF
         {
             vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
+
+            // RR
+            if (segment_index > 4) {
+                const float survive_prob = clamp(max_element(hit_reflectance), .1f, .95f);
+                if (!split_random_variable(survive_prob, bsdf_rand_u01.y)) {
+                    break;
+                }
+                prev_sample /= survive_prob;
+            }
+
             vec3 in_dir_ls;
             vec3 estimator;
             float in_solid_angle_pdf;
