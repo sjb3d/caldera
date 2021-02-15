@@ -105,10 +105,11 @@ The render graph has two goals:
 _TODO: figure out what bits are worth documenting_
 
 * Build a schedule by registering callbacks for _graphics_ or _compute_ work
-  * _Graphics_ work is a collection of all the draw calls to the same render pass
+  * _Graphics_ work is a collection of draw calls to the same render pass (TODO: consider sub-pass?)
   * _Compute_ work is a collection of dispatches/transfers/ray traces/etc
-* Synchronisation happens between work, each work item must declare all the buffers and images it needs and how it will use them
-  * There is no synchronisation between the individual draws/dispatches/etc _within_ a single callback
+* Synchronisation happens _between_ these collections only
+  * Each work item must declare usage for _all_ the images/buffers used by its draws and dispatches
+  * All the draws or dispatches within a single work item should be considered as occuring in parallel on the GPU, there is no additional synchronisation _within_ a work item
 * Can _declare_ temporary buffers or images while building a schedule
   * Usage is gathered as the schedule is built
   * Memory will be allocated while running the schedule, Vulkan objects are passed to the callback
