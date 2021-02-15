@@ -1,15 +1,28 @@
-#define LIGHT_UNIFORM_DATA(NAME)                                    \
-    layout(set = 0, binding = 1, scalar) uniform LightUniforms {    \
-        uint sample_sphere_solid_angle;                             \
-        uint sampled_count;                                         \
-        uint external_begin;                                        \
-        uint external_end;                                          \
+struct LightAliasEntry {
+    float split;
+    uint indices;
+};
+
+#define LIGHT_UNIFORM_DATA(NAME)                                        \
+    layout(buffer_reference, scalar) buffer LightProbabilityTable {     \
+        float entries[];                                                \
+    };                                                                  \
+    layout(buffer_reference, scalar) buffer LightAliasTable {           \
+        LightAliasEntry entries[];                                      \
+    };                                                                  \
+    layout(set = 0, binding = 1, scalar) uniform LightUniforms {        \
+        LightProbabilityTable probability_table;                        \
+        LightAliasTable alias_table;                                    \
+        uint sample_sphere_solid_angle;                                 \
+        uint sampled_count;                                             \
+        uint external_begin;                                            \
+        uint external_end;                                              \
     } NAME
 
 #define QUAD_LIGHT_RECORD(NAME)                                 \
     layout(shaderRecordEXT, scalar) buffer QuadLightRecord {    \
         vec3 emission;                                          \
-        float unit_scale;                                      \
+        float unit_scale;                                       \
         float area_pdf;                                         \
         vec3 normal_ws;                                         \
         vec3 corner_ws;                                         \
@@ -20,7 +33,7 @@
 #define SPHERE_LIGHT_RECORD(NAME)                               \
     layout(shaderRecordEXT, scalar) buffer SphereLightRecord {  \
         vec3 emission;                                          \
-        float unit_scale;                                      \
+        float unit_scale;                                       \
         vec3 centre_ws;                                         \
         float radius_ws;                                        \
     } NAME

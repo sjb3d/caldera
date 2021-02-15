@@ -126,7 +126,16 @@ struct PathTraceUniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+struct LightAliasEntry {
+    split: f32,
+    indices: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct LightUniforms {
+    probability_table_address: u64,
+    alias_table_address: u64,
     sample_sphere_solid_angle: u32,
     sampled_count: u32,
     external_begin: u32,
@@ -287,12 +296,13 @@ impl ShaderBindingRegion {
     }
 }
 
-struct ShaderBindingTable {
+struct ShaderBindingData {
     raygen_region: ShaderBindingRegion,
     miss_region: ShaderBindingRegion,
     hit_region: ShaderBindingRegion,
     callable_region: ShaderBindingRegion,
-    buffer: StaticBufferHandle,
+    shader_binding_table: StaticBufferHandle,
+    probability_table: StaticBufferHandle,
     sampled_light_count: u32,
     external_light_begin: u32,
     external_light_end: u32,
@@ -422,7 +432,7 @@ pub struct Renderer {
     texture_binding_set: TextureBindingSet,
     shader_data: Vec<ShaderData>,
     geometry_attrib_data: Vec<GeometryAttribData>,
-    shader_binding_table: Option<ShaderBindingTable>,
+    shader_binding_data: Option<ShaderBindingData>,
     max_bounces: u32,
     accumulate_roughness: bool,
     sample_sphere_solid_angle: bool,
@@ -611,7 +621,7 @@ impl Renderer {
             texture_binding_set,
             shader_data,
             geometry_attrib_data,
-            shader_binding_table: None,
+            shader_binding_data: None,
             max_bounces,
             accumulate_roughness: true,
             sample_sphere_solid_angle: true,
@@ -624,7 +634,7 @@ impl Renderer {
         &self.geometry_attrib_data[geometry_ref.0 as usize]
     }
 
-    fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingTable> {
+    fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingData> {
         // gather the data we need for records
         let mut geometry_records = vec![None; self.scene.geometries.len()];
         for geometry_ref in self.accel.clusters().geometry_iter().cloned() {
@@ -776,6 +786,7 @@ impl Renderer {
 
         // write the table
         let shader_binding_table = resource_loader.create_buffer();
+        let probability_table = resource_loader.create_buffer();
         resource_loader.async_load({
             let scene = Arc::clone(&self.scene);
             let clusters = Arc::clone(self.accel.clusters());
@@ -924,6 +935,7 @@ impl Renderer {
                 }
                 assert_eq!(next_light_index, emissive_instance_count);
 
+                let mut sampled_light_power = Vec::new();
                 writer.write_zeros(callable_region.offset as usize - writer.written());
                 for instance_ref in clusters.instance_iter().cloned() {
                     let instance = scene.instance(instance_ref);
@@ -933,7 +945,8 @@ impl Renderer {
                         let world_from_local = scene.transform(instance.transform_ref).world_from_local;
                         let geometry = scene.geometry(instance.geometry_ref);
                         let unit_scale = geometry.unit_scale(world_from_local);
-                        match geometry {
+
+                        let area_ws = match geometry {
                             Geometry::TriangleMesh { .. } => unimplemented!(),
                             Geometry::Quad { size, local_from_quad } => {
                                 let world_from_quad = world_from_local * *local_from_quad;
@@ -963,10 +976,13 @@ impl Renderer {
                                 writer.write(shader_group_handle(ShaderGroup::QuadLightSample));
                                 writer.write(&light_record);
                                 writer.write_zeros(end_offset - writer.written());
+
+                                area_ws
                             }
                             Geometry::Sphere { centre, radius } => {
                                 let centre_ws = world_from_local * *centre;
                                 let radius_ws = (world_from_local.scale * *radius).abs();
+                                let area_ws = 4.0 * PI * radius_ws * radius_ws;
 
                                 let light_record = SphereLightRecord {
                                     emission,
@@ -984,10 +1000,20 @@ impl Renderer {
                                 writer.write(shader_group_handle(ShaderGroup::SphereLightSample));
                                 writer.write(&light_record);
                                 writer.write_zeros(end_offset - writer.written());
+
+                                area_ws
                             }
-                        }
+                        };
+
+                        sampled_light_power.push(area_ws * emission.luminance() * PI);
                     }
                 }
+                let local_light_total_power = if sampled_light_power.is_empty() {
+                    None
+                } else {
+                    Some(sampled_light_power.iter().sum())
+                };
+
                 for light in scene
                     .lights
                     .iter()
@@ -1011,10 +1037,13 @@ impl Renderer {
                             direction_ws,
                             solid_angle,
                         } => {
+                            let direction_ws = direction_ws.normalized();
+                            let solid_angle = solid_angle.abs();
+
                             let light_record = SolidAngleLightRecord {
                                 emission: *emission,
-                                direction_ws: *direction_ws,
-                                solid_angle: solid_angle.abs(),
+                                direction_ws,
+                                solid_angle,
                             };
 
                             let end_offset = writer.written() + callable_region.stride as usize;
@@ -1026,17 +1055,86 @@ impl Renderer {
                             writer.write(shader_group_handle(ShaderGroup::SolidAngleLightSample));
                             writer.write(&light_record);
                             writer.write_zeros(end_offset - writer.written());
+
+                            // HACK: use the total local light power to split samples 50/50
+                            // TODO: use scene bounds to estimate the light power?
+                            let fake_power = local_light_total_power.unwrap_or(1.0);
+                            sampled_light_power.push(fake_power);
                         }
                     }
                 }
+                assert_eq!(sampled_light_power.len() as u32, sampled_light_count);
+
+                let probability_table_desc = BufferDesc::new(
+                    sampled_light_power.len().max(1) * (mem::size_of::<LightAliasEntry>() + mem::size_of::<f32>()),
+                );
+                let mut writer = allocator
+                    .map_buffer(
+                        probability_table,
+                        &probability_table_desc,
+                        BufferUsage::RAY_TRACING_STORAGE_READ,
+                    )
+                    .unwrap();
+
+                for hack in sampled_light_power.iter_mut() {
+                    *hack = 1.0;
+                }
+
+                let rcp_total_power = 1.0 / sampled_light_power.iter().sum::<f32>();
+                let mut under = Vec::new();
+                let mut over = Vec::new();
+                for (index, power) in sampled_light_power.iter().enumerate() {
+                    let p = power * rcp_total_power;
+                    writer.write(&p);
+                    let u = p * (sampled_light_power.len() as f32);
+                    if u < 1.0 {
+                        under.push((index, u));
+                    } else {
+                        over.push((index, u));
+                    }
+                }
+
+                for _ in 0..sampled_light_power.len() {
+                    let entry = if let Some((small_i, small_u)) = under.pop() {
+                        if let Some((big_i, big_u)) = over.pop() {
+                            let remain_u = big_u - (1.0 - small_u);
+                            if remain_u < 1.0 {
+                                under.push((big_i, remain_u));
+                            } else {
+                                over.push((big_i, remain_u));
+                            }
+                            LightAliasEntry {
+                                split: small_u,
+                                indices: ((big_i << 16) | small_i) as u32,
+                            }
+                        } else {
+                            println!("no alias found for {} (light {})", small_u, small_i);
+                            LightAliasEntry {
+                                split: 1.0,
+                                indices: ((small_i << 16) | small_i) as u32,
+                            }
+                        }
+                    } else {
+                        let (big_i, big_u) = over.pop().unwrap();
+                        if big_u > 1.0 {
+                            println!("no alias found for {} (light {})", big_u, big_i);
+                        }
+                        LightAliasEntry {
+                            split: 1.0,
+                            indices: ((big_i << 16) | big_i) as u32,
+                        }
+                    };
+                    writer.write(&entry);
+                }
             }
         });
-        Some(ShaderBindingTable {
+        Some(ShaderBindingData {
             raygen_region,
             miss_region,
             hit_region,
             callable_region,
-            buffer: shader_binding_table,
+            shader_binding_table,
+            probability_table,
             sampled_light_count,
             external_light_begin,
             external_light_end,
@@ -1120,8 +1218,8 @@ impl Renderer {
         self.texture_binding_set.update(resource_loader);
 
         // make shader binding table
-        if self.shader_binding_table.is_none() {
-            self.shader_binding_table = self.create_shader_binding_table(resource_loader);
+        if self.shader_binding_data.is_none() {
+            self.shader_binding_data = self.create_shader_binding_table(resource_loader);
         }
     }
 
@@ -1129,9 +1227,12 @@ impl Renderer {
         self.accel.is_ready()
             && self.texture_binding_set.is_ready()
             && self
-                .shader_binding_table
+                .shader_binding_data
                 .as_ref()
-                .map(|table| resource_loader.get_buffer(table.buffer).is_some())
+                .map(|data| {
+                    resource_loader.get_buffer(data.shader_binding_table).is_some()
+                        && resource_loader.get_buffer(data.probability_table).is_some()
+                })
                 .unwrap_or(false)
     }
 
@@ -1155,7 +1256,7 @@ impl Renderer {
         let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
         let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
-        let shader_binding_table = self.shader_binding_table.as_ref().unwrap();
+        let shader_binding_data = self.shader_binding_data.as_ref().unwrap();
 
         let mut path_trace_flags = match self.sampling_technique {
             SamplingTechnique::LightsOnly => PathTraceFlags::ALLOW_LIGHT_SAMPLING,
@@ -1167,6 +1268,16 @@ impl Renderer {
         if self.accumulate_roughness {
             path_trace_flags |= PathTraceFlags::ACCUMULATE_ROUGHNESS;
         }
+
+        let probability_table_address = unsafe {
+            self.context.device.get_buffer_device_address_helper(
+                resource_loader
+                    .get_buffer(shader_binding_data.probability_table)
+                    .unwrap(),
+            )
+        };
+        let alias_table_address = probability_table_address
+            + (shader_binding_data.sampled_light_count as u64) * (mem::size_of::<f32>() as u64);
 
         let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
             descriptor_pool,
@@ -1183,10 +1294,12 @@ impl Renderer {
             },
             |buf: &mut LightUniforms| {
                 *buf = LightUniforms {
+                    probability_table_address,
+                    alias_table_address,
                     sample_sphere_solid_angle: if self.sample_sphere_solid_angle { 1 } else { 0 },
-                    sampled_count: shader_binding_table.sampled_light_count,
-                    external_begin: shader_binding_table.external_light_begin,
-                    external_end: shader_binding_table.external_light_end,
+                    sampled_count: shader_binding_data.sampled_light_count,
+                    external_begin: shader_binding_data.external_light_begin,
+                    external_end: shader_binding_data.external_light_end,
                 }
             },
             self.accel.top_level_accel().unwrap(),
@@ -1196,7 +1309,9 @@ impl Renderer {
 
         let device = &self.context.device;
 
-        let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_table.buffer).unwrap();
+        let shader_binding_table_buffer = resource_loader
+            .get_buffer(shader_binding_data.shader_binding_table)
+            .unwrap();
         let shader_binding_table_address =
             unsafe { device.get_buffer_device_address_helper(shader_binding_table_buffer) };
 
@@ -1212,16 +1327,16 @@ impl Renderer {
             );
         }
 
-        let raygen_shader_binding_table = shader_binding_table
+        let raygen_shader_binding_table = shader_binding_data
             .raygen_region
             .into_device_address_region(shader_binding_table_address);
-        let miss_shader_binding_table = shader_binding_table
+        let miss_shader_binding_table = shader_binding_data
             .miss_region
             .into_device_address_region(shader_binding_table_address);
-        let hit_shader_binding_table = shader_binding_table
+        let hit_shader_binding_table = shader_binding_data
             .hit_region
             .into_device_address_region(shader_binding_table_address);
-        let callable_shader_binding_table = shader_binding_table
+        let callable_shader_binding_table = shader_binding_data
             .callable_region
             .into_device_address_region(shader_binding_table_address);
         unsafe {

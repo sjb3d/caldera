@@ -7,8 +7,6 @@
 #include "sampler.glsl"
 #include "light_common.glsl"
 
-LIGHT_UNIFORM_DATA(g_light);
-
 SOLID_ANGLE_LIGHT_RECORD(g_record);
 
 LIGHT_SAMPLE_DATA_IN(g_sample);

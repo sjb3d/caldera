@@ -6,18 +6,40 @@ fn lerp_mat3(a: &Mat3, b: &Mat3, t: f32) -> Mat3 {
 
 pub trait Gamma {
     fn into_linear(self) -> Self;
+    fn into_gamma(self) -> Self;
 }
 
 impl Gamma for Vec3 {
     fn into_linear(self) -> Self {
-        let f = |x: f32| {
+        self.map(|x: f32| {
             if x < 0.04045 {
                 x / 12.92
             } else {
                 ((x + 0.055) / 1.055).powf(2.4)
             }
-        };
-        Vec3::new(f(self.x), f(self.y), f(self.z))
+        })
+    }
+
+    fn into_gamma(self) -> Self {
+        self.map(|x: f32| {
+            if x < 0.0031308 {
+                x * 12.92
+            } else {
+                (x * 1.055).powf(1.0 / 2.4) - 0.055
+            }
+        })
+    }
+}
+
+// assumes Rec709 primaries
+pub trait Luminance {
+    fn luminance(&self) -> f32;
+}
+
+impl Luminance for Vec3 {
+    #[allow(clippy::excessive_precision)]
+    fn luminance(&self) -> f32 {
+        self.dot(Vec3::new(0.2126729, 0.7151522, 0.0721750))
     }
 }
 

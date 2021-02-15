@@ -1,6 +1,7 @@
 #version 460 core
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_buffer_reference2 : require
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
@@ -63,6 +64,14 @@ vec2 rand_u01(uint seq_index)
     const ivec2 sample_coord = rand_sample_coord(gl_LaunchIDEXT.xy, seq_index, g_path_trace.sample_index);
     const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
     return (vec2(sample_bits) + .5f)/65536.f;
+}
+
+uint sample_uniform_discrete(uint count, inout float u01)
+{
+    const float index_flt = float(count)*u01;
+    const uint index = min(uint(index_flt), count - 1);
+    u01 = index_flt - float(index);
+    return index;
 }
 
 bool split_random_variable(float accept_probability, inout float u01)
@@ -134,11 +143,15 @@ void sample_all_lights(
     out float light_epsilon)
 {
     // pick a light source
-    const float sampled_count_flt = float(g_light.sampled_count);
-    const float rand_light_flt = rand_u01.x*sampled_count_flt;
-    const uint light_index = min(uint(rand_light_flt), g_light.sampled_count - 1);
-    rand_u01.x = rand_light_flt - float(light_index);
-    const float selection_pdf = 1.f/sampled_count_flt;
+    const uint entry_index = sample_uniform_discrete(g_light.sampled_count, rand_u01.x);
+    const LightAliasEntry entry = g_light.alias_table.entries[entry_index];
+    uint light_index;
+    if (split_random_variable(entry.split, rand_u01.y)) {
+        light_index = entry.indices & 0xffffU;
+    } else {
+        light_index = entry.indices >> 16;
+    }
+    const float selection_pdf = g_light.probability_table.entries[light_index];
 
     // sample this light
     sample_single_light(
@@ -171,10 +184,9 @@ void evaluate_single_light(
     light_solid_angle_pdf = g_light_eval.solid_angle_pdf;
 }
 
-float get_light_selection_pdf()
+float get_light_selection_pdf(uint light_index)
 {
-    const float sampled_count_flt = float(g_light.sampled_count);
-    return 1.f/sampled_count_flt;
+    return g_light.probability_table.entries[light_index];
 }
 
 float mis_ratio(float ratio)
@@ -280,7 +292,7 @@ void main()
             // take into account how it could have been sampled
             const bool light_can_be_sampled = allow_light_sampling && (light_index < g_light.sampled_count);
             if (light_can_be_sampled) {
-                light_solid_angle_pdf *= get_light_selection_pdf();
+                light_solid_angle_pdf *= get_light_selection_pdf(light_index);
             }
 
             // compute MIS weight
