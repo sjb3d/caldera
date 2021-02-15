@@ -7,7 +7,6 @@
 #include "maths.glsl"
 #include "extend_common.glsl"
 #include "occlusion_common.glsl"
-#include "normal_pack.glsl"
 #include "sampler.glsl"
 #include "color_space.glsl"
 #include "light_common.glsl"
@@ -324,7 +323,7 @@ void main()
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
         if (accumulate_roughness) {
-            const float orig_roughness = get_roughness(g_extend.hit);
+            const float orig_roughness = get_roughness(g_extend.bsdf_data);
             const float p = 4.f;
             roughness_acc = min(pow(pow(roughness_acc, p) + pow(orig_roughness, p), 1.f/p), 1.f);
 
@@ -333,7 +332,8 @@ void main()
                 case BSDF_TYPE_ROUGH_CONDUCTOR:
                     if (roughness_acc != 0.f) {
                         const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_CONDUCTOR : BSDF_TYPE_DIFFUSE;
-                        g_extend.hit = replace_hit_data(g_extend.hit, bsdf_type, roughness_acc);
+                        g_extend.hit = replace_bsdf_type(g_extend.hit, bsdf_type);
+                        g_extend.bsdf_data = replace_roughness(g_extend.bsdf_data, roughness_acc);
                     }
                     break;
                 case BSDF_TYPE_DIELECTRIC:
@@ -346,15 +346,16 @@ void main()
                 case BSDF_TYPE_SMOOTH_PLASTIC:
                     if (roughness_acc != 0.f) {
                         const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_PLASTIC : BSDF_TYPE_DIFFUSE;
-                        g_extend.hit = replace_hit_data(g_extend.hit, bsdf_type, roughness_acc);
+                        g_extend.hit = replace_bsdf_type(g_extend.hit, bsdf_type);
+                        g_extend.bsdf_data = replace_roughness(g_extend.bsdf_data, roughness_acc);
                     }
                     break;
             }
         }
 
         // unpack the BRDF
-        const vec3 hit_reflectance = sample_from_rec709(get_reflectance(g_extend.hit));
-        const float hit_roughness = get_roughness(g_extend.hit);
+        const vec3 hit_reflectance = sample_from_rec709(get_reflectance(g_extend.bsdf_data));
+        const float hit_roughness = get_roughness(g_extend.bsdf_data);
 
         const vec3 hit_position = g_extend.position_or_extdir;
         const mat3 hit_basis = basis_from_z_axis(get_dir(g_extend.shading_normal));

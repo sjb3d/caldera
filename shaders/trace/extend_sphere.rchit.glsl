@@ -5,7 +5,6 @@
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
 #include "extend_common.glsl"
-#include "normal_pack.glsl"
 #include "sphere_common.glsl"
 
 layout(shaderRecordEXT, scalar) buffer ExtendSphereHitRecord {
@@ -32,15 +31,16 @@ void main()
     const uint bsdf_type = (g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
-    g_extend.position_or_extdir = hit_pos_ws;
-    g_extend.geom_normal = make_packed_normal(hit_normal_vec_ws);
-    g_extend.shading_normal = g_extend.geom_normal;
-    g_extend.hit = create_hit_data(
+    g_extend.hit = create_hit_info(
         bsdf_type,
-        g_record.shader.reflectance,
-        g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
         is_front_hit,
         g_record.unit_scale);
+    g_extend.position_or_extdir = hit_pos_ws;
+    g_extend.geom_normal = make_packed_normal(hit_normal_vec_ws);
+    g_extend.shading_normal = g_extend.geom_normal;
+    g_extend.bsdf_data = create_bsdf_data(
+        g_record.shader.reflectance,
+        g_record.shader.roughness);
 }

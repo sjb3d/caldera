@@ -7,7 +7,6 @@
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
 #include "extend_common.glsl"
-#include "normal_pack.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D g_textures[];
 
@@ -95,15 +94,16 @@ void main()
     const vec3 hit_shading_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_shading_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
-    g_extend.position_or_extdir = hit_pos_ws;
-    g_extend.geom_normal = make_packed_normal(hit_geom_normal_vec_ws);
-    g_extend.shading_normal = make_packed_normal(hit_shading_normal_vec_ws);
-    g_extend.hit = create_hit_data(
+    g_extend.hit = create_hit_info(
         bsdf_type,
-        reflectance,
-        g_record.shader.roughness,
         is_emissive,
         g_record.shader.light_index,
         is_front_hit,
         g_record.unit_scale);
+    g_extend.position_or_extdir = hit_pos_ws;
+    g_extend.geom_normal = make_packed_normal(hit_geom_normal_vec_ws);
+    g_extend.shading_normal = make_packed_normal(hit_shading_normal_vec_ws);
+    g_extend.bsdf_data = create_bsdf_data(
+        reflectance,
+        g_record.shader.roughness);
 }
