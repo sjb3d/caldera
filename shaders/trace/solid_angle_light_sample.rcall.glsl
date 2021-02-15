@@ -13,9 +13,7 @@ LIGHT_SAMPLE_DATA_IN(g_sample);
 
 void main()
 {
-    //const vec3 target_position = g_sample.position;
-    //const vec3 target_normal = g_sample.normal;
-    const vec2 rand_u01 = g_sample.emission.xy;
+    const vec2 rand_u01 = get_rand_u01(g_sample);
 
     const float cos_theta = 1.f - g_record.solid_angle/(2.f*PI);
     const vec3 ray_dir_ls = sample_solid_angle_uniform(cos_theta, rand_u01);
@@ -23,9 +21,11 @@ void main()
     const mat3 basis = basis_from_z_axis(normalize(g_record.direction_ws));
     const vec3 external_dir = normalize(basis*ray_dir_ls);
 
-    g_sample.position_or_extdir = external_dir;
-    g_sample.normal = -external_dir;
-    g_sample.emission = g_record.emission;
-    g_sample.solid_angle_pdf_and_extbit = -1.f/g_record.solid_angle; // sign bit signals an external sample
-    g_sample.unit_scale = 0.f;
+    g_sample = write_light_sample_outputs(
+        external_dir,
+        -external_dir,
+        g_record.emission,
+        1.f/g_record.solid_angle,
+        true,
+        0.f);
 }

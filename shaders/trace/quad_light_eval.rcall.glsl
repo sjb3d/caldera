@@ -13,9 +13,9 @@ LIGHT_EVAL_DATA_IN(g_eval);
 
 void main()
 {
-    const vec3 light_position = g_eval.position_or_extdir;
-    const vec3 target_position = g_eval.emission;
-
+    const vec3 light_position = get_position_or_extdir(g_eval);
+    const vec3 target_position = get_target_position(g_eval);
+    
     const vec3 light_normal = g_record.normal_ws;
     const vec3 target_from_light = target_position - light_position;
     const vec3 connection_dir = normalize(target_from_light);
@@ -25,6 +25,5 @@ void main()
     const float distance_sq = dot(target_from_light, target_from_light);
     const float solid_angle_pdf = solid_angle_pdf_from_area_pdf(g_record.area_pdf, facing_term, distance_sq);
 
-    g_eval.emission = emission;
-    g_eval.solid_angle_pdf = solid_angle_pdf;
+    g_eval = write_light_eval_outputs(emission, solid_angle_pdf);
 }

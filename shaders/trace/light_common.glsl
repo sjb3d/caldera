@@ -57,10 +57,22 @@ struct LightAliasEntry {
 #define CALLABLE_SHADER_COUNT_PER_LIGHT     2
 
 struct LightEvalData {
-    vec3 position_or_extdir;    // input only
-    vec3 emission;              // input: target position (or external direction)
-    float solid_angle_pdf;
+    vec3 a;     //  in: position_or_extdir      out: emission
+    vec3 b;     //  in: target_position         out: (solid_angle_pdf, -, -)
 };
+
+vec3 get_position_or_extdir(LightEvalData d)    { return d.a; }
+vec3 get_target_position(LightEvalData d)       { return d.b; }
+
+LightEvalData write_light_eval_outputs(
+    vec3 emission,
+    float solid_angle_pdf)
+{
+    LightEvalData d;
+    d.a = emission;
+    d.b.x = solid_angle_pdf;
+    return d;
+}
 
 #define LIGHT_EVAL_SHADER_INDEX(LIGHT)      (CALLABLE_SHADER_COUNT_PER_LIGHT*(LIGHT) + 0)
 #define LIGHT_EVAL_CALLABLE_INDEX           0
@@ -68,12 +80,33 @@ struct LightEvalData {
 #define LIGHT_EVAL_DATA_IN(NAME)            layout(location = 0) callableDataInEXT LightEvalData NAME
 
 struct LightSampleData {
-    vec3 position_or_extdir;            // input: target position
-    vec3 normal;                        // input: target normal
-    vec3 emission;                      // input: random numbers
-    float solid_angle_pdf_and_extbit;   // (negative for external)
-    float unit_scale;
+    vec3 a;     // in: target position          out: position_or_extdir
+    vec3 b;     // in: target normal            out: normal
+    vec3 c;     // in: random numbers           out: emission
+    float d;    // in: -                        out: solid_angle_pdf (ext in sign)
+    float e;    // in: -                        out: unit_scale
 };
+
+vec3 get_target_position(LightSampleData d)     { return d.a; }
+vec3 get_target_normal(LightSampleData d)       { return d.b; }
+vec2 get_rand_u01(LightSampleData d)            { return d.c.xy; }
+
+LightSampleData write_light_sample_outputs(
+    vec3 position_or_extdir,
+    vec3 normal,
+    vec3 emission,
+    float solid_angle_pdf,
+    bool is_external,
+    float unit_scale)
+{
+    LightSampleData d;
+    d.a = position_or_extdir;
+    d.b = normal;
+    d.c = emission;
+    d.d = is_external ? (-solid_angle_pdf) : solid_angle_pdf;
+    d.e = unit_scale;
+    return d;
+}    
 
 #define LIGHT_SAMPLE_SHADER_INDEX(LIGHT)    (CALLABLE_SHADER_COUNT_PER_LIGHT*(LIGHT) + 1)
 #define LIGHT_SAMPLE_CALLABLE_INDEX         1

@@ -13,14 +13,13 @@ LIGHT_EVAL_DATA_IN(g_eval);
 
 void main()
 {
-    const vec3 light_direction = g_eval.position_or_extdir;
-    const vec3 target_position = g_eval.emission;
+    const vec3 light_direction = get_position_or_extdir(g_eval);
+    const vec3 target_position = get_target_position(g_eval);
 
     // check we are within the solid angle of the light
     const float cos_theta = dot(g_record.direction_ws, light_direction);
     const float cos_theta_min = 1.f - g_record.solid_angle/(2.f*PI);
     const vec3 emission = (cos_theta > cos_theta_min) ? g_record.emission : vec3(0.f);
 
-    g_eval.emission = emission;
-    g_eval.solid_angle_pdf = 1.f/g_record.solid_angle;
+    g_eval = write_light_eval_outputs(emission, 1.f/g_record.solid_angle);
 }

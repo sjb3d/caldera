@@ -127,16 +127,20 @@ void sample_single_light(
     out bool light_is_external,
     out float light_epsilon)
 {
-    g_light_sample.position_or_extdir = target_position;
-    g_light_sample.normal = target_normal;
-    g_light_sample.emission = vec3(rand_u01, 0.f);
+    // c.f. LightSampleData
+    g_light_sample.a = target_position;
+    g_light_sample.b = target_normal;
+    g_light_sample.c.xy = rand_u01;
+
     executeCallableEXT(LIGHT_SAMPLE_SHADER_INDEX(light_index), LIGHT_SAMPLE_CALLABLE_INDEX);
-    light_position_or_extdir = g_light_sample.position_or_extdir;
-    light_normal = g_light_sample.normal;
-    light_emission = sample_from_rec709(g_light_sample.emission);
-    light_solid_angle_pdf = abs(g_light_sample.solid_angle_pdf_and_extbit);
-    light_is_external = sign_bit_set(g_light_sample.solid_angle_pdf_and_extbit);
-    light_epsilon = ldexp(g_light_sample.unit_scale, LOG2_EPSILON_FACTOR);    
+
+    // c.f. write_light_sample_outputs
+    light_position_or_extdir = g_light_sample.a;
+    light_normal = g_light_sample.b;
+    light_emission = sample_from_rec709(g_light_sample.c);
+    light_solid_angle_pdf = abs(g_light_sample.d);
+    light_is_external = sign_bit_set(g_light_sample.d);
+    light_epsilon = ldexp(g_light_sample.e, LOG2_EPSILON_FACTOR);    
 }
 
 void sample_all_lights(
@@ -185,11 +189,15 @@ void evaluate_single_light(
     out vec3 light_emission,
     out float light_solid_angle_pdf)
 {
-    g_light_eval.position_or_extdir = light_position_or_extdir;
-    g_light_eval.emission = prev_position;
+    // c.f. LightEvalData
+    g_light_eval.a = light_position_or_extdir;
+    g_light_eval.b = prev_position;
+
     executeCallableEXT(LIGHT_EVAL_SHADER_INDEX(light_index), LIGHT_EVAL_CALLABLE_INDEX);
-    light_emission = sample_from_rec709(g_light_eval.emission);
-    light_solid_angle_pdf = g_light_eval.solid_angle_pdf;
+
+    // c.f. write_light_eval_outputs
+    light_emission = sample_from_rec709(g_light_eval.a);
+    light_solid_angle_pdf = g_light_eval.b.x;
 }
 
 float get_light_selection_pdf(uint light_index)

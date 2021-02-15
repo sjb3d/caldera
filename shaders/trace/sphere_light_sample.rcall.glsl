@@ -16,9 +16,8 @@ LIGHT_SAMPLE_DATA_IN(g_sample);
 
 void main()
 {
-    const vec3 target_position = g_sample.position_or_extdir;
-    //const vec3 target_normal = g_sample.normal;
-    const vec2 rand_u01 = g_sample.emission.xy;
+    const vec3 target_position = get_target_position(g_sample);
+    const vec2 rand_u01 = get_rand_u01(g_sample);
 
     if (g_light.sample_sphere_solid_angle != 0) {
         const vec3 centre_from_target = g_record.centre_ws - target_position;
@@ -63,11 +62,13 @@ void main()
         const float facing_term = dot(target_from_light, light_normal);
         const vec3 emission = (facing_term > 0.f) ? g_record.emission : vec3(0.f);
 
-        g_sample.position_or_extdir = light_position;
-        g_sample.normal = light_normal;
-        g_sample.emission = emission;
-        g_sample.solid_angle_pdf_and_extbit = 1.f/solid_angle;
-        g_sample.unit_scale = g_record.unit_scale;
+        g_sample = write_light_sample_outputs(
+            light_position,
+            light_normal,
+            emission,
+            1.f/solid_angle,
+            false,
+            g_record.unit_scale);
     } else {
         const vec3 sample_dir = sample_sphere_uniform(rand_u01);
         const vec3 light_position = g_record.centre_ws + g_record.radius_ws*sample_dir;
@@ -81,10 +82,12 @@ void main()
         const float area_ws = 4.f * PI * g_record.radius_ws * g_record.radius_ws;
         const float solid_angle_pdf = solid_angle_pdf_from_area_pdf(1.f/area_ws, facing_term, distance_sq);
 
-        g_sample.position_or_extdir = light_position;
-        g_sample.normal = light_normal;
-        g_sample.emission = emission;
-        g_sample.solid_angle_pdf_and_extbit = solid_angle_pdf;
-        g_sample.unit_scale = g_record.unit_scale;
+        g_sample = write_light_sample_outputs(
+            light_position,
+            light_normal,
+            emission,
+            solid_angle_pdf,
+            false,
+            g_record.unit_scale);
     }
 }

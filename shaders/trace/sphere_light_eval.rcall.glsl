@@ -16,8 +16,8 @@ LIGHT_EVAL_DATA_IN(g_eval);
 
 void main()
 {
-    const vec3 light_position = g_eval.position_or_extdir;
-    const vec3 target_position = g_eval.emission;
+    const vec3 light_position = get_position_or_extdir(g_eval);
+    const vec3 target_position = get_target_position(g_eval);
 
     const vec3 light_normal = normalize(light_position - g_record.centre_ws);
     const vec3 target_from_light = target_position - light_position;
@@ -25,8 +25,7 @@ void main()
     const float facing_term = dot(connection_dir, light_normal);
     const vec3 emission = (facing_term > 0.f) ? g_record.emission : vec3(0.f);
 
-    g_eval.emission = emission;
-    
+    float solid_angle_pdf;
     if (g_light.sample_sphere_solid_angle != 0) {
         const vec3 centre_from_target = g_record.centre_ws - target_position;
         const float sin_theta = g_record.radius_ws/length(centre_from_target);
@@ -41,12 +40,12 @@ void main()
             solid_angle = PI*sin_theta*sin_theta;
         }
 
-        g_eval.solid_angle_pdf = 1.f/solid_angle;
+        solid_angle_pdf = 1.f/solid_angle;
     } else {
         const float distance_sq = dot(target_from_light, target_from_light);
         const float area_ws = 4.f * PI * g_record.radius_ws * g_record.radius_ws;
-        const float solid_angle_pdf = solid_angle_pdf_from_area_pdf(1.f/area_ws, facing_term, distance_sq);
-
-        g_eval.solid_angle_pdf = solid_angle_pdf;
+        solid_angle_pdf = solid_angle_pdf_from_area_pdf(1.f/area_ws, facing_term, distance_sq);
     }
+
+    g_eval = write_light_eval_outputs(emission, solid_angle_pdf);
 }

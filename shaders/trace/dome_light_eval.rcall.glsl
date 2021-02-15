@@ -13,11 +13,7 @@ LIGHT_EVAL_DATA_IN(g_eval);
 
 void main()
 {
-    //const vec3 light_position = g_eval.position;
-    //const vec3 target_position = g_eval.emission;
-
     const float solid_angle_pdf = 1.f/(4.f*PI);
 
-    g_eval.emission = g_record.emission;
-    g_eval.solid_angle_pdf = solid_angle_pdf;
+    g_eval = write_light_eval_outputs(g_record.emission, solid_angle_pdf);
 }
