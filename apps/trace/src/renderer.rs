@@ -189,8 +189,8 @@ enum BsdfType {
     Mirror,
     Dielectric,
     Diffuse,
-    Conductor,
-    Plastic,
+    RoughConductor,
+    RoughPlastic,
     SmoothPlastic,
 }
 
@@ -853,14 +853,14 @@ impl Renderer {
                             roughness: 1.0,
                             ..Default::default()
                         },
-                        Surface::Conductor { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Conductor, reflectance_texture),
+                        Surface::RoughConductor { roughness } => ExtendShader {
+                            flags: ExtendShaderFlags::new(BsdfType::RoughConductor, reflectance_texture),
                             reflectance,
                             roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
                             ..Default::default()
                         },
-                        Surface::Plastic { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Plastic, reflectance_texture),
+                        Surface::RoughPlastic { roughness } => ExtendShader {
+                            flags: ExtendShaderFlags::new(BsdfType::RoughPlastic, reflectance_texture),
                             reflectance,
                             roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
                             ..Default::default()

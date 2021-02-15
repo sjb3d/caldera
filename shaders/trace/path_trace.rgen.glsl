@@ -330,9 +330,9 @@ void main()
 
             switch (get_bsdf_type(g_extend.hit)) {
                 case BSDF_TYPE_MIRROR:
-                case BSDF_TYPE_CONDUCTOR:
+                case BSDF_TYPE_ROUGH_CONDUCTOR:
                     if (roughness_acc != 0.f) {
-                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_CONDUCTOR : BSDF_TYPE_DIFFUSE;
+                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_CONDUCTOR : BSDF_TYPE_DIFFUSE;
                         g_extend.hit = replace_hit_data(g_extend.hit, bsdf_type, roughness_acc);
                     }
                     break;
@@ -342,10 +342,10 @@ void main()
                 case BSDF_TYPE_DIFFUSE:
                     // nothing to do
                     break;
-                case BSDF_TYPE_PLASTIC:
+                case BSDF_TYPE_ROUGH_PLASTIC:
                 case BSDF_TYPE_SMOOTH_PLASTIC:
                     if (roughness_acc != 0.f) {
-                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_PLASTIC : BSDF_TYPE_DIFFUSE;
+                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_PLASTIC : BSDF_TYPE_DIFFUSE;
                         g_extend.hit = replace_hit_data(g_extend.hit, bsdf_type, roughness_acc);
                     }
                     break;
@@ -405,7 +405,7 @@ void main()
                         hit_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_cos_theta);
                     } break;
 
-                    case BSDF_TYPE_CONDUCTOR: {
+                    case BSDF_TYPE_ROUGH_CONDUCTOR: {
                         const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
                         const vec3 v = out_dir_ls;
@@ -420,7 +420,7 @@ void main()
                         hit_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                     } break;
 
-                    case BSDF_TYPE_PLASTIC: {
+                    case BSDF_TYPE_ROUGH_PLASTIC: {
                         const float diffuse_strength = remaining_diffuse_strength(out_dir_ls.z, hit_roughness);
                         const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
@@ -547,7 +547,7 @@ void main()
                     in_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(in_dir_ls.z);
                 } break;
 
-                case BSDF_TYPE_CONDUCTOR: {
+                case BSDF_TYPE_ROUGH_CONDUCTOR: {
                     const vec2 alpha = vec2(hit_roughness*hit_roughness);
 
                     const vec3 h = sample_vndf(out_dir_ls, alpha, bsdf_rand_u01);
@@ -565,7 +565,7 @@ void main()
                     in_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
                 } break;
 
-                case BSDF_TYPE_PLASTIC: {
+                case BSDF_TYPE_ROUGH_PLASTIC: {
                     const float diffuse_strength = remaining_diffuse_strength(out_dir_ls.z, hit_roughness);
                     const bool sample_diffuse = split_random_variable(diffuse_strength, bsdf_rand_u01.x);
 

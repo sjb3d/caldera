@@ -16,8 +16,8 @@ struct HitData {
 #define BSDF_TYPE_MIRROR            0
 #define BSDF_TYPE_DIELECTRIC        1
 #define BSDF_TYPE_DIFFUSE           2
-#define BSDF_TYPE_CONDUCTOR         3
-#define BSDF_TYPE_PLASTIC           4
+#define BSDF_TYPE_ROUGH_CONDUCTOR   3
+#define BSDF_TYPE_ROUGH_PLASTIC     4
 #define BSDF_TYPE_SMOOTH_PLASTIC    5
 
 bool bsdf_is_always_delta(uint bsdf_type)

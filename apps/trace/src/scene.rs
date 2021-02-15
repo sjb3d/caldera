@@ -43,8 +43,8 @@ pub enum Surface {
     Mirror,
     Dielectric,
     Diffuse,
-    Conductor { roughness: f32 },
-    Plastic { roughness: f32 },
+    RoughConductor { roughness: f32 },
+    RoughPlastic { roughness: f32 },
     SmoothPlastic,
 }
 
@@ -306,7 +306,7 @@ impl ShaderBuilder {
     pub fn new_conductor(reflectance: Vec3, roughness: f32) -> Self {
         Self(Shader {
             reflectance: Reflectance::Constant(reflectance),
-            surface: Surface::Conductor { roughness },
+            surface: Surface::RoughConductor { roughness },
             emission: None,
         })
     }
