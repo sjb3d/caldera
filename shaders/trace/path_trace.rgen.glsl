@@ -279,7 +279,7 @@ void main()
     ExtendPackedNormal prev_geom_normal_packed;
     float prev_epsilon;
     vec3 prev_in_dir;
-    float prev_in_solid_angle_pdf; // negative for delta
+    float prev_in_solid_angle_pdf_or_negative;
     vec3 prev_sample;
     float roughness_acc;
 
@@ -303,7 +303,7 @@ void main()
         prev_geom_normal_packed = make_packed_normal(g_path_trace.world_from_camera[2]);
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
-        prev_in_solid_angle_pdf = solid_angle_pdf;
+        prev_in_solid_angle_pdf_or_negative = solid_angle_pdf;
         prev_sample = importance/sensor_area_pdf;
         roughness_acc = 0.f;
     }
@@ -362,9 +362,9 @@ void main()
             }
 
             // compute MIS weight
-            const bool prev_is_delta = sign_bit_set(prev_in_solid_angle_pdf);
+            const bool prev_is_delta = sign_bit_set(prev_in_solid_angle_pdf_or_negative);
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
-            const float other_ratio = can_be_sampled ? mis_ratio(light_solid_angle_pdf / prev_in_solid_angle_pdf) : 0.f;
+            const float other_ratio = can_be_sampled ? mis_ratio(light_solid_angle_pdf / prev_in_solid_angle_pdf_or_negative) : 0.f;
             const float mis_weight = 1.f/(1.f + other_ratio);
 
             // accumulate this sample
@@ -518,7 +518,7 @@ void main()
 
             vec3 in_dir_ls;
             vec3 estimator;
-            float in_solid_angle_pdf;
+            float solid_angle_pdf_or_negative;
             float sampled_roughness;
             sample_bsdf(
                 get_bsdf_type(hit.info),
@@ -527,7 +527,7 @@ void main()
                 bsdf_rand_u01,
                 in_dir_ls,
                 estimator,
-                in_solid_angle_pdf,
+                solid_angle_pdf_or_negative,
                 roughness_acc);
             
             const mat3 hit_basis = basis_from_z_axis(get_dir(hit.shading_normal));
@@ -538,7 +538,7 @@ void main()
             prev_geom_normal_packed = hit.geom_normal;
             prev_epsilon = copysign(get_epsilon(hit.info, LOG2_EPSILON_FACTOR), in_dir_ls.z);
             prev_in_dir = in_dir;
-            prev_in_solid_angle_pdf = in_solid_angle_pdf;
+            prev_in_solid_angle_pdf_or_negative = solid_angle_pdf_or_negative;
             prev_sample *= estimator;
         }
     }
