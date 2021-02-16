@@ -187,11 +187,11 @@ void sample_single_light(
 
     // c.f. write_light_sample_outputs
     light_position_or_extdir = g_light_sample.a;
-    light_normal = g_light_sample.b;
-    light_emission = sample_from_rec709(g_light_sample.c);
-    light_solid_angle_pdf = abs(g_light_sample.d);
-    light_is_external = sign_bit_set(g_light_sample.d);
-    light_epsilon = ldexp(g_light_sample.e, LOG2_EPSILON_FACTOR);    
+    light_normal = normalize(vec_from_oct32(floatBitsToUint(g_light_sample.c.x)));
+    light_emission = sample_from_rec709(g_light_sample.b);
+    light_solid_angle_pdf = abs(g_light_sample.c.y);
+    light_is_external = sign_bit_set(g_light_sample.c.y);
+    light_epsilon = ldexp(g_light_sample.c.z, LOG2_EPSILON_FACTOR);    
 }
 
 void sample_all_lights(

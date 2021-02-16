@@ -1,3 +1,5 @@
+#include "normal_pack.glsl"
+
 struct LightAliasEntry {
     float split;
     uint indices;
@@ -56,22 +58,22 @@ struct LightAliasEntry {
 
 #define CALLABLE_SHADER_COUNT_PER_LIGHT     2
 
-struct LightEvalData {
+struct LightEvalParams {
     vec3 a;     //  in: position_or_extdir      out: emission
     vec3 b;     //  in: target_position         out: (solid_angle_pdf, -, -)
 };
 
-vec3 get_position_or_extdir(LightEvalData d)    { return d.a; }
-vec3 get_target_position(LightEvalData d)       { return d.b; }
+vec3 get_position_or_extdir(LightEvalParams p)  { return p.a; }
+vec3 get_target_position(LightEvalParams p)     { return p.b; }
 
-LightEvalData write_light_eval_outputs(
+LightEvalParams write_light_eval_outputs(
     vec3 emission,
     float solid_angle_pdf)
 {
-    LightEvalData d;
-    d.a = emission;
-    d.b.x = solid_angle_pdf;
-    return d;
+    LightEvalParams p;
+    p.a = emission;
+    p.b.x = solid_angle_pdf;
+    return p;
 }
 
 // TODO: use BRDF count
@@ -79,22 +81,20 @@ LightEvalData write_light_eval_outputs(
 
 #define LIGHT_EVAL_SHADER_INDEX(LIGHT)      (LIGHT_CALLABLE_START + (LIGHT)*CALLABLE_SHADER_COUNT_PER_LIGHT + 0)
 #define LIGHT_EVAL_CALLABLE_INDEX           0
-#define LIGHT_EVAL_DATA(NAME)               layout(location = LIGHT_EVAL_CALLABLE_INDEX) callableDataEXT LightEvalData NAME
-#define LIGHT_EVAL_DATA_IN(NAME)            layout(location = LIGHT_EVAL_CALLABLE_INDEX) callableDataInEXT LightEvalData NAME
+#define LIGHT_EVAL_DATA(NAME)               layout(location = LIGHT_EVAL_CALLABLE_INDEX) callableDataEXT LightEvalParams NAME
+#define LIGHT_EVAL_DATA_IN(NAME)            layout(location = LIGHT_EVAL_CALLABLE_INDEX) callableDataInEXT LightEvalParams NAME
 
-struct LightSampleData {
+struct LightSampleParams {
     vec3 a;     // in: target position          out: position_or_extdir
-    vec3 b;     // in: target normal            out: normal
-    vec3 c;     // in: random numbers           out: emission
-    float d;    // in: -                        out: solid_angle_pdf (ext in sign)
-    float e;    // in: -                        out: unit_scale
+    vec3 b;     // in: target normal            out: emission
+    vec3 c;     // in: random numbers           out: (normal, solid_angle_pdf (ext in sign), unit_scale)
 };
 
-vec3 get_target_position(LightSampleData d)     { return d.a; }
-vec3 get_target_normal(LightSampleData d)       { return d.b; }
-vec2 get_rand_u01(LightSampleData d)            { return d.c.xy; }
+vec3 get_target_position(LightSampleParams p)   { return p.a; }
+vec3 get_target_normal(LightSampleParams p)     { return p.b; }
+vec2 get_rand_u01(LightSampleParams p)          { return p.c.xy; }
 
-LightSampleData write_light_sample_outputs(
+LightSampleParams write_light_sample_outputs(
     vec3 position_or_extdir,
     vec3 normal,
     vec3 emission,
@@ -102,16 +102,17 @@ LightSampleData write_light_sample_outputs(
     bool is_external,
     float unit_scale)
 {
-    LightSampleData d;
-    d.a = position_or_extdir;
-    d.b = normal;
-    d.c = emission;
-    d.d = is_external ? (-solid_angle_pdf) : solid_angle_pdf;
-    d.e = unit_scale;
-    return d;
+    LightSampleParams p;
+    p.a = position_or_extdir;
+    p.b = emission;
+    p.c = vec3(
+        uintBitsToFloat(oct32_from_vec(normal)),
+        is_external ? (-solid_angle_pdf) : solid_angle_pdf,
+        unit_scale);
+    return p;
 }    
 
 #define LIGHT_SAMPLE_SHADER_INDEX(LIGHT)    (LIGHT_CALLABLE_START + (LIGHT)*CALLABLE_SHADER_COUNT_PER_LIGHT + 1)
 #define LIGHT_SAMPLE_CALLABLE_INDEX         1
-#define LIGHT_SAMPLE_DATA(NAME)             layout(location = LIGHT_SAMPLE_CALLABLE_INDEX) callableDataEXT LightSampleData NAME
-#define LIGHT_SAMPLE_DATA_IN(NAME)          layout(location = LIGHT_SAMPLE_CALLABLE_INDEX) callableDataInEXT LightSampleData NAME
+#define LIGHT_SAMPLE_DATA(NAME)             layout(location = LIGHT_SAMPLE_CALLABLE_INDEX) callableDataEXT LightSampleParams NAME
+#define LIGHT_SAMPLE_DATA_IN(NAME)          layout(location = LIGHT_SAMPLE_CALLABLE_INDEX) callableDataInEXT LightSampleParams NAME
