@@ -543,7 +543,11 @@ void main()
         }
     }
 
-    imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
-    imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
-    imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));
+    if (any(isinf(result_sum)) || any(isnan(result_sum))) {
+        // skip
+    } else {
+        imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
+        imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
+        imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));
+    }
 }
