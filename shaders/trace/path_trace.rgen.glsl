@@ -14,6 +14,16 @@
 #include "fresnel.glsl"
 #include "rand_common.glsl"
 
+#define USE_CALLABLE_BSDF       1
+#if !USE_CALLABLE_BSDF
+#include "diffuse_bsdf.glsl"
+#include "mirror_bsdf.glsl"
+#include "smooth_dielectric_bsdf.glsl"
+#include "smooth_plastic_bsdf.glsl"
+#include "rough_plastic_bsdf.glsl"
+#include "rough_conductor_bsdf.glsl"
+#endif
+
 #define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS    0x01
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
 #define PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING     0x04
@@ -80,17 +90,21 @@ EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
 LIGHT_EVAL_DATA(g_light_eval);
 LIGHT_SAMPLE_DATA(g_light_sample);
+
+#if USE_CALLABLE_BSDF
 BSDF_EVAL_DATA(g_bsdf_eval);
 BSDF_SAMPLE_DATA(g_bsdf_sample);
+#endif
 
 void evaluate_bsdf(
+    uint bsdf_type,
     vec3 out_dir,
     vec3 in_dir,
-    uint bsdf_type,
     BsdfParams params,
     out vec3 f,
     out float solid_angle_pdf)
 {
+#if USE_CALLABLE_BSDF
     // c.f. BsdfEvalData
     g_bsdf_eval.a = out_dir;
     g_bsdf_eval.b = in_dir;
@@ -101,18 +115,31 @@ void evaluate_bsdf(
     // c.f. write_bsdf_eval_outputs
     f = g_bsdf_eval.a;
     solid_angle_pdf = g_bsdf_eval.b.x;
+#else
+#define CALL(F) F(out_dir, in_dir, params, f, solid_angle_pdf)
+    switch (bsdf_type) {
+        case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_eval); break;
+        case BSDF_TYPE_MIRROR:              break;
+        case BSDF_TYPE_SMOOTH_DIELECTRIC:   break;
+        case BSDF_TYPE_SMOOTH_PLASTIC:      CALL(smooth_plastic_bsdf_eval); break;
+        case BSDF_TYPE_ROUGH_PLASTIC:       CALL(rough_plastic_bsdf_eval); break;
+        case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_eval); break;
+    }
+#undef CALL
+#endif
 }
 
 void sample_bsdf(
-    vec3 out_dir,
     uint bsdf_type,
+    vec3 out_dir,
     BsdfParams params,
     vec2 rand_u01,
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
-    inout float roughness_acc)
+    out float sampled_roughness)
 {
+#if USE_CALLABLE_BSDF
     // c.f. BsdfSampleData
     g_bsdf_sample.a = out_dir;
     g_bsdf_sample.b.xy = rand_u01;
@@ -124,7 +151,19 @@ void sample_bsdf(
     in_dir = g_bsdf_sample.a;
     estimator = g_bsdf_sample.b;
     solid_angle_pdf_or_negative = uintBitsToFloat(g_bsdf_sample.c.bits.x);
-    roughness_acc = max(roughness_acc, uintBitsToFloat(g_bsdf_sample.c.bits.y));
+    sampled_roughness = uintBitsToFloat(g_bsdf_sample.c.bits.y);
+#else
+#define CALL(F) F(out_dir, params, rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, sampled_roughness)
+    switch (bsdf_type) {
+        case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_sample); break;
+        case BSDF_TYPE_MIRROR:              CALL(mirror_bsdf_sample); break;
+        case BSDF_TYPE_SMOOTH_DIELECTRIC:   CALL(smooth_dielectric_bsdf_sample); break;
+        case BSDF_TYPE_SMOOTH_PLASTIC:      CALL(smooth_plastic_bsdf_sample); break;
+        case BSDF_TYPE_ROUGH_PLASTIC:       CALL(rough_plastic_bsdf_sample); break;
+        case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_sample); break;
+    }
+#undef CALL
+#endif
 }
 
 void sample_single_light(
@@ -285,6 +324,11 @@ void main()
             EXTEND_PAYLOAD_INDEX);
         ++segment_index;
 
+        // adjust BSDF colour space of the hit
+        g_extend.bsdf_params = replace_reflectance(
+            g_extend.bsdf_params,
+            sample_from_rec709(get_reflectance(g_extend.bsdf_params)));
+
         // reject implausible shading normals
         {
             const vec3 hit_shading_normal_vec = get_vec(g_extend.shading_normal);
@@ -374,9 +418,6 @@ void main()
         }
 
         // unpack the BRDF
-        const vec3 hit_reflectance = sample_from_rec709(get_reflectance(g_extend.bsdf_params));
-        const float hit_roughness = get_roughness(g_extend.bsdf_params);
-
         const vec3 hit_position = g_extend.position_or_extdir;
         const mat3 hit_basis = basis_from_z_axis(get_dir(g_extend.shading_normal));
         const vec3 hit_shading_normal = hit_basis[2];
@@ -421,9 +462,9 @@ void main()
             float hit_solid_angle_pdf;
             if (in_cos_theta > 0.f || bsdf_has_transmission(bsdf_type)) {
                 evaluate_bsdf(
+                    bsdf_type,
                     out_dir_ls,
                     in_dir_ls,
-                    bsdf_type,
                     g_extend.bsdf_params,
                     hit_f,
                     hit_solid_angle_pdf);
@@ -485,7 +526,8 @@ void main()
 
             // RR
             if (segment_index > 4) {
-                const float survive_prob = clamp(max_element(hit_reflectance), .1f, .95f);
+                const vec3 reflectance = get_reflectance(g_extend.bsdf_params);
+                const float survive_prob = clamp(max_element(reflectance), .1f, .95f);
                 if (!split_random_variable(survive_prob, bsdf_rand_u01.y)) {
                     break;
                 }
@@ -495,9 +537,10 @@ void main()
             vec3 in_dir_ls;
             vec3 estimator;
             float in_solid_angle_pdf;
+            float sampled_roughness;
             sample_bsdf(
-                out_dir_ls,
                 get_bsdf_type(g_extend.hit),
+                out_dir_ls,
                 g_extend.bsdf_params,
                 bsdf_rand_u01,
                 in_dir_ls,
@@ -505,6 +548,7 @@ void main()
                 in_solid_angle_pdf,
                 roughness_acc);
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
+            roughness_acc = max(roughness_acc, sampled_roughness);
 
             prev_position = hit_position;
             prev_geom_normal_packed = g_extend.geom_normal;

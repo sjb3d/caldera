@@ -1,7 +1,8 @@
 #ifndef INCLUDED_COMMON_BSDF
 #define INCLUDED_COMMON_BSDF
 
-#include "fresnel.glsl"
+#include "maths.glsl"
+#include "sampler.glsl"
 
 #define PLASTIC_F0              0.04f
 
@@ -10,22 +11,6 @@
 // vaguely Aluminium, need to convert some spectral data
 #define CONDUCTOR_ETA           vec3(1.09f)
 #define CONDUCTOR_K             vec3(6.79f)
-
-vec3 refract(vec3 v, float eta)
-{
-    // Snell's law: sin_theta_i = sin_theta_t * eta
-    const float cos_theta_i = abs(v.z);
-    const float sin2_theta_i = 1.f - cos_theta_i*cos_theta_i;
-    const float sin2_theta_t = sin2_theta_i/square(eta);
-    const float cos_theta_t = sqrt(max(1.f - sin2_theta_t, 0.f));
-    return normalize(vec3(0.f, 0.f, cos_theta_i/eta - cos_theta_t) - v/eta);
-}
-
-// approximation from http://c0de517e.blogspot.com/2019/08/misunderstanding-multilayering-diffuse.html
-float remaining_diffuse_strength(float n_dot_v, float roughness)
-{
-    return mix(1.f - fresnel_schlick(PLASTIC_F0, n_dot_v), 1.f - PLASTIC_F0, roughness);
-}
 
 /*
     Parameters for a BSDF implementation (assumes that the type
@@ -66,6 +51,13 @@ bool is_front_hit(BsdfParams p)
     return (p.bits.y & BSDF_PARAMS_Y_FRONT_HIT_BIT) != 0;
 }
 
+BsdfParams replace_reflectance(BsdfParams p, vec3 reflectance)
+{
+    p.bits.x = packHalf2x16(reflectance.xy);
+    p.bits.y &= 0xffff0000;
+    p.bits.y |= packHalf2x16(vec2(reflectance.z, 0.f));
+    return p;
+}
 BsdfParams replace_roughness(BsdfParams p, float roughness)
 {
     p.bits.y &= (BSDF_PARAMS_Y_FRONT_HIT_BIT | 0x0000ffff);
@@ -98,8 +90,8 @@ struct BsdfEvalData {
     BsdfParams c;   // in: BsdfParams
 };
 
-vec3 get_in_dir(BsdfEvalData d)             { return d.a; }
-vec3 get_out_dir(BsdfEvalData d)            { return d.b; }
+vec3 get_out_dir(BsdfEvalData d)            { return d.a; }
+vec3 get_in_dir(BsdfEvalData d)             { return d.b; }
 BsdfParams get_bsdf_params(BsdfEvalData d)  { return d.c; }
 
 BsdfEvalData write_bsdf_eval_outputs(
@@ -120,7 +112,7 @@ BsdfEvalData write_bsdf_eval_outputs(
 struct BsdfSampleData {
     vec3 a;         // in: out_dir          out: in_dir
     vec3 b;         // in: rand_u01, -      out: estimator
-    BsdfParams c;   // in: BsdfParams       out: (solid_angle_pdf_or_negative, roughness_acc)
+    BsdfParams c;   // in: BsdfParams       out: (solid_angle_pdf_or_negative, sampled_roughness)
 };
 
 vec3 get_out_dir(BsdfSampleData d)              { return d.a; }
@@ -131,13 +123,13 @@ BsdfSampleData write_bsdf_sample_outputs(
     vec3 in_dir,
     vec3 estimator,
     float solid_angle_pdf_or_negative,
-    float roughness_acc)
+    float sampled_roughness)
 {
     BsdfSampleData d;
     d.a = in_dir;
     d.b = estimator;
     d.c.bits.x = floatBitsToUint(solid_angle_pdf_or_negative);
-    d.c.bits.y = floatBitsToUint(roughness_acc);
+    d.c.bits.y = floatBitsToUint(sampled_roughness);
     return d;
 }
 
@@ -145,5 +137,41 @@ BsdfSampleData write_bsdf_sample_outputs(
 #define BSDF_SAMPLE_CALLABLE_INDEX              3
 #define BSDF_SAMPLE_DATA(NAME)                  layout(location = BSDF_SAMPLE_CALLABLE_INDEX) callableDataEXT BsdfSampleData NAME
 #define BSDF_SAMPLE_DATA_IN(NAME)               layout(location = BSDF_SAMPLE_CALLABLE_INDEX) callableDataInEXT BsdfSampleData NAME
+
+#define BSDF_EVAL_MAIN(FUNC)                                    \
+    BSDF_EVAL_DATA_IN(g_eval);                                  \
+    void main() {                                               \
+        vec3 f;                                                 \
+        float solid_angle_pdf;                                  \
+        FUNC(                                                   \
+            get_out_dir(g_eval),                                \
+            get_in_dir(g_eval),                                 \
+            get_bsdf_params(g_eval),                            \
+            f,                                                  \
+            solid_angle_pdf);                                   \
+        g_eval = write_bsdf_eval_outputs(f, solid_angle_pdf);   \
+    }
+
+#define BSDF_SAMPLE_MAIN(FUNC)                                  \
+    BSDF_SAMPLE_DATA_IN(g_sample);                              \
+    void main() {                                               \
+        vec3 in_dir;                                            \
+        vec3 estimator;                                         \
+        float solid_angle_pdf_or_negative;                      \
+        float sampled_roughness;                                \
+        FUNC(                                                   \
+            get_out_dir(g_sample),                              \
+            get_bsdf_params(g_sample),                          \
+            get_rand_u01(g_sample),                             \
+            in_dir,                                             \
+            estimator,                                          \
+            solid_angle_pdf_or_negative,                        \
+            sampled_roughness);                                 \
+        g_sample = write_bsdf_sample_outputs(                   \
+            in_dir,                                             \
+            estimator,                                          \
+            solid_angle_pdf_or_negative,                        \
+            sampled_roughness);                                 \
+    }
 
 #endif

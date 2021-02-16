@@ -3,27 +3,6 @@
 #extension GL_EXT_scalar_block_layout : require
 
 #extension GL_GOOGLE_include_directive : require
-#include "maths.glsl"
-#include "sampler.glsl"
-#include "bsdf_common.glsl"
+#include "smooth_plastic_bsdf.glsl"
 
-BSDF_EVAL_DATA_IN(g_eval);
-
-void main()
-{
-    const vec3 in_dir = get_in_dir(g_eval);
-    const vec3 out_dir = get_out_dir(g_eval);
-    const BsdfParams params = get_bsdf_params(g_eval);
-
-    const vec3 reflectance = get_reflectance(params);
-    const float roughness = 0.f;
-
-    const float n_dot_l = in_dir.z;
-    const float n_dot_v = out_dir.z;
-    const float diffuse_strength = remaining_diffuse_strength(n_dot_v, roughness);
-
-    const vec3 diff_f = reflectance*(diffuse_strength/PI);
-    const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
-
-    g_eval = write_bsdf_eval_outputs(diff_f, diffuse_strength*diff_solid_angle_pdf);
-}
+BSDF_EVAL_MAIN(smooth_plastic_bsdf_eval);

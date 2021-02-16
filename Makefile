@@ -11,11 +11,17 @@ INC=\
 	common/sampler.glsl \
 	common/ggx.glsl \
 	trace/bsdf_common.glsl \
+	trace/diffuse_bsdf.glsl \
 	trace/extend_common.glsl \
 	trace/light_common.glsl \
+	trace/mirror_bsdf.glsl \
 	trace/occlusion_common.glsl \
 	trace/rand_common.glsl \
-	trace/sphere_common.glsl
+	trace/rough_conductor_bsdf.glsl \
+	trace/rough_plastic_bsdf.glsl \
+	trace/sphere_common.glsl \
+	trace/smooth_dielectric_bsdf.glsl \
+	trace/smooth_plastic_bsdf.glsl
 
 SRC=\
 	compute/trace.comp.glsl \
