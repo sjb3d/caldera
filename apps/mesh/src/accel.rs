@@ -74,7 +74,7 @@ impl AccelLevel {
             geometry: vk::AccelerationStructureGeometryDataKHR {
                 triangles: geometry_triangles_data,
             },
-            flags: vk::GeometryFlagsKHR::empty(),
+            flags: vk::GeometryFlagsKHR::OPAQUE,
             ..Default::default()
         };
 

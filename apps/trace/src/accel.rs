@@ -318,7 +318,7 @@ impl SceneAccel {
                                 ..Default::default()
                             },
                         },
-                        flags: vk::GeometryFlagsKHR::empty(),
+                        flags: vk::GeometryFlagsKHR::OPAQUE,
                         ..Default::default()
                     });
                     max_primitive_counts.push(triangle_count);
@@ -345,7 +345,7 @@ impl SceneAccel {
                                 ..Default::default()
                             },
                         },
-                        flags: vk::GeometryFlagsKHR::empty(),
+                        flags: vk::GeometryFlagsKHR::OPAQUE,
                         ..Default::default()
                     });
                     max_primitive_counts.push(1);
