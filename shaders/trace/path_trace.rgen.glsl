@@ -14,15 +14,12 @@
 #include "fresnel.glsl"
 #include "rand_common.glsl"
 
-#define USE_CALLABLE_BSDF       1
-#if !USE_CALLABLE_BSDF
 #include "diffuse_bsdf.glsl"
 #include "mirror_bsdf.glsl"
 #include "smooth_dielectric_bsdf.glsl"
 #include "smooth_plastic_bsdf.glsl"
 #include "rough_plastic_bsdf.glsl"
 #include "rough_conductor_bsdf.glsl"
-#endif
 
 #define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS    0x01
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
@@ -91,11 +88,6 @@ OCCLUSION_PAYLOAD(g_occlusion);
 LIGHT_EVAL_DATA(g_light_eval);
 LIGHT_SAMPLE_DATA(g_light_sample);
 
-#if USE_CALLABLE_BSDF
-BSDF_EVAL_DATA(g_bsdf_eval);
-BSDF_SAMPLE_DATA(g_bsdf_sample);
-#endif
-
 void evaluate_bsdf(
     uint bsdf_type,
     vec3 out_dir,
@@ -104,18 +96,6 @@ void evaluate_bsdf(
     out vec3 f,
     out float solid_angle_pdf)
 {
-#if USE_CALLABLE_BSDF
-    // c.f. BsdfEvalData
-    g_bsdf_eval.a = out_dir;
-    g_bsdf_eval.b = in_dir;
-    g_bsdf_eval.c = params;
-
-    executeCallableEXT(BSDF_EVAL_SHADER_INDEX(bsdf_type), BSDF_EVAL_CALLABLE_INDEX);
-
-    // c.f. write_bsdf_eval_outputs
-    f = g_bsdf_eval.a;
-    solid_angle_pdf = g_bsdf_eval.b.x;
-#else
 #define CALL(F) F(out_dir, in_dir, params, f, solid_angle_pdf)
     switch (bsdf_type) {
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_eval); break;
@@ -126,7 +106,6 @@ void evaluate_bsdf(
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_eval); break;
     }
 #undef CALL
-#endif
 }
 
 void sample_bsdf(
@@ -139,20 +118,6 @@ void sample_bsdf(
     out float solid_angle_pdf_or_negative,
     out float sampled_roughness)
 {
-#if USE_CALLABLE_BSDF
-    // c.f. BsdfSampleData
-    g_bsdf_sample.a = out_dir;
-    g_bsdf_sample.b.xy = rand_u01;
-    g_bsdf_sample.c = params;
-
-    executeCallableEXT(BSDF_SAMPLE_SHADER_INDEX(bsdf_type), BSDF_SAMPLE_CALLABLE_INDEX);
-
-    // c.f. write_bsdf_sample_outputs
-    in_dir = g_bsdf_sample.a;
-    estimator = g_bsdf_sample.b;
-    solid_angle_pdf_or_negative = uintBitsToFloat(g_bsdf_sample.c.bits.x);
-    sampled_roughness = uintBitsToFloat(g_bsdf_sample.c.bits.y);
-#else
 #define CALL(F) F(out_dir, params, rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, sampled_roughness)
     switch (bsdf_type) {
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_sample); break;
@@ -163,7 +128,6 @@ void sample_bsdf(
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_sample); break;
     }
 #undef CALL
-#endif
 }
 
 void sample_single_light(
