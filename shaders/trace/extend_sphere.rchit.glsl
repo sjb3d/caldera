@@ -31,7 +31,7 @@ void main()
     const uint bsdf_type = (g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
     const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
 
-    g_extend.hit = create_hit_info(
+    g_extend.info = create_hit_info(
         bsdf_type,
         is_emissive,
         g_record.shader.light_index,

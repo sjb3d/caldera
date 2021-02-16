@@ -86,7 +86,7 @@ vec3 get_vec(ExtendPackedNormal pn) { return vec_from_oct32(pn.oct32); }
 vec3 get_dir(ExtendPackedNormal pn) { return normalize(get_vec(pn)); }
 
 struct ExtendPayload {
-    HitInfo hit;
+    HitInfo info;
     vec3 position_or_extdir;
     ExtendPackedNormal geom_normal;
     ExtendPackedNormal shading_normal;

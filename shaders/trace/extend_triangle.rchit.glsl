@@ -94,7 +94,7 @@ void main()
     const vec3 hit_shading_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_shading_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
-    g_extend.hit = create_hit_info(
+    g_extend.info = create_hit_info(
         bsdf_type,
         is_emissive,
         g_record.shader.light_index,

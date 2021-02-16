@@ -266,6 +266,45 @@ float mis_ratio(float ratio)
     }
 }
 
+ExtendPayload trace_extend_ray(
+    vec3 ray_origin,
+    vec3 ray_dir)
+{
+    traceRayEXT(
+        g_accel,
+        gl_RayFlagsNoneEXT,
+        0xff,
+        EXTEND_HIT_SHADER_OFFSET,
+        HIT_SHADER_COUNT_PER_INSTANCE,
+        EXTEND_MISS_SHADER_OFFSET,
+        ray_origin,
+        0.f,
+        ray_dir,
+        FLT_INF,
+        EXTEND_PAYLOAD_INDEX);
+    return g_extend;
+}
+
+bool trace_occlusion_ray(
+    vec3 ray_origin,
+    vec3 ray_dir,
+    float ray_distance)
+{
+    traceRayEXT(
+        g_accel,
+        gl_RayFlagsNoneEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+        0xff,
+        OCCLUSION_HIT_SHADER_OFFSET,
+        HIT_SHADER_COUNT_PER_INSTANCE,
+        OCCLUSION_MISS_SHADER_OFFSET,
+        ray_origin,
+        0.f,
+        ray_dir,
+        ray_distance,
+        OCCLUSION_PAYLOAD_INDEX);
+    return g_occlusion.is_occluded != 0;
+}
+
 void main()
 {
     const bool allow_light_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING) != 0);
@@ -310,29 +349,20 @@ void main()
     uint segment_index = 0;
     for (;;) {
         // extend the path using the sampled (incoming) direction
-        traceRayEXT(
-            g_accel,
-            gl_RayFlagsNoneEXT,
-            0xff,
-            EXTEND_HIT_SHADER_OFFSET,
-            HIT_SHADER_COUNT_PER_INSTANCE,
-            EXTEND_MISS_SHADER_OFFSET,
+        ExtendPayload hit = trace_extend_ray(
             prev_position + prev_epsilon*get_dir(prev_geom_normal_packed),
-            0.f,
-            prev_in_dir,
-            FLT_INF,
-            EXTEND_PAYLOAD_INDEX);
+            prev_in_dir);
         ++segment_index;
 
         // adjust BSDF colour space of the hit
-        g_extend.bsdf_params = replace_reflectance(
-            g_extend.bsdf_params,
-            sample_from_rec709(get_reflectance(g_extend.bsdf_params)));
+        hit.bsdf_params = replace_reflectance(
+            hit.bsdf_params,
+            sample_from_rec709(get_reflectance(hit.bsdf_params)));
 
         // reject implausible shading normals
         {
-            const vec3 hit_shading_normal_vec = get_vec(g_extend.shading_normal);
-            if (has_surface(g_extend.hit) && dot(hit_shading_normal_vec, prev_in_dir) >= 0.f) {
+            const vec3 hit_shading_normal_vec = get_vec(hit.shading_normal);
+            if (has_surface(hit.info) && dot(hit_shading_normal_vec, prev_in_dir) >= 0.f) {
                 break;
             }
         }
@@ -341,17 +371,17 @@ void main()
         uint light_index_begin = 0;
         uint light_index_end = 0;
         if (allow_bsdf_sampling || roughness_acc == 0.f) {
-            if (has_light(g_extend.hit)) {
-                light_index_begin = get_light_index(g_extend.hit);
+            if (has_light(hit.info)) {
+                light_index_begin = get_light_index(hit.info);
                 light_index_end = light_index_begin + 1;
-            } else if (!has_surface(g_extend.hit)) {
+            } else if (!has_surface(hit.info)) {
                 light_index_begin = g_light.external_begin;
                 light_index_end = g_light.external_end;
             }
         }
         for (uint light_index = light_index_begin; light_index != light_index_end; ++light_index) {
             // evaluate the light here
-            const vec3 light_position_or_extdir = g_extend.position_or_extdir;
+            const vec3 light_position_or_extdir = hit.position_or_extdir;
             vec3 light_emission;
             float light_solid_angle_pdf;
             evaluate_single_light(
@@ -378,7 +408,7 @@ void main()
         }
 
         // end the ray if we didn't hit any surface
-        if (!has_surface(g_extend.hit)) {
+        if (!has_surface(hit.info)) {
             break;
         }
         if (segment_index >= g_path_trace.max_segment_count) {
@@ -387,17 +417,17 @@ void main()
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
         if (accumulate_roughness) {
-            const float orig_roughness = get_roughness(g_extend.bsdf_params);
+            const float orig_roughness = get_roughness(hit.bsdf_params);
             const float p = 4.f;
             roughness_acc = min(pow(pow(roughness_acc, p) + pow(orig_roughness, p), 1.f/p), 1.f);
 
-            switch (get_bsdf_type(g_extend.hit)) {
+            switch (get_bsdf_type(hit.info)) {
                 case BSDF_TYPE_MIRROR:
                 case BSDF_TYPE_ROUGH_CONDUCTOR:
                     if (roughness_acc != 0.f) {
                         const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_CONDUCTOR : BSDF_TYPE_DIFFUSE;
-                        g_extend.hit = replace_bsdf_type(g_extend.hit, bsdf_type);
-                        g_extend.bsdf_params = replace_roughness(g_extend.bsdf_params, roughness_acc);
+                        hit.info = replace_bsdf_type(hit.info, bsdf_type);
+                        hit.bsdf_params = replace_roughness(hit.bsdf_params, roughness_acc);
                     }
                     break;
                 case BSDF_TYPE_SMOOTH_DIELECTRIC:
@@ -410,23 +440,23 @@ void main()
                 case BSDF_TYPE_SMOOTH_PLASTIC:
                     if (roughness_acc != 0.f) {
                         const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_PLASTIC : BSDF_TYPE_DIFFUSE;
-                        g_extend.hit = replace_bsdf_type(g_extend.hit, bsdf_type);
-                        g_extend.bsdf_params = replace_roughness(g_extend.bsdf_params, roughness_acc);
+                        hit.info = replace_bsdf_type(hit.info, bsdf_type);
+                        hit.bsdf_params = replace_roughness(hit.bsdf_params, roughness_acc);
                     }
                     break;
             }
         }
 
         // unpack the BRDF
-        const vec3 hit_position = g_extend.position_or_extdir;
-        const mat3 hit_basis = basis_from_z_axis(get_dir(g_extend.shading_normal));
+        const vec3 hit_position = hit.position_or_extdir;
+        const mat3 hit_basis = basis_from_z_axis(get_dir(hit.shading_normal));
         const vec3 hit_shading_normal = hit_basis[2];
-        const vec3 hit_geom_normal = get_dir(g_extend.geom_normal);
-        const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(g_extend.hit));
+        const vec3 hit_geom_normal = get_dir(hit.geom_normal);
+        const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(hit.info));
 
         const vec3 out_dir_ls = normalize(-prev_in_dir * hit_basis);
 
-        const float hit_epsilon = get_epsilon(g_extend.hit, LOG2_EPSILON_FACTOR);
+        const float hit_epsilon = get_epsilon(hit.info, LOG2_EPSILON_FACTOR);
 
         // sample a light source
         if (g_light.sampled_count != 0 && allow_light_sampling && !hit_is_always_delta) {
@@ -457,7 +487,7 @@ void main()
 
             // evaluate the BRDF
             const float in_cos_theta = in_dir_ls.z;
-            const uint bsdf_type = get_bsdf_type(g_extend.hit);
+            const uint bsdf_type = get_bsdf_type(hit.info);
             vec3 hit_f;
             float hit_solid_angle_pdf;
             if (in_cos_theta > 0.f || bsdf_has_transmission(bsdf_type)) {
@@ -465,7 +495,7 @@ void main()
                     bsdf_type,
                     out_dir_ls,
                     in_dir_ls,
-                    g_extend.bsdf_params,
+                    hit.bsdf_params,
                     hit_f,
                     hit_solid_angle_pdf);
             } else {
@@ -501,20 +531,11 @@ void main()
                     ray_dir = ray_vec/ray_distance;
                 }
 
-                traceRayEXT(
-                    g_accel,
-                    gl_RayFlagsNoneEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                    0xff,
-                    OCCLUSION_HIT_SHADER_OFFSET,
-                    HIT_SHADER_COUNT_PER_INSTANCE,
-                    OCCLUSION_MISS_SHADER_OFFSET,
+                const bool is_occluded = trace_occlusion_ray(
                     ray_origin,
-                    0.f,
                     ray_dir,
-                    ray_distance,
-                    OCCLUSION_PAYLOAD_INDEX);
-
-                if (g_occlusion.is_occluded == 0) {
+                    ray_distance);
+                if (!is_occluded) {
                     result_sum += result;
                 }
             }
@@ -526,7 +547,7 @@ void main()
 
             // RR
             if (segment_index > 4) {
-                const vec3 reflectance = get_reflectance(g_extend.bsdf_params);
+                const vec3 reflectance = get_reflectance(hit.bsdf_params);
                 const float survive_prob = clamp(max_element(reflectance), .1f, .95f);
                 if (!split_random_variable(survive_prob, bsdf_rand_u01.y)) {
                     break;
@@ -539,9 +560,9 @@ void main()
             float in_solid_angle_pdf;
             float sampled_roughness;
             sample_bsdf(
-                get_bsdf_type(g_extend.hit),
+                get_bsdf_type(hit.info),
                 out_dir_ls,
-                g_extend.bsdf_params,
+                hit.bsdf_params,
                 bsdf_rand_u01,
                 in_dir_ls,
                 estimator,
@@ -551,7 +572,7 @@ void main()
             roughness_acc = max(roughness_acc, sampled_roughness);
 
             prev_position = hit_position;
-            prev_geom_normal_packed = g_extend.geom_normal;
+            prev_geom_normal_packed = hit.geom_normal;
             prev_epsilon = copysign(hit_epsilon, in_dir_ls.z);
             prev_in_dir = in_dir;
             prev_in_solid_angle_pdf = in_solid_angle_pdf;
