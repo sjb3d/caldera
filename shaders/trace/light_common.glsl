@@ -75,12 +75,12 @@ LightEvalData write_light_eval_outputs(
 }
 
 // TODO: use BRDF count
-#define LIGHT_CALLABLE_START                2
+#define LIGHT_CALLABLE_START                (BSDF_TYPE_COUNT*CALLABLE_SHADER_COUNT_PER_BSDF_TYPE)
 
-#define LIGHT_EVAL_SHADER_INDEX(LIGHT)      (LIGHT_CALLABLE_START + CALLABLE_SHADER_COUNT_PER_LIGHT*(LIGHT) + 0)
+#define LIGHT_EVAL_SHADER_INDEX(LIGHT)      (LIGHT_CALLABLE_START + (LIGHT)*CALLABLE_SHADER_COUNT_PER_LIGHT + 0)
 #define LIGHT_EVAL_CALLABLE_INDEX           0
-#define LIGHT_EVAL_DATA(NAME)               layout(location = 0) callableDataEXT LightEvalData NAME
-#define LIGHT_EVAL_DATA_IN(NAME)            layout(location = 0) callableDataInEXT LightEvalData NAME
+#define LIGHT_EVAL_DATA(NAME)               layout(location = LIGHT_EVAL_CALLABLE_INDEX) callableDataEXT LightEvalData NAME
+#define LIGHT_EVAL_DATA_IN(NAME)            layout(location = LIGHT_EVAL_CALLABLE_INDEX) callableDataInEXT LightEvalData NAME
 
 struct LightSampleData {
     vec3 a;     // in: target position          out: position_or_extdir
@@ -111,7 +111,7 @@ LightSampleData write_light_sample_outputs(
     return d;
 }    
 
-#define LIGHT_SAMPLE_SHADER_INDEX(LIGHT)    (LIGHT_CALLABLE_START + CALLABLE_SHADER_COUNT_PER_LIGHT*(LIGHT) + 1)
+#define LIGHT_SAMPLE_SHADER_INDEX(LIGHT)    (LIGHT_CALLABLE_START + (LIGHT)*CALLABLE_SHADER_COUNT_PER_LIGHT + 1)
 #define LIGHT_SAMPLE_CALLABLE_INDEX         1
-#define LIGHT_SAMPLE_DATA(NAME)             layout(location = 1) callableDataEXT LightSampleData NAME
-#define LIGHT_SAMPLE_DATA_IN(NAME)          layout(location = 1) callableDataInEXT LightSampleData NAME
+#define LIGHT_SAMPLE_DATA(NAME)             layout(location = LIGHT_SAMPLE_CALLABLE_INDEX) callableDataEXT LightSampleData NAME
+#define LIGHT_SAMPLE_DATA_IN(NAME)          layout(location = LIGHT_SAMPLE_CALLABLE_INDEX) callableDataInEXT LightSampleData NAME

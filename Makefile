@@ -30,16 +30,24 @@ SRC=\
 	mesh/trace.rmiss.glsl \
 	trace/copy.frag.glsl \
 	trace/copy.vert.glsl \
+	trace/diffuse_bsdf_eval.rcall.glsl \
+	trace/diffuse_bsdf_sample.rcall.glsl \
 	trace/dome_light_eval.rcall.glsl \
 	trace/extend.rmiss.glsl \
 	trace/extend_sphere.rchit.glsl \
 	trace/extend_triangle.rchit.glsl \
 	trace/filter.comp.glsl \
+	trace/mirror_bsdf_sample.rcall.glsl \
 	trace/occlusion.rchit.glsl \
 	trace/occlusion.rmiss.glsl \
 	trace/path_trace.rgen.glsl \
 	trace/quad_light_eval.rcall.glsl \
 	trace/quad_light_sample.rcall.glsl \
+	trace/rough_conductor_bsdf_eval.rcall.glsl \
+	trace/rough_conductor_bsdf_sample.rcall.glsl \
+	trace/rough_plastic_bsdf_eval.rcall.glsl \
+	trace/rough_plastic_bsdf_sample.rcall.glsl \
+	trace/smooth_dielectric_bsdf_sample.rcall.glsl \
 	trace/smooth_plastic_bsdf_eval.rcall.glsl \
 	trace/smooth_plastic_bsdf_sample.rcall.glsl \
 	trace/solid_angle_light_eval.rcall.glsl \

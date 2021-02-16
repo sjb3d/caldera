@@ -38,14 +38,14 @@ pub enum Reflectance {
     Texture(PathBuf),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Surface {
-    Mirror,
-    Dielectric,
     Diffuse,
-    RoughConductor { roughness: f32 },
-    RoughPlastic { roughness: f32 },
+    Mirror,
+    SmoothDielectric,
     SmoothPlastic,
+    RoughPlastic { roughness: f32 },
+    RoughConductor { roughness: f32 },
 }
 
 /*

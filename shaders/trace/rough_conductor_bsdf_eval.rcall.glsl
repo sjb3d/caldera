@@ -6,6 +6,7 @@
 #include "maths.glsl"
 #include "sampler.glsl"
 #include "bsdf_common.glsl"
+#include "ggx.glsl"
 
 BSDF_EVAL_DATA_IN(g_eval);
 
@@ -16,14 +17,22 @@ void main()
     const BsdfParams params = get_bsdf_params(g_eval);
 
     const vec3 reflectance = get_reflectance(params);
-    const float roughness = 0.f;
+    const float roughness = get_roughness(params);
+    const vec2 alpha = vec2(square(roughness));
 
+    const vec3 v = out_dir;
+    const vec3 l = in_dir;
     const float n_dot_l = in_dir.z;
     const float n_dot_v = out_dir.z;
-    const float diffuse_strength = remaining_diffuse_strength(n_dot_v, roughness);
+    const vec3 h = normalize(v + l);
+    const float h_dot_v = abs(dot(h, v));
 
-    const vec3 diff_f = reflectance*(diffuse_strength/PI);
-    const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
+    const vec3 f
+        = reflectance
+        * fresnel_conductor(CONDUCTOR_ETA, CONDUCTOR_K, h_dot_v)
+        * ggx_brdf_without_fresnel(h, v, l, alpha);
 
-    g_eval = write_bsdf_eval_outputs(diff_f, diffuse_strength*diff_solid_angle_pdf);
+    const float solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
+
+    g_eval = write_bsdf_eval_outputs(f, solid_angle_pdf);
 }

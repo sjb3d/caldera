@@ -14,8 +14,6 @@ use std::{
 };
 use std::{mem, slice};
 
-const MIN_ROUGHNESS: f32 = 0.03;
-
 trait UnitScale {
     fn unit_scale(&self, world_from_local: Similarity3) -> f32;
 }
@@ -186,12 +184,41 @@ enum SamplingTechnique {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
 enum BsdfType {
-    Mirror,
-    Dielectric,
     Diffuse,
-    RoughConductor,
-    RoughPlastic,
+    Mirror,
+    SmoothDielectric,
     SmoothPlastic,
+    RoughPlastic,
+    RoughConductor,
+}
+
+impl From<Surface> for BsdfType {
+    fn from(surface: Surface) -> Self {
+        match surface {
+            Surface::Diffuse => BsdfType::Diffuse,
+            Surface::Mirror => BsdfType::Mirror,
+            Surface::SmoothDielectric => BsdfType::SmoothDielectric,
+            Surface::SmoothPlastic => BsdfType::SmoothPlastic,
+            Surface::RoughPlastic { .. } => BsdfType::RoughPlastic,   
+            Surface::RoughConductor { .. } => BsdfType::RoughConductor,
+        }
+    }
+}
+
+const MIN_ROUGHNESS: f32 = 0.03;
+
+trait Roughness {
+    fn roughness(&self) -> f32;
+}
+
+impl Roughness for Surface {
+    fn roughness(&self) -> f32 {
+        match self {
+            Surface::Diffuse => 1.0,
+            Surface::Mirror | Surface::SmoothDielectric | Surface::SmoothPlastic => 0.0,
+            Surface::RoughPlastic { roughness } | Surface::RoughConductor { roughness } => roughness.max(MIN_ROUGHNESS),
+        }
+    }
 }
 
 #[repr(transparent)]
@@ -270,8 +297,16 @@ enum ShaderGroup {
     OcclusionMiss,
     OcclusionHitTriangle,
     OcclusionHitSphere,
+    DiffuseBsdfEval,
+    DiffuseBsdfSample,
+    MirrorBsdfSample,
+    SmoothDielectricBsdfSample,
     SmoothPlasticBsdfEval,
     SmoothPlasticBsdfSample,
+    RoughPlasticBsdfEval,
+    RoughPlasticBsdfSample,
+    RoughConductorBsdfEval,
+    RoughConductorBsdfSample,
     QuadLightEval,
     QuadLightSample,
     SphereLightEval,
@@ -593,8 +628,16 @@ impl Renderer {
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
                 },
+                ShaderGroup::DiffuseBsdfEval => RayTracingShaderGroupDesc::Callable("trace/diffuse_bsdf_eval.rcall.spv"),
+                ShaderGroup::DiffuseBsdfSample => RayTracingShaderGroupDesc::Callable("trace/diffuse_bsdf_sample.rcall.spv"),
+                ShaderGroup::MirrorBsdfSample => RayTracingShaderGroupDesc::Callable("trace/mirror_bsdf_sample.rcall.spv"),
+                ShaderGroup::SmoothDielectricBsdfSample => RayTracingShaderGroupDesc::Callable("trace/smooth_dielectric_bsdf_sample.rcall.spv"),
                 ShaderGroup::SmoothPlasticBsdfEval => RayTracingShaderGroupDesc::Callable("trace/smooth_plastic_bsdf_eval.rcall.spv"),
                 ShaderGroup::SmoothPlasticBsdfSample => RayTracingShaderGroupDesc::Callable("trace/smooth_plastic_bsdf_sample.rcall.spv"),
+                ShaderGroup::RoughPlasticBsdfEval => RayTracingShaderGroupDesc::Callable("trace/rough_plastic_bsdf_eval.rcall.spv"),
+                ShaderGroup::RoughPlasticBsdfSample => RayTracingShaderGroupDesc::Callable("trace/rough_plastic_bsdf_sample.rcall.spv"),
+                ShaderGroup::RoughConductorBsdfEval => RayTracingShaderGroupDesc::Callable("trace/rough_conductor_bsdf_eval.rcall.spv"),
+                ShaderGroup::RoughConductorBsdfSample => RayTracingShaderGroupDesc::Callable("trace/rough_conductor_bsdf_sample.rcall.spv"),
                 ShaderGroup::QuadLightEval => RayTracingShaderGroupDesc::Callable("trace/quad_light_eval.rcall.spv"),
                 ShaderGroup::QuadLightSample => {
                     RayTracingShaderGroupDesc::Callable("trace/quad_light_sample.rcall.spv")
@@ -779,7 +822,9 @@ impl Renderer {
             rtpp.shader_group_handle_size + callable_record_size,
             rtpp.shader_group_handle_alignment,
         );
-        let callable_entry_count = Self::CALLABLE_ENTRY_COUNT_PER_BSDF_TYPE + (total_light_count as u32) * Self::CALLABLE_ENTRY_COUNT_PER_LIGHT;
+        let callable_entry_count = 
+            (1 + BsdfType::MAX_VALUE - BsdfType::MIN_VALUE)*Self::CALLABLE_ENTRY_COUNT_PER_BSDF_TYPE
+             + (total_light_count as u32) * Self::CALLABLE_ENTRY_COUNT_PER_LIGHT;
         let callable_region = ShaderBindingRegion {
             offset: next_offset,
             stride: callable_stride,
@@ -841,40 +886,11 @@ impl Renderer {
                     }
                     .clamped(Vec3::zero(), Vec3::one());
 
-                    let mut shader = match shader_desc.surface {
-                        Surface::Mirror => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Mirror, reflectance_texture),
-                            reflectance,
-                            ..Default::default()
-                        },
-                        Surface::Dielectric => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Dielectric, reflectance_texture),
-                            reflectance,
-                            ..Default::default()
-                        },
-                        Surface::Diffuse => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::Diffuse, reflectance_texture),
-                            reflectance,
-                            roughness: 1.0,
-                            ..Default::default()
-                        },
-                        Surface::RoughConductor { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::RoughConductor, reflectance_texture),
-                            reflectance,
-                            roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
-                            ..Default::default()
-                        },
-                        Surface::RoughPlastic { roughness } => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::RoughPlastic, reflectance_texture),
-                            reflectance,
-                            roughness: roughness.clamp(MIN_ROUGHNESS, 1.0),
-                            ..Default::default()
-                        },
-                        Surface::SmoothPlastic => ExtendShader {
-                            flags: ExtendShaderFlags::new(BsdfType::SmoothPlastic, reflectance_texture),
-                            reflectance,
-                            ..Default::default()
-                        },
+                    let mut shader = ExtendShader {
+                        flags: ExtendShaderFlags::new(shader_desc.surface.into(), reflectance_texture),
+                        reflectance,
+                        roughness: shader_desc.surface.roughness(),
+                        light_index: 0,
                     };
                     if shader_desc.emission.is_some() {
                         shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
@@ -941,13 +957,25 @@ impl Renderer {
                 assert_eq!(next_light_index, emissive_instance_count);
 
                 writer.write_zeros(callable_region.offset as usize - writer.written());
-                {
+                for bsdf_type in BsdfType::MIN_VALUE..=BsdfType::MAX_VALUE {
+                    let bsdf_type = BsdfType::from_integer(bsdf_type).unwrap();
+                    let (eval, sample) = match bsdf_type {
+                        BsdfType::Diffuse => (Some(ShaderGroup::DiffuseBsdfEval), ShaderGroup::DiffuseBsdfSample),
+                        BsdfType::Mirror => (None, ShaderGroup::MirrorBsdfSample),
+                        BsdfType::SmoothDielectric => (None, ShaderGroup::SmoothDielectricBsdfSample),
+                        BsdfType::SmoothPlastic => (Some(ShaderGroup::SmoothPlasticBsdfEval), ShaderGroup::SmoothPlasticBsdfSample),
+                        BsdfType::RoughPlastic => (Some(ShaderGroup::RoughPlasticBsdfEval), ShaderGroup::RoughPlasticBsdfSample),
+                        BsdfType::RoughConductor => (Some(ShaderGroup::RoughConductorBsdfEval), ShaderGroup::RoughConductorBsdfSample)
+                    };
+
                     let end_offset = writer.written() + callable_region.stride as usize;
-                    writer.write(shader_group_handle(ShaderGroup::SmoothPlasticBsdfEval));
+                    if let Some(eval) = eval {
+                        writer.write(shader_group_handle(eval));
+                    }
                     writer.write_zeros(end_offset - writer.written());
 
                     let end_offset = writer.written() + callable_region.stride as usize;
-                    writer.write(shader_group_handle(ShaderGroup::SmoothPlasticBsdfSample));
+                    writer.write(shader_group_handle(sample));
                     writer.write_zeros(end_offset - writer.written());
                 }
 

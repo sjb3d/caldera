@@ -16,8 +16,10 @@ void main()
     vec2 rand_u01 = get_rand_u01(g_sample);
 
     const vec3 reflectance = get_reflectance(params);
+    const float roughness = 0.f;
 
-    const float diffuse_strength = remaining_diffuse_strength(out_dir.z, 0.f);
+    const float n_dot_v = out_dir.z;
+    const float diffuse_strength = remaining_diffuse_strength(n_dot_v, roughness);
     const float spec_strength = 1.f - diffuse_strength;
 
     const bool sample_diffuse = split_random_variable(diffuse_strength, rand_u01.x);
@@ -29,17 +31,16 @@ void main()
     } else {
         in_dir = vec3(-out_dir.xy, out_dir.z);
     }
+    const float n_dot_l = in_dir.z;
 
     vec3 estimator;
     float solid_angle_pdf;
     if (sample_diffuse) {
-        const float n_dot_l = in_dir.z;
         const vec3 diff_f = reflectance*(diffuse_strength/PI);
 
         estimator = diff_f/(diffuse_strength*get_hemisphere_cosine_weighted_proj_pdf());
         solid_angle_pdf = diffuse_strength*get_hemisphere_cosine_weighted_pdf(n_dot_l);
     } else {
-        const float n_dot_v = out_dir.z;
         const float spec_f = fresnel_schlick(PLASTIC_F0, n_dot_v);
 
         estimator = vec3(spec_f)/spec_strength;

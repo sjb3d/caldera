@@ -35,13 +35,11 @@ float fresnel_dieletric(float eta, float cos_theta)
 // dielectric approximation
 vec3 fresnel_schlick(vec3 r0, float cos_theta)
 {
-    cos_theta = abs(cos_theta);
-    return r0 + (vec3(1.f) - r0)*pow(1.f - cos_theta, 5.f);
+    return r0 + (vec3(1.f) - r0)*pow(1.f - abs(cos_theta), 5.f);
 }
 float fresnel_schlick(float r0, float cos_theta)
 {
-    cos_theta = abs(cos_theta);
-    return r0 + (1.f - r0)*pow(1.f - cos_theta, 5.f);
+    return r0 + (1.f - r0)*pow(1.f - abs(cos_theta), 5.f);
 }
 
 #endif

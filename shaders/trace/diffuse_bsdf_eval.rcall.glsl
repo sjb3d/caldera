@@ -15,15 +15,11 @@ void main()
     const vec3 out_dir = get_out_dir(g_eval);
     const BsdfParams params = get_bsdf_params(g_eval);
 
+    const float n_dot_l = in_dir.z; 
     const vec3 reflectance = get_reflectance(params);
-    const float roughness = 0.f;
 
-    const float n_dot_l = in_dir.z;
-    const float n_dot_v = out_dir.z;
-    const float diffuse_strength = remaining_diffuse_strength(n_dot_v, roughness);
+    const vec3 f = reflectance/PI;
+    const float solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
 
-    const vec3 diff_f = reflectance*(diffuse_strength/PI);
-    const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
-
-    g_eval = write_bsdf_eval_outputs(diff_f, diffuse_strength*diff_solid_angle_pdf);
+    g_eval = write_bsdf_eval_outputs(f, solid_angle_pdf);
 }

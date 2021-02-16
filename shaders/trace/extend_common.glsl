@@ -9,31 +9,17 @@ struct HitInfo {
 };
 
 #define HIT_INFO_LIGHT_INDEX_MASK       0x0000ffff
-#define HIT_INFO_IS_FRONT_HIT_BIT       0x00010000
-#define HIT_INFO_HAS_SURFACE_BIT        0x00020000
-#define HIT_INFO_HAS_LIGHT_BIT          0x00040000
+#define HIT_INFO_HAS_SURFACE_BIT        0x00010000
+#define HIT_INFO_HAS_LIGHT_BIT          0x00020000
 #define HIT_INFO_BSDF_TYPE_SHIFT        20
 #define HIT_INFO_BSDF_TYPE_MASK         0x00f00000
 #define HIT_INFO_UNIT_SCALE_EXP_SHIFT   24
 #define HIT_INFO_UNIT_SCALE_EXP_MASK    0xff000000
 
-#define BSDF_TYPE_MIRROR            0
-#define BSDF_TYPE_DIELECTRIC        1
-#define BSDF_TYPE_DIFFUSE           2
-#define BSDF_TYPE_ROUGH_CONDUCTOR   3
-#define BSDF_TYPE_ROUGH_PLASTIC     4
-#define BSDF_TYPE_SMOOTH_PLASTIC    5
-
-bool bsdf_is_always_delta(uint bsdf_type)
-{
-    return (bsdf_type == BSDF_TYPE_MIRROR || bsdf_type == BSDF_TYPE_DIELECTRIC);
-}
-
 HitInfo create_hit_info(
     uint bsdf_type,
     bool is_emissive,
     uint light_index,
-    bool is_front_hit,
     float unit_scale)
 {
     int exponent;
@@ -43,7 +29,6 @@ HitInfo create_hit_info(
     HitInfo hit;
     hit.bits
         = light_index
-        | (is_front_hit ? HIT_INFO_IS_FRONT_HIT_BIT : 0)
         | HIT_INFO_HAS_SURFACE_BIT
         | (is_emissive ? HIT_INFO_HAS_LIGHT_BIT : 0)
         | (bsdf_type << HIT_INFO_BSDF_TYPE_SHIFT)
@@ -80,10 +65,6 @@ bool has_light(HitInfo hit)
 bool has_surface(HitInfo hit)
 {
     return (hit.bits & HIT_INFO_HAS_SURFACE_BIT) != 0;
-}
-bool is_front_hit(HitInfo hit)
-{
-    return (hit.bits & HIT_INFO_IS_FRONT_HIT_BIT) != 0;
 }
 float get_epsilon(HitInfo hit, int exponent_offset_from_unit_scale)
 {
