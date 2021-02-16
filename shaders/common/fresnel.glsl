@@ -45,7 +45,9 @@ float fresnel_schlick(float r0, float cos_theta)
 // approximation from http://c0de517e.blogspot.com/2019/08/misunderstanding-multilayering-diffuse.html
 float remaining_diffuse_strength(float n_dot_v, float f0, float roughness)
 {
-    return mix(1.f - fresnel_schlick(f0, n_dot_v), 1.f - f0, roughness);
+    const float smooth_remain = max(0.f, 1.f - fresnel_schlick(f0, n_dot_v));
+    const float rough_remain = 1.f - f0;
+    return mix(smooth_remain, rough_remain, roughness);
 }
 
 vec3 refract(vec3 v, float eta)

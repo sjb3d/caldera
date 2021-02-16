@@ -2,6 +2,8 @@
 #include "sampler.glsl"
 #include "fresnel.glsl"
 
+#define MIN_DIFFUSE_PROBABILITY      .01f
+
 void smooth_plastic_bsdf_eval(
     vec3 out_dir,
     vec3 in_dir,
@@ -15,12 +17,10 @@ void smooth_plastic_bsdf_eval(
     const float n_dot_l = in_dir.z;
     const float n_dot_v = out_dir.z;
     const float diffuse_strength = remaining_diffuse_strength(n_dot_v, PLASTIC_F0, roughness);
+    const float diffuse_probability = max(diffuse_strength, MIN_DIFFUSE_PROBABILITY);
 
-    const vec3 diff_f = reflectance*(diffuse_strength/PI);
-    const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
-
-    f = diff_f;
-    solid_angle_pdf = diffuse_strength*diff_solid_angle_pdf;
+    f = reflectance*(diffuse_strength/PI);
+    solid_angle_pdf = diffuse_probability*get_hemisphere_cosine_weighted_pdf(n_dot_l);
 }
 
 void smooth_plastic_bsdf_sample(
@@ -37,9 +37,10 @@ void smooth_plastic_bsdf_sample(
 
     const float n_dot_v = out_dir.z;
     const float diffuse_strength = remaining_diffuse_strength(n_dot_v, PLASTIC_F0, roughness);
-    const float spec_strength = 1.f - diffuse_strength;
+    const float diffuse_probability = max(diffuse_strength, MIN_DIFFUSE_PROBABILITY);
+    const float spec_probability = 1.f - diffuse_probability;
 
-    const bool sample_diffuse = split_random_variable(diffuse_strength, rand_u01.x);
+    const bool sample_diffuse = split_random_variable(diffuse_probability, rand_u01.x);
     if (sample_diffuse) {
         in_dir = sample_hemisphere_cosine_weighted(rand_u01);
         sampled_roughness = 1.f;
@@ -52,12 +53,12 @@ void smooth_plastic_bsdf_sample(
     if (sample_diffuse) {
         const vec3 diff_f = reflectance*(diffuse_strength/PI);
 
-        estimator = diff_f/(diffuse_strength*get_hemisphere_cosine_weighted_proj_pdf());
-        solid_angle_pdf_or_negative = diffuse_strength*get_hemisphere_cosine_weighted_pdf(n_dot_l);
+        estimator = diff_f/(diffuse_probability*get_hemisphere_cosine_weighted_proj_pdf());
+        solid_angle_pdf_or_negative = diffuse_probability*get_hemisphere_cosine_weighted_pdf(n_dot_l);
     } else {
         const float spec_f = fresnel_schlick(PLASTIC_F0, n_dot_v);
 
-        estimator = vec3(spec_f)/spec_strength;
+        estimator = vec3(spec_f)/spec_probability;
         solid_angle_pdf_or_negative = -1.f;
     }
 }
