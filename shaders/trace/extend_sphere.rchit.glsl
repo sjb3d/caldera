@@ -37,7 +37,7 @@ void main()
         g_record.shader.light_index,
         g_record.unit_scale);
     g_extend.position_or_extdir = hit_pos_ws;
-    g_extend.geom_normal = make_packed_normal(hit_normal_vec_ws);
+    g_extend.geom_normal = make_normal32(hit_normal_vec_ws);
     g_extend.shading_normal = g_extend.geom_normal;
     g_extend.bsdf_params = create_bsdf_params(
         g_record.shader.reflectance,

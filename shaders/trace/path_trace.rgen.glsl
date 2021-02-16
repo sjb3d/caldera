@@ -276,7 +276,7 @@ void main()
     const bool accumulate_roughness = ((g_path_trace.flags & PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS) != 0);
 
     vec3 prev_position;
-    ExtendPackedNormal prev_geom_normal_packed;
+    Normal32 prev_geom_normal_packed;
     float prev_epsilon;
     vec3 prev_in_dir;
     float prev_in_solid_angle_pdf_or_negative;
@@ -300,7 +300,7 @@ void main()
         const float sensor_area_pdf = 1.f/fov_area_at_unit_z;
 
         prev_position = g_path_trace.world_from_camera[3];
-        prev_geom_normal_packed = make_packed_normal(g_path_trace.world_from_camera[2]);
+        prev_geom_normal_packed = make_normal32(g_path_trace.world_from_camera[2]);
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
         prev_in_solid_angle_pdf_or_negative = solid_angle_pdf;

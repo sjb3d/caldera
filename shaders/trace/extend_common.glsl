@@ -72,24 +72,11 @@ float get_epsilon(HitInfo hit, int exponent_offset_from_unit_scale)
     return ldexp(1.f, exponent + exponent_offset_from_unit_scale);
 }
 
-struct ExtendPackedNormal {
-    uint oct32;
-};
-
-ExtendPackedNormal make_packed_normal(vec3 vec) 
-{
-    ExtendPackedNormal pn;
-    pn.oct32 = oct32_from_vec(vec);
-    return pn;
-}
-vec3 get_vec(ExtendPackedNormal pn) { return vec_from_oct32(pn.oct32); }
-vec3 get_dir(ExtendPackedNormal pn) { return normalize(get_vec(pn)); }
-
 struct ExtendPayload {
     HitInfo info;
     vec3 position_or_extdir;
-    ExtendPackedNormal geom_normal;
-    ExtendPackedNormal shading_normal;
+    Normal32 geom_normal;
+    Normal32 shading_normal;
     BsdfParams bsdf_params;
 };
 

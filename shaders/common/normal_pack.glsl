@@ -26,4 +26,17 @@ vec3 vec_from_oct32(uint p)
     return vec_from_oct(unpackSnorm2x16(p));
 }
 
+struct Normal32 {
+    uint bits;
+};
+
+Normal32 make_normal32(vec3 vec) 
+{
+    Normal32 n;
+    n.bits = oct32_from_vec(vec);
+    return n;
+}
+vec3 get_vec(Normal32 n) { return vec_from_oct32(n.bits); }
+vec3 get_dir(Normal32 n) { return normalize(get_vec(n)); }
+
 #endif
