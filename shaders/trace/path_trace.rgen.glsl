@@ -448,17 +448,10 @@ void main()
         }
 
         // unpack the BRDF
-        const vec3 hit_position = hit.position_or_extdir;
-        const mat3 hit_basis = basis_from_z_axis(get_dir(hit.shading_normal));
-        const vec3 hit_shading_normal = hit_basis[2];
-        const vec3 hit_geom_normal = get_dir(hit.geom_normal);
-        const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(hit.info));
-
-        const vec3 out_dir_ls = normalize(-prev_in_dir * hit_basis);
-
-        const float hit_epsilon = get_epsilon(hit.info, LOG2_EPSILON_FACTOR);
+        const vec3 out_dir_ls = normalize(-prev_in_dir * basis_from_z_axis(get_dir(hit.shading_normal)));
 
         // sample a light source
+        const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(hit.info));
         if (g_light.sampled_count != 0 && allow_light_sampling && !hit_is_always_delta) {
             // sample from all light sources
             vec3 light_position_or_extdir;
@@ -468,8 +461,8 @@ void main()
             bool light_is_external;
             float light_epsilon;
             sample_all_lights(
-                hit_position,
-                hit_shading_normal,
+                hit.position_or_extdir,
+                get_dir(hit.shading_normal),
                 rand_u01(2*segment_index - 1),
                 light_position_or_extdir,
                 light_normal,
@@ -478,12 +471,14 @@ void main()
                 light_is_external,
                 light_epsilon);
 
-            vec3 in_dir_ls;
+            vec3 in_vec_ws;
             if (light_is_external) {
-                in_dir_ls = normalize(light_position_or_extdir*hit_basis);
+                in_vec_ws = light_position_or_extdir;
             } else {
-                in_dir_ls = normalize((light_position_or_extdir - hit_position)*hit_basis);
+                in_vec_ws = light_position_or_extdir - hit.position_or_extdir;
             }
+            const mat3 hit_basis = basis_from_z_axis(get_dir(hit.shading_normal));
+            const vec3 in_dir_ls = normalize(in_vec_ws*hit_basis);
 
             // evaluate the BRDF
             const float in_cos_theta = in_dir_ls.z;
@@ -513,7 +508,9 @@ void main()
 
             // trace an occlusion ray if necessary
             if (any(greaterThan(result, vec3(0.f)))) {
-                const vec3 adjusted_hit_position = hit_position + hit_geom_normal*hit_epsilon;
+                const vec3 hit_geom_normal = get_dir(hit.geom_normal);
+                const float hit_epsilon = get_epsilon(hit.info, LOG2_EPSILON_FACTOR);
+                const vec3 adjusted_hit_position = hit.position_or_extdir + hit_geom_normal*hit_epsilon;
 
                 vec3 ray_origin;
                 vec3 ray_dir;
@@ -568,12 +565,14 @@ void main()
                 estimator,
                 in_solid_angle_pdf,
                 roughness_acc);
+            
+            const mat3 hit_basis = basis_from_z_axis(get_dir(hit.shading_normal));
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
             roughness_acc = max(roughness_acc, sampled_roughness);
 
-            prev_position = hit_position;
+            prev_position = hit.position_or_extdir;
             prev_geom_normal_packed = hit.geom_normal;
-            prev_epsilon = copysign(hit_epsilon, in_dir_ls.z);
+            prev_epsilon = copysign(get_epsilon(hit.info, LOG2_EPSILON_FACTOR), in_dir_ls.z);
             prev_in_dir = in_dir;
             prev_in_solid_angle_pdf = in_solid_angle_pdf;
             prev_sample *= estimator;
