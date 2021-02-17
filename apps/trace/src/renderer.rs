@@ -123,7 +123,7 @@ impl BitOrAssign for PathTraceFlags {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Contiguous, PartialEq, Eq)]
-enum MultipleImportanceHeuristic {
+pub enum MultipleImportanceHeuristic {
     None,
     Balance,
     Power2,
@@ -188,7 +188,7 @@ enum GeometryRecordData {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SamplingTechnique {
+pub enum SamplingTechnique {
     LightsOnly,
     SurfacesOnly,
     LightsAndSurfaces,
@@ -456,6 +456,28 @@ impl Drop for TextureBindingSet {
     }
 }
 
+pub struct RendererParams {
+    pub max_bounces: u32,
+    pub accumulate_roughness: bool,
+    pub sphere_light_sample_solid_angle: bool,
+    pub quad_light_is_two_sided: bool,
+    pub sampling_technique: SamplingTechnique,
+    pub mis_heuristic: MultipleImportanceHeuristic,
+}
+
+impl Default for RendererParams {
+    fn default() -> Self {
+        Self {
+            max_bounces: 8,
+            accumulate_roughness: true,
+            sphere_light_sample_solid_angle: true,
+            quad_light_is_two_sided: false,
+            sampling_technique: SamplingTechnique::LightsAndSurfaces,
+            mis_heuristic: MultipleImportanceHeuristic::Balance,
+        }
+    }
+}
+
 pub struct Renderer {
     context: Arc<Context>,
     scene: Arc<Scene>,
@@ -467,12 +489,7 @@ pub struct Renderer {
     shader_data: Vec<ShaderData>,
     geometry_attrib_data: Vec<GeometryAttribData>,
     shader_binding_data: Option<ShaderBindingData>,
-    max_bounces: u32,
-    accumulate_roughness: bool,
-    sphere_light_sample_solid_angle: bool,
-    quad_light_is_two_sided: bool,
-    sampling_technique: SamplingTechnique,
-    mis_heuristic: MultipleImportanceHeuristic,
+    params: RendererParams,
 }
 
 impl Renderer {
@@ -485,7 +502,7 @@ impl Renderer {
         descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
-        max_bounces: u32,
+        params: RendererParams,
     ) -> Self {
         let accel = SceneAccel::new(context, scene, resource_loader);
 
@@ -695,12 +712,7 @@ impl Renderer {
             shader_data,
             geometry_attrib_data,
             shader_binding_data: None,
-            max_bounces,
-            accumulate_roughness: true,
-            sphere_light_sample_solid_angle: true,
-            quad_light_is_two_sided: false,
-            sampling_technique: SamplingTechnique::LightsAndSurfaces,
-            mis_heuristic: MultipleImportanceHeuristic::Balance,
+            params,
         }
     }
 
@@ -1159,35 +1171,35 @@ impl Renderer {
         ui.text("Sampling Technique:");
         needs_reset |= ui.radio_button(
             im_str!("Lights Only"),
-            &mut self.sampling_technique,
+            &mut self.params.sampling_technique,
             SamplingTechnique::LightsOnly,
         );
         needs_reset |= ui.radio_button(
             im_str!("Surfaces Only"),
-            &mut self.sampling_technique,
+            &mut self.params.sampling_technique,
             SamplingTechnique::SurfacesOnly,
         );
         needs_reset |= ui.radio_button(
             im_str!("Lights And Surfaces"),
-            &mut self.sampling_technique,
+            &mut self.params.sampling_technique,
             SamplingTechnique::LightsAndSurfaces,
         );
         let id = ui.push_id(im_str!("MIS Heuristic"));
-        if self.sampling_technique == SamplingTechnique::LightsAndSurfaces {
+        if self.params.sampling_technique == SamplingTechnique::LightsAndSurfaces {
             ui.text("MIS Heuristic:");
             needs_reset |= ui.radio_button(
                 im_str!("None"),
-                &mut self.mis_heuristic,
+                &mut self.params.mis_heuristic,
                 MultipleImportanceHeuristic::None,
             );
             needs_reset |= ui.radio_button(
                 im_str!("Balance"),
-                &mut self.mis_heuristic,
+                &mut self.params.mis_heuristic,
                 MultipleImportanceHeuristic::Balance,
             );
             needs_reset |= ui.radio_button(
                 im_str!("Power2"),
-                &mut self.mis_heuristic,
+                &mut self.params.mis_heuristic,
                 MultipleImportanceHeuristic::Power2,
             );
         } else {
@@ -1200,14 +1212,17 @@ impl Renderer {
         }
         id.pop(&ui);
         needs_reset |= Slider::new(im_str!("Max Bounces"))
-            .range(0..=16)
-            .build(&ui, &mut self.max_bounces);
-        needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.accumulate_roughness);
+            .range(0..=24)
+            .build(&ui, &mut self.params.max_bounces);
+        needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.params.accumulate_roughness);
         needs_reset |= ui.checkbox(
             im_str!("Sample Sphere Light Solid Angle"),
-            &mut self.sphere_light_sample_solid_angle,
+            &mut self.params.sphere_light_sample_solid_angle,
         );
-        needs_reset |= ui.checkbox(im_str!("Quad Light Is Two Sided"), &mut self.quad_light_is_two_sided);
+        needs_reset |= ui.checkbox(
+            im_str!("Quad Light Is Two Sided"),
+            &mut self.params.quad_light_is_two_sided,
+        );
         needs_reset
     }
 
@@ -1271,20 +1286,20 @@ impl Renderer {
 
         let shader_binding_data = self.shader_binding_data.as_ref().unwrap();
 
-        let mut path_trace_flags = match self.sampling_technique {
+        let mut path_trace_flags = match self.params.sampling_technique {
             SamplingTechnique::LightsOnly => PathTraceFlags::ALLOW_LIGHT_SAMPLING,
             SamplingTechnique::SurfacesOnly => PathTraceFlags::ALLOW_BSDF_SAMPLING,
             SamplingTechnique::LightsAndSurfaces => {
                 PathTraceFlags::ALLOW_LIGHT_SAMPLING | PathTraceFlags::ALLOW_BSDF_SAMPLING
             }
         };
-        if self.accumulate_roughness {
+        if self.params.accumulate_roughness {
             path_trace_flags |= PathTraceFlags::ACCUMULATE_ROUGHNESS;
         }
-        if self.sphere_light_sample_solid_angle {
+        if self.params.sphere_light_sample_solid_angle {
             path_trace_flags |= PathTraceFlags::SPHERE_LIGHT_SAMPLE_SOLID_ANGLE;
         }
-        if self.quad_light_is_two_sided {
+        if self.params.quad_light_is_two_sided {
             path_trace_flags |= PathTraceFlags::QUAD_LIGHT_IS_TWO_SIDED;
         }
 
@@ -1318,9 +1333,9 @@ impl Renderer {
                     world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
                     fov_size_at_unit_z,
                     sample_index,
-                    max_segment_count: self.max_bounces + 2,
+                    max_segment_count: self.params.max_bounces + 2,
                     render_color_space: render_color_space.into_integer(),
-                    mis_heuristic: self.mis_heuristic.into_integer(),
+                    mis_heuristic: self.params.mis_heuristic.into_integer(),
                     flags: path_trace_flags,
                 }
             },

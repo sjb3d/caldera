@@ -148,7 +148,7 @@ pub struct ContextRayTracingPipelineProperties {
 pub struct Context {
     pub instance: Instance,
     pub debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
-    pub surface: vk::SurfaceKHR,
+    pub surface: Option<vk::SurfaceKHR>,
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
@@ -162,7 +162,7 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(window: &Window, params: &ContextParams) -> Self {
+    pub fn new(window: Option<&Window>, params: &ContextParams) -> Self {
         let instance = {
             let loader = Loader::new().unwrap();
             let instance_version = unsafe { loader.enumerate_instance_version() }.unwrap();
@@ -184,7 +184,9 @@ impl Context {
             };
 
             let mut extensions = InstanceExtensions::new(params.version);
-            window_surface::enable_extensions(window, &mut extensions);
+            if let Some(window) = window {
+                window_surface::enable_extensions(window, &mut extensions);
+            }
             params.debug_utils.apply(
                 || available_extensions.supports_ext_debug_utils(),
                 || extensions.enable_ext_debug_utils(),
@@ -238,7 +240,7 @@ impl Context {
             None
         };
 
-        let surface = window_surface::create(&instance, window).unwrap();
+        let surface = window.map(|window| window_surface::create(&instance, window).unwrap());
 
         let physical_device = {
             let physical_devices = unsafe { instance.enumerate_physical_devices_to_vec() }.unwrap();
@@ -285,10 +287,18 @@ impl Context {
                 .enumerate()
                 .filter_map(|(index, info)| {
                     if info.queue_flags.contains(queue_flags)
-                        && unsafe {
-                            instance.get_physical_device_surface_support_khr(physical_device, index as u32, surface)
-                        }
-                        .unwrap()
+                        && surface
+                            .map(|surface| {
+                                unsafe {
+                                    instance.get_physical_device_surface_support_khr(
+                                        physical_device,
+                                        index as u32,
+                                        surface,
+                                    )
+                                }
+                                .unwrap()
+                            })
+                            .unwrap_or(true)
                     {
                         Some((index as u32, *info))
                     } else {
@@ -438,7 +448,9 @@ impl Drop for Context {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_device(None);
-            self.instance.destroy_surface_khr(Some(self.surface), None);
+            if let Some(surface) = self.surface {
+                self.instance.destroy_surface_khr(Some(surface), None);
+            }
             if self.debug_utils_messenger.is_some() {
                 self.instance
                     .destroy_debug_utils_messenger_ext(self.debug_utils_messenger, None);

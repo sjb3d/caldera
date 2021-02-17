@@ -233,7 +233,7 @@ pub enum AppEventResult {
 
 impl AppBase {
     pub fn new(window: Window, params: &ContextParams) -> Self {
-        let context = Arc::new(Context::new(&window, params));
+        let context = Arc::new(Context::new(Some(&window), params));
         let display = AppDisplay::new(&context);
 
         let mut ui_context = imgui::Context::create();

@@ -193,7 +193,7 @@ impl App {
         UVec2::new(1920, 1080)
     }
 
-    fn new(base: &mut AppBase, params: &AppParams) -> Self {
+    fn new(base: &mut AppBase, scene: Scene, renderer_params: RendererParams) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
@@ -242,21 +242,14 @@ impl App {
             render_graph.create_image(&desc, usage, global_allocator)
         };
 
-        let scene = Arc::new(match &params.scene_desc {
-            SceneDesc::CornellBox(variant) => create_cornell_box_scene(variant),
-            SceneDesc::BlenderExport(filename) => {
-                let contents = std::fs::read_to_string(filename.as_str()).unwrap();
-                blender::load_export(&contents)
-            }
-            SceneDesc::Tungsten(filename) => tungsten::load_scene(filename),
-        });
+        let scene = Arc::new(scene);
         let renderer = Renderer::new(
             &context,
             &scene,
             &mut base.systems.descriptor_set_layout_cache,
             &base.systems.pipeline_cache,
             &mut base.systems.resource_loader,
-            params.max_bounces,
+            renderer_params,
         );
 
         let camera = scene.cameras.first().unwrap();
@@ -601,24 +594,23 @@ impl App {
     }
 }
 
+struct CommandlineApp {
+    context: Arc<Context>,
+    systems: AppSystems,
+}
+
+impl CommandlineApp {
+    fn new(params: &ContextParams) -> Self {
+        let context = Arc::new(Context::new(None, params));
+        let systems = AppSystems::new(&context);
+        Self { context, systems }
+    }
+}
+
 enum SceneDesc {
     CornellBox(CornellBoxVariant),
     BlenderExport(String),
     Tungsten(String),
-}
-
-struct AppParams {
-    max_bounces: u32,
-    scene_desc: SceneDesc,
-}
-
-impl Default for AppParams {
-    fn default() -> Self {
-        Self {
-            max_bounces: 2,
-            scene_desc: SceneDesc::CornellBox(CornellBoxVariant::Original),
-        }
-    }
 }
 
 fn main() {
@@ -627,14 +619,17 @@ fn main() {
         ray_tracing: ContextFeature::Required,
         ..Default::default()
     };
-    let mut app_params = AppParams::default();
+    let mut renderer_params = RendererParams::default();
+    let mut scene_desc = SceneDesc::CornellBox(CornellBoxVariant::Original);
+    let mut run_commandline_app = false;
     {
         let mut it = env::args().skip(1);
         while let Some(arg) = it.next() {
             match arg.as_str() {
-                "-b" => app_params.max_bounces = it.next().and_then(|s| s.as_str().parse::<u32>().ok()).unwrap(),
+                "-c" => run_commandline_app = true,
+                "-b" => renderer_params.max_bounces = it.next().and_then(|s| s.as_str().parse::<u32>().ok()).unwrap(),
                 "-s" => {
-                    app_params.scene_desc = match it.next().unwrap().as_str() {
+                    scene_desc = match it.next().unwrap().as_str() {
                         "cornell" => SceneDesc::CornellBox(CornellBoxVariant::Original),
                         "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::Mirror),
                         "cornell-conductor" => SceneDesc::CornellBox(CornellBoxVariant::Conductor),
@@ -645,10 +640,10 @@ fn main() {
                     }
                 }
                 "-f" => {
-                    app_params.scene_desc = SceneDesc::BlenderExport(it.next().unwrap());
+                    scene_desc = SceneDesc::BlenderExport(it.next().unwrap());
                 }
                 "-t" => {
-                    app_params.scene_desc = SceneDesc::Tungsten(it.next().unwrap());
+                    scene_desc = SceneDesc::Tungsten(it.next().unwrap());
                 }
                 _ => {
                     if !context_params.parse_arg(arg.as_str()) {
@@ -659,34 +654,47 @@ fn main() {
         }
     }
 
-    let event_loop = EventLoop::new();
-
-    let size = App::trace_size();
-    let window = WindowBuilder::new()
-        .with_title("trace")
-        .with_inner_size(Size::Logical(LogicalSize::new(size.x as f64, size.y as f64)))
-        .build(&event_loop)
-        .unwrap();
-
-    let mut base = AppBase::new(window, &context_params);
-    let app = App::new(&mut base, &app_params);
-
-    let mut apps = Some((base, app));
-    event_loop.run(move |event, target, control_flow| {
-        match apps
-            .as_mut()
-            .map(|(base, _)| base)
-            .unwrap()
-            .process_event(&event, target, control_flow)
-        {
-            AppEventResult::None => {}
-            AppEventResult::Redraw => {
-                let (base, app) = apps.as_mut().unwrap();
-                app.render(base);
-            }
-            AppEventResult::Destroy => {
-                apps.take();
-            }
+    let scene = match scene_desc {
+        SceneDesc::CornellBox(variant) => create_cornell_box_scene(&variant),
+        SceneDesc::BlenderExport(filename) => {
+            let contents = std::fs::read_to_string(filename.as_str()).unwrap();
+            blender::load_export(&contents)
         }
-    });
+        SceneDesc::Tungsten(filename) => tungsten::load_scene(filename),
+    };
+
+    if run_commandline_app {
+        let app = CommandlineApp::new(&context_params);
+    } else {
+        let event_loop = EventLoop::new();
+
+        let size = App::trace_size();
+        let window = WindowBuilder::new()
+            .with_title("trace")
+            .with_inner_size(Size::Logical(LogicalSize::new(size.x as f64, size.y as f64)))
+            .build(&event_loop)
+            .unwrap();
+
+        let mut base = AppBase::new(window, &context_params);
+        let app = App::new(&mut base, scene, renderer_params);
+
+        let mut apps = Some((base, app));
+        event_loop.run(move |event, target, control_flow| {
+            match apps
+                .as_mut()
+                .map(|(base, _)| base)
+                .unwrap()
+                .process_event(&event, target, control_flow)
+            {
+                AppEventResult::None => {}
+                AppEventResult::Redraw => {
+                    let (base, app) = apps.as_mut().unwrap();
+                    app.render(base);
+                }
+                AppEventResult::Destroy => {
+                    apps.take();
+                }
+            }
+        });
+    }
 }

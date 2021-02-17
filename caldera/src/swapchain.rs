@@ -28,10 +28,11 @@ impl Swapchain {
         usage: vk::ImageUsageFlags,
         old_swapchain: Option<vk::SwapchainKHR>,
     ) -> (vk::SwapchainKHR, vk::SurfaceFormatKHR, UVec2) {
+        let surface = context.surface.unwrap();
         let surface_capabilities = unsafe {
             context
                 .instance
-                .get_physical_device_surface_capabilities_khr(context.physical_device, context.surface)
+                .get_physical_device_surface_capabilities_khr(context.physical_device, surface)
         }
         .unwrap();
         let extent = surface_capabilities.current_extent;
@@ -39,7 +40,7 @@ impl Swapchain {
             context.instance.get_physical_device_surface_support_khr(
                 context.physical_device,
                 context.queue_family_index,
-                context.surface,
+                surface,
             )
         }
         .unwrap();
@@ -50,7 +51,7 @@ impl Swapchain {
         let surface_formats = unsafe {
             context
                 .instance
-                .get_physical_device_surface_formats_khr_to_vec(context.physical_device, context.surface)
+                .get_physical_device_surface_formats_khr_to_vec(context.physical_device, surface)
         }
         .unwrap();
 
@@ -67,7 +68,7 @@ impl Swapchain {
         let min_image_count = cmp::max(Self::MIN_IMAGE_COUNT, surface_capabilities.min_image_count);
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
-            .surface(context.surface)
+            .surface(surface)
             .min_image_count(min_image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
