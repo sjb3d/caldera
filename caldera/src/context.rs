@@ -375,6 +375,7 @@ impl Context {
                     descriptor_indexing_features.shader_sampled_image_array_non_uniform_indexing = vk::TRUE;
                     descriptor_indexing_features.descriptor_binding_variable_descriptor_count = vk::TRUE;
                     descriptor_indexing_features.runtime_descriptor_array = vk::TRUE;
+                    enabled_features.shader_int64 = vk::TRUE;
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
             );
