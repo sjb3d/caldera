@@ -394,16 +394,6 @@ impl App {
             &mut schedule,
         );
 
-        let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
-        let swap_size = base.display.swapchain.get_size();
-        let swap_format = base.display.swapchain.get_format();
-        let swap_image = schedule.import_image(
-            &ImageDesc::new_2d(swap_size, swap_format, vk::ImageAspectFlags::COLOR),
-            ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
-            swap_vk_image,
-            ImageUsage::empty(),
-        );
-
         let next_sample_index = if self.next_sample_index == Self::SAMPLES_PER_SEQUENCE {
             self.next_sample_index
         } else if let (Some(sample_image_view), true) = (
@@ -517,6 +507,16 @@ impl App {
         } else {
             0
         };
+
+        let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
+        let swap_size = base.display.swapchain.get_size();
+        let swap_format = base.display.swapchain.get_format();
+        let swap_image = schedule.import_image(
+            &ImageDesc::new_2d(swap_size, swap_format, vk::ImageAspectFlags::COLOR),
+            ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
+            swap_vk_image,
+            ImageUsage::empty(),
+        );
 
         let main_sample_count = vk::SampleCountFlags::N1;
         let main_render_state = RenderState::new(swap_image, &[0f32, 0f32, 0f32, 0f32]);
