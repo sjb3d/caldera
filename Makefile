@@ -13,14 +13,18 @@ INC=\
 	common/ggx.glsl \
 	trace/bsdf_common.glsl \
 	trace/diffuse_bsdf.glsl \
+	trace/dome_light.glsl \
 	trace/extend_common.glsl \
 	trace/light_common.glsl \
 	trace/mirror_bsdf.glsl \
 	trace/occlusion_common.glsl \
+	trace/quad_light.glsl \
 	trace/rand_common.glsl \
 	trace/rough_conductor_bsdf.glsl \
 	trace/rough_plastic_bsdf.glsl \
+	trace/solid_angle_light.glsl \
 	trace/sphere_common.glsl \
+	trace/sphere_light.glsl \
 	trace/smooth_dielectric_bsdf.glsl \
 	trace/smooth_plastic_bsdf.glsl
 
@@ -37,7 +41,6 @@ SRC=\
 	mesh/trace.rmiss.glsl \
 	trace/copy.frag.glsl \
 	trace/copy.vert.glsl \
-	trace/dome_light_eval.rcall.glsl \
 	trace/extend.rmiss.glsl \
 	trace/extend_sphere.rchit.glsl \
 	trace/extend_triangle.rchit.glsl \
@@ -45,13 +48,7 @@ SRC=\
 	trace/occlusion.rchit.glsl \
 	trace/occlusion.rmiss.glsl \
 	trace/path_trace.rgen.glsl \
-	trace/quad_light_eval.rcall.glsl \
-	trace/quad_light_sample.rcall.glsl \
-	trace/solid_angle_light_eval.rcall.glsl \
-	trace/solid_angle_light_sample.rcall.glsl \
 	trace/sphere.rint.glsl \
-	trace/sphere_light_eval.rcall.glsl \
-	trace/sphere_light_sample.rcall.glsl
 
 APPS=compute mesh trace
 

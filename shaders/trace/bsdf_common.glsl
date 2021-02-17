@@ -71,7 +71,6 @@ BsdfParams replace_roughness(BsdfParams p, float roughness)
 #define BSDF_TYPE_SMOOTH_PLASTIC    3
 #define BSDF_TYPE_ROUGH_PLASTIC     4
 #define BSDF_TYPE_ROUGH_CONDUCTOR   5
-#define BSDF_TYPE_COUNT             6
 
 bool bsdf_is_always_delta(uint bsdf_type)
 {

@@ -2,6 +2,7 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference2 : require
+#extension GL_ARB_gpu_shader_int64 : require
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
@@ -13,6 +14,11 @@
 #include "ggx.glsl"
 #include "fresnel.glsl"
 #include "rand_common.glsl"
+
+#include "quad_light.glsl"
+#include "sphere_light.glsl"
+#include "dome_light.glsl"
+#include "solid_angle_light.glsl"
 
 #include "diffuse_bsdf.glsl"
 #include "mirror_bsdf.glsl"
@@ -39,7 +45,18 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     uint flags;
 } g_path_trace;
 
-LIGHT_UNIFORM_DATA(g_light);
+#define LIGHT_FLAG_SAMPLE_SPHERE_SOLID_ANGLE    0x1
+#define LIGHT_FLAG_TWO_SIDED_QUAD               0x2
+
+layout(set = 0, binding = 1, scalar) uniform LightUniforms {
+    LightInfoTable info_table;
+    LightAliasTable alias_table;
+    uint64_t params_base;
+    uint light_flags;
+    uint sampled_count;
+    uint external_begin;
+    uint external_end;
+} g_light;
 
 #define RENDER_COLOR_SPACE_REC709   0
 #define RENDER_COLOR_SPACE_ACESCG   1
@@ -85,8 +102,6 @@ float luminance(vec3 c)
 
 EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
-LIGHT_EVAL_DATA(g_light_eval);
-LIGHT_SAMPLE_DATA(g_light_sample);
 
 void evaluate_bsdf(
     uint bsdf_type,
@@ -136,26 +151,44 @@ void sample_single_light(
     vec3 target_normal,
     vec2 rand_u01,
     out vec3 light_position_or_extdir,
-    out vec3 light_normal,
+    out Normal32 light_normal,
     out vec3 light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
     out float light_epsilon)
 {
-    // c.f. LightSampleData
-    g_light_sample.a = target_position;
-    g_light_sample.b = target_normal;
-    g_light_sample.c.xy = rand_u01;
+    LightInfoEntry light_info = g_light.info_table.entries[light_index];
+    const float selection_pdf = light_info.probability;
 
-    executeCallableEXT(LIGHT_SAMPLE_SHADER_INDEX(light_index), LIGHT_SAMPLE_CALLABLE_INDEX);
+    const uint64_t params_addr = g_light.params_base + light_info.params_offset;
 
-    // c.f. write_light_sample_outputs
-    light_position_or_extdir = g_light_sample.a;
-    light_normal = normalize(vec_from_oct32(floatBitsToUint(g_light_sample.c.x)));
-    light_emission = sample_from_rec709(g_light_sample.b);
-    light_solid_angle_pdf = abs(g_light_sample.c.y);
-    light_is_external = sign_bit_set(g_light_sample.c.y);
-    light_epsilon = ldexp(g_light_sample.c.z, LOG2_EPSILON_FACTOR);    
+    vec3 emission;
+    float solid_angle_pdf_and_ext_bit;
+    float unit_scale;
+    switch (light_info.light_type) {
+#define PARAMS  target_position, target_normal, rand_u01, \
+                light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
+        case LIGHT_TYPE_QUAD: {
+            QuadLightParamsBuffer buf = QuadLightParamsBuffer(params_addr);
+            const bool is_two_sided = (g_light.light_flags & LIGHT_FLAG_TWO_SIDED_QUAD) != 0;
+            quad_light_sample(buf.params, is_two_sided, PARAMS);
+        } break;
+        case LIGHT_TYPE_SPHERE: {
+            SphereLightParamsBuffer buf = SphereLightParamsBuffer(params_addr);
+            const bool sample_solid_angle = (g_light.light_flags & LIGHT_FLAG_SAMPLE_SPHERE_SOLID_ANGLE) != 0;
+            sphere_light_sample(buf.params, sample_solid_angle, PARAMS);
+        } break;
+        case LIGHT_TYPE_SOLID_ANGLE: {
+            SolidAngleLightParamsBuffer buf = SolidAngleLightParamsBuffer(params_addr);
+            solid_angle_light_sample(buf.params, PARAMS);
+        } break;
+#undef PARAMS
+    }
+
+    light_emission = sample_from_rec709(emission);
+    light_solid_angle_pdf = abs(solid_angle_pdf_and_ext_bit) * selection_pdf;
+    light_is_external = sign_bit_set(solid_angle_pdf_and_ext_bit);
+    light_epsilon = ldexp(unit_scale, LOG2_EPSILON_FACTOR);    
 }
 
 void sample_all_lights(
@@ -163,7 +196,7 @@ void sample_all_lights(
     vec3 target_normal,
     vec2 rand_u01,
     out vec3 light_position_or_extdir,
-    out vec3 light_normal,
+    out Normal32 light_normal,
     out vec3 light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
@@ -178,7 +211,6 @@ void sample_all_lights(
     } else {
         light_index = entry.indices >> 16;
     }
-    const float selection_pdf = g_light.probability_table.entries[light_index];
 
     // sample this light
     sample_single_light(
@@ -192,32 +224,47 @@ void sample_all_lights(
         light_solid_angle_pdf,
         light_is_external,
         light_epsilon);
-
-    // adjust pdf for selection chance
-    light_solid_angle_pdf *= selection_pdf;
 }
 
 void evaluate_single_light(
     uint light_index,
-    vec3 prev_position,
+    vec3 target_position,
     vec3 light_position_or_extdir,
     out vec3 light_emission,
     out float light_solid_angle_pdf)
 {
-    // c.f. LightEvalData
-    g_light_eval.a = light_position_or_extdir;
-    g_light_eval.b = prev_position;
+    LightInfoEntry light_info = g_light.info_table.entries[light_index];
+    const float selection_pdf = light_info.probability;
 
-    executeCallableEXT(LIGHT_EVAL_SHADER_INDEX(light_index), LIGHT_EVAL_CALLABLE_INDEX);
+    const uint64_t params_addr = g_light.params_base + light_info.params_offset;
 
-    // c.f. write_light_eval_outputs
-    light_emission = sample_from_rec709(g_light_eval.a);
-    light_solid_angle_pdf = g_light_eval.b.x;
-}
+    vec3 emission;
+    float solid_angle_pdf;
+    switch (light_info.light_type) {
+#define PARAMS  target_position, light_position_or_extdir, emission, solid_angle_pdf
+        case LIGHT_TYPE_QUAD: {
+            QuadLightParamsBuffer buf = QuadLightParamsBuffer(params_addr);
+            const bool is_two_sided = (g_light.light_flags & LIGHT_FLAG_TWO_SIDED_QUAD) != 0;
+            quad_light_eval(buf.params, is_two_sided, PARAMS);
+        } break;
+        case LIGHT_TYPE_SPHERE: {
+            SphereLightParamsBuffer buf = SphereLightParamsBuffer(params_addr);
+            const bool sample_solid_angle = (g_light.light_flags & LIGHT_FLAG_SAMPLE_SPHERE_SOLID_ANGLE) != 0;
+            sphere_light_eval(buf.params, sample_solid_angle, PARAMS);
+        } break;
+        case LIGHT_TYPE_DOME: {
+            DomeLightParamsBuffer buf = DomeLightParamsBuffer(params_addr);
+            dome_light_eval(buf.params, PARAMS);
+        } break;
+        case LIGHT_TYPE_SOLID_ANGLE: {
+            SolidAngleLightParamsBuffer buf = SolidAngleLightParamsBuffer(params_addr);
+            solid_angle_light_eval(buf.params, PARAMS);
+        } break;
+#undef PARAMS
+    }
 
-float get_light_selection_pdf(uint light_index)
-{
-    return g_light.probability_table.entries[light_index];
+    light_emission = sample_from_rec709(emission);
+    light_solid_angle_pdf = solid_angle_pdf * selection_pdf;
 }
 
 float mis_ratio(float ratio)
@@ -355,13 +402,8 @@ void main()
                 light_emission,
                 light_solid_angle_pdf);
 
-            // take into account how it could have been sampled
-            const bool light_can_be_sampled = allow_light_sampling && (light_index < g_light.sampled_count);
-            if (light_can_be_sampled) {
-                light_solid_angle_pdf *= get_light_selection_pdf(light_index);
-            }
-
             // compute MIS weight
+            const bool light_can_be_sampled = allow_light_sampling && (light_index < g_light.sampled_count);
             const bool prev_is_delta = sign_bit_set(prev_in_solid_angle_pdf_or_negative);
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
             const float other_ratio = can_be_sampled ? mis_ratio(light_solid_angle_pdf / prev_in_solid_angle_pdf_or_negative) : 0.f;
@@ -419,7 +461,7 @@ void main()
         if (g_light.sampled_count != 0 && allow_light_sampling && !hit_is_always_delta) {
             // sample from all light sources
             vec3 light_position_or_extdir;
-            vec3 light_normal;
+            Normal32 light_normal;
             vec3 light_emission;
             float light_solid_angle_pdf;
             bool light_is_external;
@@ -484,7 +526,7 @@ void main()
                     ray_dir = light_position_or_extdir;
                     ray_distance = FLT_INF;
                 } else {
-                    const vec3 adjusted_light_position = light_position_or_extdir + light_normal*light_epsilon;
+                    const vec3 adjusted_light_position = light_position_or_extdir + get_dir(light_normal)*light_epsilon;
                     const vec3 ray_vec = adjusted_light_position - adjusted_hit_position;
 
                     ray_origin = adjusted_hit_position;
