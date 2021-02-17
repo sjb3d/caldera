@@ -27,15 +27,26 @@
 #include "rough_plastic_bsdf.glsl"
 #include "rough_conductor_bsdf.glsl"
 
-#define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS    0x01
-#define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING    0x02
-#define PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING     0x04
+#define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS                0x01
+#define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING                0x02
+#define PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING                 0x04
+#define PATH_TRACE_FLAG_SPHERE_LIGHT_SAMPLE_SOLID_ANGLE     0x08
+#define PATH_TRACE_FLAG_QUAD_LIGHT_IS_TWO_SIDED             0x10
 
 #define MIS_HEURISTIC_NONE      0
 #define MIS_HEURISTIC_BALANCE   1
 #define MIS_HEURISTIC_POWER2    2
 
+#define RENDER_COLOR_SPACE_REC709   0
+#define RENDER_COLOR_SPACE_ACESCG   1
+
 layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
+    LightInfoTable light_info_table;
+    LightAliasTable light_alias_table;
+    uint64_t light_params_base;
+    uint sampled_light_count;
+    uint external_light_begin;
+    uint external_light_end;
     mat4x3 world_from_camera;
     vec2 fov_size_at_unit_z;
     uint sample_index;
@@ -45,25 +56,9 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     uint flags;
 } g_path_trace;
 
-#define LIGHT_FLAG_SAMPLE_SPHERE_SOLID_ANGLE    0x1
-#define LIGHT_FLAG_TWO_SIDED_QUAD               0x2
-
-layout(set = 0, binding = 1, scalar) uniform LightUniforms {
-    LightInfoTable info_table;
-    LightAliasTable alias_table;
-    uint64_t params_base;
-    uint light_flags;
-    uint sampled_count;
-    uint external_begin;
-    uint external_end;
-} g_light;
-
-#define RENDER_COLOR_SPACE_REC709   0
-#define RENDER_COLOR_SPACE_ACESCG   1
-
-layout(set = 0, binding = 2) uniform accelerationStructureEXT g_accel;
-layout(set = 0, binding = 3, rg16ui) uniform restrict readonly uimage2D g_samples;
-layout(set = 0, binding = 4, r32f) uniform restrict writeonly image2D g_result[3];
+layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
+layout(set = 0, binding = 2, rg16ui) uniform restrict readonly uimage2D g_samples;
+layout(set = 0, binding = 3, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -157,10 +152,10 @@ void sample_single_light(
     out bool light_is_external,
     out float light_epsilon)
 {
-    LightInfoEntry light_info = g_light.info_table.entries[light_index];
+    LightInfoEntry light_info = g_path_trace.light_info_table.entries[light_index];
     const float selection_pdf = light_info.probability;
 
-    const uint64_t params_addr = g_light.params_base + light_info.params_offset;
+    const uint64_t params_addr = g_path_trace.light_params_base + light_info.params_offset;
 
     vec3 emission;
     float solid_angle_pdf_and_ext_bit;
@@ -170,12 +165,12 @@ void sample_single_light(
                 light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
         case LIGHT_TYPE_QUAD: {
             QuadLightParamsBuffer buf = QuadLightParamsBuffer(params_addr);
-            const bool is_two_sided = (g_light.light_flags & LIGHT_FLAG_TWO_SIDED_QUAD) != 0;
+            const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_QUAD_LIGHT_IS_TWO_SIDED) != 0;
             quad_light_sample(buf.params, is_two_sided, PARAMS);
         } break;
         case LIGHT_TYPE_SPHERE: {
             SphereLightParamsBuffer buf = SphereLightParamsBuffer(params_addr);
-            const bool sample_solid_angle = (g_light.light_flags & LIGHT_FLAG_SAMPLE_SPHERE_SOLID_ANGLE) != 0;
+            const bool sample_solid_angle = (g_path_trace.flags & PATH_TRACE_FLAG_SPHERE_LIGHT_SAMPLE_SOLID_ANGLE) != 0;
             sphere_light_sample(buf.params, sample_solid_angle, PARAMS);
         } break;
         case LIGHT_TYPE_SOLID_ANGLE: {
@@ -203,8 +198,8 @@ void sample_all_lights(
     out float light_epsilon)
 {
     // pick a light source
-    const uint entry_index = sample_uniform_discrete(g_light.sampled_count, rand_u01.x);
-    const LightAliasEntry entry = g_light.alias_table.entries[entry_index];
+    const uint entry_index = sample_uniform_discrete(g_path_trace.sampled_light_count, rand_u01.x);
+    const LightAliasEntry entry = g_path_trace.light_alias_table.entries[entry_index];
     uint light_index;
     if (split_random_variable(entry.split, rand_u01.y)) {
         light_index = entry.indices & 0xffffU;
@@ -233,10 +228,10 @@ void evaluate_single_light(
     out vec3 light_emission,
     out float light_solid_angle_pdf)
 {
-    LightInfoEntry light_info = g_light.info_table.entries[light_index];
+    LightInfoEntry light_info = g_path_trace.light_info_table.entries[light_index];
     const float selection_pdf = light_info.probability;
 
-    const uint64_t params_addr = g_light.params_base + light_info.params_offset;
+    const uint64_t params_addr = g_path_trace.light_params_base + light_info.params_offset;
 
     vec3 emission;
     float solid_angle_pdf;
@@ -244,12 +239,12 @@ void evaluate_single_light(
 #define PARAMS  target_position, light_position_or_extdir, emission, solid_angle_pdf
         case LIGHT_TYPE_QUAD: {
             QuadLightParamsBuffer buf = QuadLightParamsBuffer(params_addr);
-            const bool is_two_sided = (g_light.light_flags & LIGHT_FLAG_TWO_SIDED_QUAD) != 0;
+            const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_QUAD_LIGHT_IS_TWO_SIDED) != 0;
             quad_light_eval(buf.params, is_two_sided, PARAMS);
         } break;
         case LIGHT_TYPE_SPHERE: {
             SphereLightParamsBuffer buf = SphereLightParamsBuffer(params_addr);
-            const bool sample_solid_angle = (g_light.light_flags & LIGHT_FLAG_SAMPLE_SPHERE_SOLID_ANGLE) != 0;
+            const bool sample_solid_angle = (g_path_trace.flags & PATH_TRACE_FLAG_SPHERE_LIGHT_SAMPLE_SOLID_ANGLE) != 0;
             sphere_light_eval(buf.params, sample_solid_angle, PARAMS);
         } break;
         case LIGHT_TYPE_DOME: {
@@ -386,8 +381,8 @@ void main()
                 light_index_begin = get_light_index(hit.info);
                 light_index_end = light_index_begin + 1;
             } else if (!has_surface(hit.info)) {
-                light_index_begin = g_light.external_begin;
-                light_index_end = g_light.external_end;
+                light_index_begin = g_path_trace.external_light_begin;
+                light_index_end = g_path_trace.external_light_end;
             }
         }
         for (uint light_index = light_index_begin; light_index != light_index_end; ++light_index) {
@@ -403,7 +398,7 @@ void main()
                 light_solid_angle_pdf);
 
             // compute MIS weight
-            const bool light_can_be_sampled = allow_light_sampling && (light_index < g_light.sampled_count);
+            const bool light_can_be_sampled = allow_light_sampling && (light_index < g_path_trace.sampled_light_count);
             const bool prev_is_delta = sign_bit_set(prev_in_solid_angle_pdf_or_negative);
             const bool can_be_sampled = (segment_index > 1) && light_can_be_sampled && !prev_is_delta;
             const float other_ratio = can_be_sampled ? mis_ratio(light_solid_angle_pdf / prev_in_solid_angle_pdf_or_negative) : 0.f;
@@ -458,7 +453,7 @@ void main()
 
         // sample a light source
         const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(hit.info));
-        if (g_light.sampled_count != 0 && allow_light_sampling && !hit_is_always_delta) {
+        if (g_path_trace.sampled_light_count != 0 && allow_light_sampling && !hit_is_always_delta) {
             // sample from all light sources
             vec3 light_position_or_extdir;
             Normal32 light_normal;

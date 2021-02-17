@@ -105,6 +105,8 @@ impl PathTraceFlags {
     const ACCUMULATE_ROUGHNESS: PathTraceFlags = PathTraceFlags(0x1);
     const ALLOW_LIGHT_SAMPLING: PathTraceFlags = PathTraceFlags(0x2);
     const ALLOW_BSDF_SAMPLING: PathTraceFlags = PathTraceFlags(0x4);
+    const SPHERE_LIGHT_SAMPLE_SOLID_ANGLE: PathTraceFlags = PathTraceFlags(0x8);
+    const QUAD_LIGHT_IS_TWO_SIDED: PathTraceFlags = PathTraceFlags(0x10);
 }
 
 impl BitOr for PathTraceFlags {
@@ -130,6 +132,12 @@ enum MultipleImportanceHeuristic {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct PathTraceUniforms {
+    light_info_table_address: u64,
+    light_alias_table_address: u64,
+    light_params_base_address: u64,
+    sampled_light_count: u32,
+    external_light_begin: u32,
+    external_light_end: u32,
     world_from_camera: Transform3,
     fov_size_at_unit_z: Vec2,
     sample_index: u32,
@@ -146,46 +154,8 @@ struct LightAliasEntry {
     indices: u32,
 }
 
-#[repr(transparent)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct LightFlags(u32);
-
-impl LightFlags {
-    const SAMPLE_SPHERE_SOLID_ANGLE: LightFlags = LightFlags(0x1);
-    const TWO_SIDED_QUAD: LightFlags = LightFlags(0x2);
-
-    fn empty() -> Self {
-        Self(0)
-    }
-}
-
-impl BitOr for LightFlags {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
-    }
-}
-impl BitOrAssign for LightFlags {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct LightUniforms {
-    info_table_address: u64,
-    alias_table_address: u64,
-    params_address: u64,
-    light_flags: LightFlags,
-    sampled_count: u32,
-    external_begin: u32,
-    external_end: u32,
-}
-
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
     path_trace_uniforms: UniformData<PathTraceUniforms>,
-    light_uniforms: UniformData<LightUniforms>,
     accel: AccelerationStructure,
     samples: StorageImage,
     result: [StorageImage; 3],
@@ -1253,8 +1223,14 @@ impl Renderer {
         if self.accumulate_roughness {
             path_trace_flags |= PathTraceFlags::ACCUMULATE_ROUGHNESS;
         }
+        if self.sphere_light_sample_solid_angle {
+            path_trace_flags |= PathTraceFlags::SPHERE_LIGHT_SAMPLE_SOLID_ANGLE;
+        }
+        if self.quad_light_is_two_sided {
+            path_trace_flags |= PathTraceFlags::QUAD_LIGHT_IS_TWO_SIDED;
+        }
 
-        let info_table_address = unsafe {
+        let light_info_table_address = unsafe {
             self.context.device.get_buffer_device_address_helper(
                 resource_loader
                     .get_buffer(shader_binding_data.light_info_table)
@@ -1262,27 +1238,25 @@ impl Renderer {
             )
         };
         let align16 = |n: u64| (n + 15) & !15;
-        let alias_table_address = align16(
-            info_table_address
+        let light_alias_table_address = align16(
+            light_info_table_address
                 + (shader_binding_data.external_light_end as u64) * (mem::size_of::<LightInfoEntry>() as u64),
         );
-        let params_address = align16(
-            alias_table_address
+        let light_params_base_address = align16(
+            light_alias_table_address
                 + (shader_binding_data.sampled_light_count as u64) * (mem::size_of::<LightAliasEntry>() as u64),
         );
-
-        let mut light_flags = LightFlags::empty();
-        if self.sphere_light_sample_solid_angle {
-            light_flags |= LightFlags::SAMPLE_SPHERE_SOLID_ANGLE;
-        }
-        if self.quad_light_is_two_sided {
-            light_flags |= LightFlags::TWO_SIDED_QUAD;
-        }
 
         let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
             descriptor_pool,
             |buf: &mut PathTraceUniforms| {
                 *buf = PathTraceUniforms {
+                    light_info_table_address,
+                    light_alias_table_address,
+                    light_params_base_address,
+                    sampled_light_count: shader_binding_data.sampled_light_count,
+                    external_light_begin: shader_binding_data.external_light_begin,
+                    external_light_end: shader_binding_data.external_light_end,
                     world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
                     fov_size_at_unit_z,
                     sample_index,
@@ -1290,17 +1264,6 @@ impl Renderer {
                     render_color_space: render_color_space.into_integer(),
                     mis_heuristic: self.mis_heuristic.into_integer(),
                     flags: path_trace_flags,
-                }
-            },
-            |buf: &mut LightUniforms| {
-                *buf = LightUniforms {
-                    info_table_address,
-                    alias_table_address,
-                    params_address,
-                    light_flags,
-                    sampled_count: shader_binding_data.sampled_light_count,
-                    external_begin: shader_binding_data.external_light_begin,
-                    external_end: shader_binding_data.external_light_end,
                 }
             },
             self.accel.top_level_accel().unwrap(),
