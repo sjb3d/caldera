@@ -77,6 +77,20 @@ vec3 linear_from_gamma(vec3 c)
         linear_from_gamma(c.z));
 }
 
+float gamma_from_linear(float x)
+{
+    const float lo = x*12.92f;
+    const float hi = pow(x*1.055f, 1.f/2.4f) - 0.055f;
+    return (x < 0.0031308f) ? lo : hi;
+}
+vec3 gamma_from_linear(vec3 c)
+{
+    return vec3(
+        gamma_from_linear(c.x),
+        gamma_from_linear(c.y),
+        gamma_from_linear(c.z));
+}
+
 // reference: http://filmicworlds.com/blog/filmic-tonemapping-operators/
 float filmic_tone_map(float x)
 {

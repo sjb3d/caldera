@@ -25,15 +25,16 @@ pub struct BufferUsage(u32);
 impl BufferUsage {
     pub const TRANSFER_WRITE: BufferUsage = BufferUsage(0x1);
     pub const COMPUTE_STORAGE_READ: BufferUsage = BufferUsage(0x2);
-    pub const VERTEX_BUFFER: BufferUsage = BufferUsage(0x4);
-    pub const INDEX_BUFFER: BufferUsage = BufferUsage(0x8);
-    pub const ACCELERATION_STRUCTURE_BUILD_INPUT: BufferUsage = BufferUsage(0x10);
-    pub const ACCELERATION_STRUCTURE_BUILD_SCRATCH: BufferUsage = BufferUsage(0x20);
-    pub const ACCELERATION_STRUCTURE_READ: BufferUsage = BufferUsage(0x40);
-    pub const ACCELERATION_STRUCTURE_WRITE: BufferUsage = BufferUsage(0x80);
-    pub const RAY_TRACING_ACCELERATION_STRUCTURE: BufferUsage = BufferUsage(0x100);
-    pub const RAY_TRACING_SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x200);
-    pub const RAY_TRACING_STORAGE_READ: BufferUsage = BufferUsage(0x400);
+    pub const COMPUTE_STORAGE_WRITE: BufferUsage = BufferUsage(0x4);
+    pub const VERTEX_BUFFER: BufferUsage = BufferUsage(0x8);
+    pub const INDEX_BUFFER: BufferUsage = BufferUsage(0x10);
+    pub const ACCELERATION_STRUCTURE_BUILD_INPUT: BufferUsage = BufferUsage(0x20);
+    pub const ACCELERATION_STRUCTURE_BUILD_SCRATCH: BufferUsage = BufferUsage(0x40);
+    pub const ACCELERATION_STRUCTURE_READ: BufferUsage = BufferUsage(0x80);
+    pub const ACCELERATION_STRUCTURE_WRITE: BufferUsage = BufferUsage(0x100);
+    pub const RAY_TRACING_ACCELERATION_STRUCTURE: BufferUsage = BufferUsage(0x200);
+    pub const RAY_TRACING_SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x400);
+    pub const RAY_TRACING_STORAGE_READ: BufferUsage = BufferUsage(0x800);
 
     pub fn empty() -> Self {
         Self(0)
@@ -63,6 +64,7 @@ impl BufferUsage {
             .map(|bit| match Self(bit) {
                 Self::TRANSFER_WRITE => vk::BufferUsageFlags::TRANSFER_DST,
                 Self::COMPUTE_STORAGE_READ => vk::BufferUsageFlags::STORAGE_BUFFER,
+                Self::COMPUTE_STORAGE_WRITE => vk::BufferUsageFlags::STORAGE_BUFFER,
                 Self::VERTEX_BUFFER => vk::BufferUsageFlags::VERTEX_BUFFER,
                 Self::INDEX_BUFFER => vk::BufferUsageFlags::INDEX_BUFFER,
                 Self::ACCELERATION_STRUCTURE_BUILD_INPUT => {
@@ -94,6 +96,7 @@ impl BufferUsage {
             .map(|bit| match Self(bit) {
                 Self::TRANSFER_WRITE => vk::PipelineStageFlags::TRANSFER,
                 Self::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
+                Self::COMPUTE_STORAGE_WRITE => vk::PipelineStageFlags::COMPUTE_SHADER,
                 Self::VERTEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
                 Self::INDEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
                 Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
@@ -113,6 +116,7 @@ impl BufferUsage {
             .map(|bit| match Self(bit) {
                 Self::TRANSFER_WRITE => vk::AccessFlags::TRANSFER_WRITE,
                 Self::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                Self::COMPUTE_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
                 Self::VERTEX_BUFFER => vk::AccessFlags::VERTEX_ATTRIBUTE_READ,
                 Self::INDEX_BUFFER => vk::AccessFlags::INDEX_READ,
                 Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::AccessFlags::SHADER_READ,

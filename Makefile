@@ -7,10 +7,11 @@ DISASM=spirv-dis
 INC=\
 	common/color_space.glsl \
 	common/fresnel.glsl \
+	common/ggx.glsl \
 	common/maths.glsl \
 	common/normal_pack.glsl \
 	common/sampler.glsl \
-	common/ggx.glsl \
+	common/tone_map.glsl \
 	trace/bsdf_common.glsl \
 	trace/diffuse_bsdf.glsl \
 	trace/dome_light.glsl \
@@ -39,6 +40,7 @@ SRC=\
 	mesh/trace.rchit.glsl \
 	mesh/trace.rgen.glsl \
 	mesh/trace.rmiss.glsl \
+	trace/capture.comp.glsl \
 	trace/copy.frag.glsl \
 	trace/copy.vert.glsl \
 	trace/extend.rmiss.glsl \

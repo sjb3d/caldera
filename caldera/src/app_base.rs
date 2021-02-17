@@ -218,7 +218,7 @@ impl AppSystems {
             });
     }
 
-    pub fn submit_command_buffer(&mut self, cbar: &CommandBufferAcquireResult) -> vk::Semaphore {
+    pub fn submit_command_buffer(&mut self, cbar: &CommandBufferAcquireResult) -> Option<vk::Semaphore> {
         self.query_pool.end_command_buffer(cbar.post_swapchain_cmd);
         self.descriptor_pool.end_command_buffer();
         self.command_buffer_pool.submit()

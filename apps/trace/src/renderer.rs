@@ -525,17 +525,21 @@ descriptor_set_layout!(FilterDescriptorSetLayout {
     result: StorageImage,
 });
 
-pub struct RendererState {
+pub struct RenderProgress {
     next_sample_index: u32,
 }
 
-impl RendererState {
+impl RenderProgress {
     pub fn new() -> Self {
         Self { next_sample_index: 0 }
     }
 
-    pub fn reset_image(&mut self) {
+    pub fn reset(&mut self) {
         self.next_sample_index = 0;
+    }
+
+    pub fn done(&self) -> bool {
+        self.next_sample_index == Renderer::SAMPLES_PER_SEQUENCE
     }
 }
 
@@ -1287,7 +1291,7 @@ impl Renderer {
         })
     }
 
-    pub fn debug_ui(&mut self, state: &mut RendererState, ui: &Ui) {
+    pub fn debug_ui(&mut self, progress: &mut RenderProgress, ui: &Ui) {
         let mut needs_reset = false;
 
         ui.text("Color Space:");
@@ -1366,7 +1370,7 @@ impl Renderer {
         );
 
         if needs_reset {
-            state.reset_image();
+            progress.reset();
         }
     }
 
@@ -1397,7 +1401,7 @@ impl Renderer {
 
     pub fn render<'a>(
         &'a self,
-        state: &mut RendererState,
+        progress: &mut RenderProgress,
         context: &'a Context,
         schedule: &mut RenderSchedule<'a>,
         pipeline_cache: &'a PipelineCache,
@@ -1415,7 +1419,7 @@ impl Renderer {
         let sample_image_view = resource_loader.get_image_view(self.sample_image)?;
 
         // do a pass
-        if state.next_sample_index != Self::SAMPLES_PER_SEQUENCE {
+        if !progress.done() {
             let temp_desc = ImageDesc::new_2d(self.params.size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let temp_images = (
                 schedule.describe_image(&temp_desc),
@@ -1432,7 +1436,7 @@ impl Renderer {
                     params.add_image(temp_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
                 },
                 {
-                    let sample_index = state.next_sample_index;
+                    let sample_index = progress.next_sample_index;
                     move |params, cmd| {
                         let temp_image_views = [
                             params.get_image_view(temp_images.0),
@@ -1560,7 +1564,7 @@ impl Renderer {
                     );
                 },
                 {
-                    let sample_index = state.next_sample_index;
+                    let sample_index = progress.next_sample_index;
                     move |params, cmd| {
                         let temp_image_views = [
                             params.get_image_view(temp_images.0),
@@ -1596,7 +1600,7 @@ impl Renderer {
                 },
             );
 
-            state.next_sample_index += 1;
+            progress.next_sample_index += 1;
         }
 
         Some(self.result_image)

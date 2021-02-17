@@ -2,7 +2,7 @@
 #extension GL_EXT_scalar_block_layout : require
 
 #extension GL_GOOGLE_include_directive : require
-#include "color_space.glsl"
+#include "tone_map.glsl"
 #include "sampler.glsl"
 #include "ggx.glsl"
 #include "fresnel.glsl"
@@ -16,22 +16,10 @@ layout(set = 0, binding = 0, scalar) uniform TraceData {
     uint render_color_space;
 } g_trace;
 
-#define RENDER_COLOR_SPACE_REC709   0
-#define RENDER_COLOR_SPACE_ACESCG   1
-
 layout(set = 0, binding = 1, r32f) uniform restrict image2D g_result[3];
 layout(set = 0, binding = 2, rg16ui) uniform restrict readonly uimage2D g_samples;
 
 #define LOG2_SEQUENCE_COUNT         12
-
-vec3 sample_from_rec709(vec3 c)
-{
-    switch (g_trace.render_color_space) {
-        default:
-        case RENDER_COLOR_SPACE_REC709: return c;
-        case RENDER_COLOR_SPACE_ACESCG: return acescg_from_rec709(c);
-    }
-}
 
 void sample_camera(
     const vec2 film_uv,
@@ -168,7 +156,7 @@ void main()
                 } else {
                     light_value = light_scale*vec3(.2f, .1f, .2f);
                 }
-                light_value = sample_from_rec709(light_value);
+                light_value = sample_from_rec709(light_value, g_trace.render_color_space);
                 sum += sample_value*light_value;
                 break;
             }
@@ -191,7 +179,7 @@ void main()
                     alpha *= 2.f;
                 }
             }
-            r0 = sample_from_rec709(r0);
+            r0 = sample_from_rec709(r0, g_trace.render_color_space);
 
             // make sampling basis
             const vec3 normal = normalize(gnv);

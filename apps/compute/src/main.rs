@@ -49,9 +49,7 @@ struct CopyData {
 
 descriptor_set_layout!(CopyDescriptorSetLayout {
     copy: UniformData<CopyData>,
-    image_r: StorageImage,
-    image_g: StorageImage,
-    image_b: StorageImage,
+    image: [StorageImage; 3],
 });
 
 #[repr(u32)]
@@ -297,7 +295,7 @@ impl App {
             self.next_pass_index
         };
 
-        let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
+        let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
         let swap_size = base.display.swapchain.get_size();
         let swap_format = base.display.swapchain.get_format();
         let swap_image = schedule.import_image(
@@ -332,11 +330,11 @@ impl App {
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
-                    let trace_image_views = (
+                    let trace_image_views = [
                         params.get_image_view(trace_images.0),
                         params.get_image_view(trace_images.1),
                         params.get_image_view(trace_images.2),
-                    );
+                    ];
 
                     set_viewport_helper(&context.device, cmd, swap_size);
 
@@ -351,9 +349,7 @@ impl App {
                                 tone_map_method: tone_map_method.into_integer(),
                             };
                         },
-                        trace_image_views.0,
-                        trace_image_views.1,
-                        trace_image_views.2,
+                        &trace_image_views,
                     );
                     draw_helper(
                         &context.device,
@@ -380,12 +376,13 @@ impl App {
             &base.context,
             cbar.pre_swapchain_cmd,
             cbar.post_swapchain_cmd,
-            swap_image,
+            Some(swap_image),
             &mut base.systems.query_pool,
         );
 
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
-        base.display.present(swap_vk_image, rendering_finished_semaphore);
+        base.display
+            .present(swap_vk_image, rendering_finished_semaphore.unwrap());
 
         self.next_pass_index = pass_count;
     }

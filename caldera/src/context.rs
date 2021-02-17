@@ -343,7 +343,9 @@ impl Context {
             let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
             let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
 
-            extensions.enable_khr_swapchain();
+            if window.is_some() {
+                extensions.enable_khr_swapchain();
+            }
             params.geometry_shader.apply(
                 || physical_device_features.geometry_shader == vk::TRUE,
                 || enabled_features.geometry_shader = vk::TRUE,

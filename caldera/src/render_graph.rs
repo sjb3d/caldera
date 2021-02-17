@@ -482,11 +482,11 @@ struct SplitCommandBuffer {
 }
 
 impl SplitCommandBuffer {
-    fn new(first: vk::CommandBuffer, second: vk::CommandBuffer, swap_image: ImageHandle) -> Self {
+    fn new(first: vk::CommandBuffer, second: vk::CommandBuffer, swap_image: Option<ImageHandle>) -> Self {
         Self {
             current: first,
             next: Some(second),
-            swap_image: Some(swap_image),
+            swap_image,
         }
     }
 
@@ -552,6 +552,10 @@ impl<'a> RenderSchedule<'a> {
         }
     }
 
+    pub fn graph(&self) -> &RenderGraph {
+        self.render_graph
+    }
+
     pub fn create_buffer(
         &mut self,
         desc: &BufferDesc,
@@ -561,12 +565,22 @@ impl<'a> RenderSchedule<'a> {
         self.render_graph.create_buffer(desc, all_usage, allocator)
     }
 
-    pub fn graph(&self) -> &RenderGraph {
-        self.render_graph
-    }
-
     pub fn get_buffer_hack(&self, handle: BufferHandle) -> vk::Buffer {
         self.render_graph.buffers.get(handle.0).unwrap().buffer().unwrap().0
+    }
+
+    pub fn import_buffer(
+        &mut self,
+        desc: &BufferDesc,
+        all_usage: BufferUsage,
+        buffer: UniqueBuffer,
+        current_usage: BufferUsage,
+    ) -> BufferHandle {
+        let handle = self
+            .render_graph
+            .create_ready_buffer(desc, all_usage, buffer, current_usage);
+        self.render_graph.import_set.buffers.push(handle);
+        handle
     }
 
     pub fn describe_buffer(&mut self, desc: &BufferDesc) -> BufferHandle {
@@ -636,7 +650,7 @@ impl<'a> RenderSchedule<'a> {
         context: &Context,
         pre_swapchain_cmd: vk::CommandBuffer,
         post_swapchain_cmd: vk::CommandBuffer,
-        swap_image: ImageHandle,
+        swap_image: Option<ImageHandle>,
         query_pool: &mut QueryPool,
     ) {
         // loop over commands to set usage for all resources
@@ -853,7 +867,9 @@ impl<'a> RenderSchedule<'a> {
         }
 
         // transition the swap chain image
-        self.render_graph
-            .transition_image_usage(swap_image, ImageUsage::SWAPCHAIN, context, &mut cmd, query_pool);
+        if let Some(swap_image) = swap_image {
+            self.render_graph
+                .transition_image_usage(swap_image, ImageUsage::SWAPCHAIN, context, &mut cmd, query_pool);
+        }
     }
 }

@@ -3,19 +3,23 @@ use spark::{vk, Builder};
 use std::slice;
 use std::sync::Arc;
 
+struct CommandBufferSemaphores {
+    image_available: vk::Semaphore,
+    rendering_finished: vk::Semaphore,
+}
+
 struct CommandBufferSet {
     pool: vk::CommandPool,
     pre_swapchain_cmd: vk::CommandBuffer,
     post_swapchain_cmd: vk::CommandBuffer,
     fence: vk::Fence,
-    image_available_semaphore: vk::Semaphore,
-    rendering_finished_semaphore: vk::Semaphore,
+    semaphores: Option<CommandBufferSemaphores>,
 }
 
 pub struct CommandBufferAcquireResult {
     pub pre_swapchain_cmd: vk::CommandBuffer,
     pub post_swapchain_cmd: vk::CommandBuffer,
-    pub image_available_semaphore: vk::Semaphore,
+    pub image_available_semaphore: Option<vk::Semaphore>,
 }
 
 impl CommandBufferSet {
@@ -51,16 +55,17 @@ impl CommandBufferSet {
             unsafe { device.create_fence(&fence_create_info, None) }.unwrap()
         };
 
-        let image_available_semaphore = unsafe { device.create_semaphore(&Default::default(), None) }.unwrap();
-        let rendering_finished_semaphore = unsafe { device.create_semaphore(&Default::default(), None) }.unwrap();
+        let semaphores = context.surface.map(|_| CommandBufferSemaphores {
+            image_available: unsafe { device.create_semaphore(&Default::default(), None) }.unwrap(),
+            rendering_finished: unsafe { device.create_semaphore(&Default::default(), None) }.unwrap(),
+        });
 
         Self {
             pool,
             pre_swapchain_cmd,
             post_swapchain_cmd,
             fence,
-            image_available_semaphore,
-            rendering_finished_semaphore,
+            semaphores,
         }
     }
 }
@@ -129,12 +134,12 @@ impl CommandBufferPool {
 
         CommandBufferAcquireResult {
             pre_swapchain_cmd: set.pre_swapchain_cmd,
-            image_available_semaphore: set.image_available_semaphore,
+            image_available_semaphore: set.semaphores.as_ref().map(|s| s.image_available),
             post_swapchain_cmd: set.post_swapchain_cmd,
         }
     }
 
-    pub fn submit(&self) -> vk::Semaphore {
+    pub fn submit(&self) -> Option<vk::Semaphore> {
         let set = &self.sets[self.index];
 
         unsafe { self.context.device.end_command_buffer(set.pre_swapchain_cmd) }.unwrap();
@@ -142,13 +147,17 @@ impl CommandBufferPool {
 
         let submit_info = [
             *vk::SubmitInfo::builder().p_command_buffers(slice::from_ref(&set.pre_swapchain_cmd)),
-            *vk::SubmitInfo::builder()
-                .p_wait_semaphores(
-                    slice::from_ref(&set.image_available_semaphore),
-                    slice::from_ref(&vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT),
-                )
-                .p_command_buffers(slice::from_ref(&set.post_swapchain_cmd))
-                .p_signal_semaphores(slice::from_ref(&set.rendering_finished_semaphore)),
+            if let Some(semaphores) = set.semaphores.as_ref() {
+                *vk::SubmitInfo::builder()
+                    .p_wait_semaphores(
+                        slice::from_ref(&semaphores.image_available),
+                        slice::from_ref(&vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT),
+                    )
+                    .p_command_buffers(slice::from_ref(&set.post_swapchain_cmd))
+                    .p_signal_semaphores(slice::from_ref(&semaphores.rendering_finished))
+            } else {
+                *vk::SubmitInfo::builder().p_command_buffers(slice::from_ref(&set.post_swapchain_cmd))
+            },
         ];
 
         unsafe {
@@ -158,7 +167,7 @@ impl CommandBufferPool {
         }
         .unwrap();
 
-        set.rendering_finished_semaphore
+        set.semaphores.as_ref().map(|s| s.rendering_finished)
     }
 }
 
@@ -167,8 +176,10 @@ impl Drop for CommandBufferPool {
         let device = &self.context.device;
         for set in self.sets.iter() {
             unsafe {
-                device.destroy_semaphore(Some(set.rendering_finished_semaphore), None);
-                device.destroy_semaphore(Some(set.image_available_semaphore), None);
+                if let Some(semaphores) = set.semaphores.as_ref() {
+                    device.destroy_semaphore(Some(semaphores.rendering_finished), None);
+                    device.destroy_semaphore(Some(semaphores.image_available), None);
+                }
                 device.destroy_fence(Some(set.fence), None);
                 device.free_command_buffers(set.pool, &[set.pre_swapchain_cmd, set.post_swapchain_cmd]);
                 device.destroy_command_pool(Some(set.pool), None);

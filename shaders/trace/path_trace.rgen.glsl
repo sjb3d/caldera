@@ -9,7 +9,7 @@
 #include "extend_common.glsl"
 #include "occlusion_common.glsl"
 #include "sampler.glsl"
-#include "color_space.glsl"
+#include "tone_map.glsl"
 #include "light_common.glsl"
 #include "ggx.glsl"
 #include "fresnel.glsl"
@@ -37,9 +37,6 @@
 #define MIS_HEURISTIC_BALANCE   1
 #define MIS_HEURISTIC_POWER2    2
 
-#define RENDER_COLOR_SPACE_REC709   0
-#define RENDER_COLOR_SPACE_ACESCG   1
-
 layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     LightInfoTable light_info_table;
     LightAliasTable light_alias_table;
@@ -61,15 +58,6 @@ layout(set = 0, binding = 2, rg16ui) uniform restrict readonly uimage2D g_sample
 layout(set = 0, binding = 3, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
-
-vec3 sample_from_rec709(vec3 c)
-{
-    switch (g_path_trace.render_color_space) {
-        default:
-        case RENDER_COLOR_SPACE_REC709: return c;
-        case RENDER_COLOR_SPACE_ACESCG: return acescg_from_rec709(c);
-    }
-}
 
 vec2 rand_u01(uint seq_index)
 {
@@ -179,7 +167,7 @@ void sample_single_light(
 #undef PARAMS
     }
 
-    light_emission = sample_from_rec709(emission);
+    light_emission = sample_from_rec709(emission, g_path_trace.render_color_space);
     light_solid_angle_pdf = abs(solid_angle_pdf_and_ext_bit) * selection_pdf;
     light_is_external = sign_bit_set(solid_angle_pdf_and_ext_bit);
     light_epsilon = ldexp(unit_scale, LOG2_EPSILON_FACTOR);    
@@ -257,7 +245,7 @@ void evaluate_single_light(
 #undef PARAMS
     }
 
-    light_emission = sample_from_rec709(emission);
+    light_emission = sample_from_rec709(emission, g_path_trace.render_color_space);
     light_solid_angle_pdf = solid_angle_pdf * selection_pdf;
 }
 
@@ -362,7 +350,7 @@ void main()
         // adjust BSDF colour space of the hit
         hit.bsdf_params = replace_reflectance(
             hit.bsdf_params,
-            sample_from_rec709(get_reflectance(hit.bsdf_params)));
+            sample_from_rec709(get_reflectance(hit.bsdf_params), g_path_trace.render_color_space));
 
         // reject implausible shading normals
         {

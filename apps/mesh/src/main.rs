@@ -125,7 +125,7 @@ impl App {
 
         let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
 
-        let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
+        let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
         let swap_size = base.display.swapchain.get_size();
         let swap_format = base.display.swapchain.get_format();
         let swap_image = schedule.import_image(
@@ -377,12 +377,13 @@ impl App {
             &base.context,
             cbar.pre_swapchain_cmd,
             cbar.post_swapchain_cmd,
-            swap_image,
+            Some(swap_image),
             &mut base.systems.query_pool,
         );
 
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
-        base.display.present(swap_vk_image, rendering_finished_semaphore);
+        base.display
+            .present(swap_vk_image, rendering_finished_semaphore.unwrap());
 
         if self.is_rotating {
             self.angle += base.ui_context.io().delta_time;
