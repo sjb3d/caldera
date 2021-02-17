@@ -571,16 +571,69 @@ impl Renderer {
                                     let (info, data) =
                                         stb::image::stbi_load_from_reader(&mut reader, stb::image::Channels::RgbAlpha)
                                             .unwrap();
-                                    println!("loaded {:?}: {}x{}", filename, info.width, info.height);
-                                    let image_desc = ImageDesc::new_2d(
-                                        UVec2::new(info.width as u32, info.height as u32),
-                                        vk::Format::R8G8B8A8_SRGB,
-                                        vk::ImageAspectFlags::COLOR,
+                                    let can_bc_compress = (info.width % 4) == 0 && (info.height % 4) == 0;
+                                    let size_in_pixels = UVec2::new(info.width as u32, info.height as u32);
+                                    println!(
+                                        "loaded {:?}: {}x{} ({})",
+                                        filename.file_name().unwrap(),
+                                        size_in_pixels.x,
+                                        size_in_pixels.y,
+                                        if can_bc_compress { "bc1" } else { "rgba" }
                                     );
-                                    let mut mapping = allocator
-                                        .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
-                                        .unwrap();
-                                    mapping.write(data.as_slice());
+                                    if can_bc_compress {
+                                        // compress on write
+                                        let image_desc = ImageDesc::new_2d(
+                                            size_in_pixels,
+                                            vk::Format::BC1_RGB_SRGB_BLOCK,
+                                            vk::ImageAspectFlags::COLOR,
+                                        );
+                                        let mut mapping = allocator
+                                            .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
+                                            .unwrap();
+                                        let size_in_blocks = size_in_pixels / 4;
+                                        let mut tmp_rgba = [0xffu8; 16 * 4];
+                                        let mut dst_bc1 = [0u8; 8];
+                                        for block_y in 0..size_in_blocks.y {
+                                            for block_x in 0..size_in_blocks.x {
+                                                for pixel_y in 0..4 {
+                                                    let tmp_offset = (pixel_y * 4 * 4) as usize;
+                                                    let tmp_row = &mut tmp_rgba[tmp_offset..(tmp_offset + 16)];
+                                                    let src_offset = (((block_y * 4 + pixel_y) * size_in_pixels.x
+                                                        + block_x * 4)
+                                                        * 4)
+                                                        as usize;
+                                                    let src_row = &data.as_slice()[src_offset..(src_offset + 16)];
+                                                    for pixel_x in 0..4 {
+                                                        for component in 0..3 {
+                                                            let row_offset = (4 * pixel_x + component) as usize;
+                                                            unsafe {
+                                                                *tmp_row.get_unchecked_mut(row_offset) =
+                                                                    *src_row.get_unchecked(row_offset)
+                                                            };
+                                                        }
+                                                    }
+                                                }
+                                                stb::dxt::stb_compress_dxt_block(
+                                                    &mut dst_bc1,
+                                                    &tmp_rgba,
+                                                    0,
+                                                    stb::dxt::CompressionMode::Normal,
+                                                );
+                                                mapping.write(&dst_bc1);
+                                            }
+                                        }
+                                    } else {
+                                        // load uncompressed
+                                        let image_desc = ImageDesc::new_2d(
+                                            size_in_pixels,
+                                            vk::Format::R8G8B8A8_SRGB,
+                                            vk::ImageAspectFlags::COLOR,
+                                        );
+                                        let mut mapping = allocator
+                                            .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
+                                            .unwrap();
+                                        mapping.write(data.as_slice());
+                                    }
                                 }
                             });
 
