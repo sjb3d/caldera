@@ -9,9 +9,6 @@ use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::{im_str, CollapsingHeader, Drag, Key, MouseButton};
-use rand::prelude::*;
-use rand::rngs::SmallRng;
-use rayon::prelude::*;
 use spark::vk;
 use std::{env, ops::Deref, sync::Arc};
 use winit::{
@@ -23,47 +20,10 @@ use winit::{
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct SamplePixel {
-    x: u16,
-    y: u16,
-}
-
-#[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
-enum FilterType {
-    Box,
-    Gaussian,
-    Mitchell,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct FilterData {
-    image_size: UVec2,
-    sample_index: u32,
-    filter_type: u32,
-}
-
-descriptor_set_layout!(FilterDescriptorSetLayout {
-    data: UniformData<FilterData>,
-    samples: StorageImage,
-    input: [StorageImage; 3],
-    result: StorageImage,
-});
-
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
 struct CopyData {
     exposure_scale: f32,
     render_color_space: u32,
     tone_map_method: u32,
-}
-
-#[repr(u32)]
-#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
-pub enum RenderColorSpace {
-    Rec709 = 0,
-    ACEScg = 1,
 }
 
 #[repr(u32)]
@@ -163,84 +123,27 @@ impl ViewAdjust {
 struct App {
     context: Arc<Context>,
 
-    filter_descriptor_set_layout: FilterDescriptorSetLayout,
-    filter_pipeline_layout: vk::PipelineLayout,
-
     copy_descriptor_set_layout: CopyDescriptorSetLayout,
     copy_pipeline_layout: vk::PipelineLayout,
 
-    sample_image: StaticImageHandle,
-    result_image: ImageHandle,
-    next_sample_index: u32,
-
     scene: Arc<Scene>,
     renderer: Renderer,
+    renderer_state: RendererState,
 
     show_debug_ui: bool,
     log2_exposure_scale: f32,
-    render_color_space: RenderColorSpace,
     tone_map_method: ToneMapMethod,
-    filter_type: FilterType,
     view_adjust: ViewAdjust,
     fov_y: f32,
 }
 
 impl App {
-    const SEQUENCE_COUNT: u32 = 1024;
-    const SAMPLES_PER_SEQUENCE: u32 = 256;
-
-    fn trace_size() -> UVec2 {
-        UVec2::new(1920, 1080)
-    }
-
     fn new(base: &mut AppBase, scene: Scene, renderer_params: RendererParams) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
-        let filter_descriptor_set_layout = FilterDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
-
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
         let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
-
-        let sample_image = base.systems.resource_loader.create_image();
-        base.systems.resource_loader.async_load(move |allocator| {
-            let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
-                .into_par_iter()
-                .map(|i| {
-                    let mut rng = SmallRng::seed_from_u64(i as u64);
-                    pmj::generate(Self::SAMPLES_PER_SEQUENCE as usize, 4, &mut rng)
-                })
-                .collect();
-
-            let desc = ImageDesc::new_2d(
-                UVec2::new(Self::SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
-                vk::Format::R16G16_UINT,
-                vk::ImageAspectFlags::COLOR,
-            );
-            let mut writer = allocator
-                .map_image(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
-                .unwrap();
-
-            for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
-                let pixel = SamplePixel {
-                    x: sample.x_bits(16) as u16,
-                    y: sample.y_bits(16) as u16,
-                };
-                writer.write(&pixel);
-            }
-        });
-
-        let result_image = {
-            let trace_size = Self::trace_size();
-            let desc = ImageDesc::new_2d(trace_size, vk::Format::R32G32B32A32_SFLOAT, vk::ImageAspectFlags::COLOR);
-            let usage = ImageUsage::FRAGMENT_STORAGE_READ
-                | ImageUsage::COMPUTE_STORAGE_READ
-                | ImageUsage::COMPUTE_STORAGE_WRITE;
-            let render_graph = &mut base.systems.render_graph;
-            let global_allocator = &mut base.systems.global_allocator;
-            render_graph.create_image(&desc, usage, global_allocator)
-        };
 
         let scene = Arc::new(scene);
         let renderer = Renderer::new(
@@ -249,8 +152,11 @@ impl App {
             &mut base.systems.descriptor_set_layout_cache,
             &base.systems.pipeline_cache,
             &mut base.systems.resource_loader,
+            &mut base.systems.render_graph,
+            &mut base.systems.global_allocator,
             renderer_params,
         );
+        let renderer_state = RendererState::new();
 
         let camera = scene.cameras.first().unwrap();
         let world_from_camera = scene.transform(camera.transform_ref).world_from_local;
@@ -258,20 +164,14 @@ impl App {
 
         Self {
             context: Arc::clone(&context),
-            filter_descriptor_set_layout,
-            filter_pipeline_layout,
             copy_descriptor_set_layout,
             copy_pipeline_layout,
-            sample_image,
-            result_image,
-            next_sample_index: 0,
             scene,
             renderer,
+            renderer_state,
             show_debug_ui: true,
             log2_exposure_scale: 0f32,
-            render_color_space: RenderColorSpace::ACEScg,
             tone_map_method: ToneMapMethod::AcesFit,
-            filter_type: FilterType::Gaussian,
             view_adjust: ViewAdjust::new(world_from_camera),
             fov_y,
         }
@@ -291,32 +191,14 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
                 || {
-                    let mut needs_reset = false;
                     if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
-                        ui.text("Color Space:");
-                        needs_reset |= ui.radio_button(
-                            im_str!("Rec709 (sRGB primaries)"),
-                            &mut self.render_color_space,
-                            RenderColorSpace::Rec709,
-                        );
-                        needs_reset |= ui.radio_button(
-                            im_str!("ACEScg (AP1 primaries)"),
-                            &mut self.render_color_space,
-                            RenderColorSpace::ACEScg,
-                        );
-                        needs_reset |= self.renderer.debug_ui(&ui);
+                        self.renderer.debug_ui(&mut self.renderer_state, &ui);
                     }
                     if CollapsingHeader::new(im_str!("Film")).default_open(true).build(&ui) {
                         let id = ui.push_id(im_str!("Tone Map"));
                         Drag::new(im_str!("Exposure Bias"))
                             .speed(0.05)
                             .build(&ui, &mut self.log2_exposure_scale);
-                        ui.text("Filter:");
-                        needs_reset |= ui.radio_button(im_str!("Box"), &mut self.filter_type, FilterType::Box);
-                        needs_reset |=
-                            ui.radio_button(im_str!("Gaussian"), &mut self.filter_type, FilterType::Gaussian);
-                        needs_reset |=
-                            ui.radio_button(im_str!("Mitchell"), &mut self.filter_type, FilterType::Mitchell);
                         ui.text("Tone Map:");
                         ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
                         ui.radio_button(
@@ -331,6 +213,7 @@ impl App {
                         );
                         id.pop(&ui);
                     }
+                    let mut needs_reset = false;
                     if CollapsingHeader::new(im_str!("Scene")).default_open(true).build(&ui) {
                         let scene = self.scene.deref();
                         ui.text("Cameras:");
@@ -359,15 +242,14 @@ impl App {
                                     .count()
                         ));
                     }
-
                     if needs_reset {
-                        self.next_sample_index = 0;
+                        self.renderer_state.reset_image();
                     }
                 }
             });
 
         if self.view_adjust.update(ui.io(), self.fov_y) {
-            self.next_sample_index = 0;
+            self.renderer_state.reset_image();
         }
         let world_from_camera = self.view_adjust.world_from_camera();
 
@@ -382,124 +264,20 @@ impl App {
 
         self.renderer.update(
             &base.context,
+            &mut schedule,
             &mut base.systems.resource_loader,
             &mut base.systems.global_allocator,
-            &mut schedule,
         );
-
-        let next_sample_index = if self.next_sample_index == Self::SAMPLES_PER_SEQUENCE {
-            self.next_sample_index
-        } else if let (Some(sample_image_view), true) = (
-            base.systems.resource_loader.get_image_view(self.sample_image),
-            self.renderer.is_ready(&base.systems.resource_loader),
-        ) {
-            let trace_size = Self::trace_size();
-
-            let temp_desc = ImageDesc::new_2d(trace_size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
-            let temp_images = (
-                schedule.describe_image(&temp_desc),
-                schedule.describe_image(&temp_desc),
-                schedule.describe_image(&temp_desc),
-            );
-
-            schedule.add_compute(
-                command_name!("trace"),
-                |params| {
-                    self.renderer.declare_parameters(params);
-                    params.add_image(temp_images.0, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-                    params.add_image(temp_images.1, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-                    params.add_image(temp_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-                },
-                {
-                    let descriptor_pool = &base.systems.descriptor_pool;
-                    let resource_loader = &base.systems.resource_loader;
-                    let render_color_space = self.render_color_space;
-                    let renderer = &self.renderer;
-                    let next_sample_index = self.next_sample_index;
-                    let fov_y = self.fov_y;
-                    move |params, cmd| {
-                        let temp_image_views = [
-                            params.get_image_view(temp_images.0),
-                            params.get_image_view(temp_images.1),
-                            params.get_image_view(temp_images.2),
-                        ];
-
-                        renderer.emit_trace(
-                            cmd,
-                            descriptor_pool,
-                            resource_loader,
-                            render_color_space,
-                            sample_image_view,
-                            next_sample_index,
-                            world_from_camera,
-                            fov_y,
-                            &temp_image_views,
-                            trace_size,
-                        );
-                    }
-                },
-            );
-
-            schedule.add_compute(
-                command_name!("filter"),
-                |params| {
-                    self.renderer.declare_parameters(params);
-                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
-                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
-                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
-                    params.add_image(
-                        self.result_image,
-                        ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
-                    );
-                },
-                {
-                    let context = &base.context;
-                    let descriptor_pool = &base.systems.descriptor_pool;
-                    let pipeline_cache = &base.systems.pipeline_cache;
-                    let result_image = self.result_image;
-                    let filter_descriptor_set_layout = &self.filter_descriptor_set_layout;
-                    let filter_pipeline_layout = self.filter_pipeline_layout;
-                    let filter_type = self.filter_type;
-                    let next_sample_index = self.next_sample_index;
-                    move |params, cmd| {
-                        let temp_image_views = [
-                            params.get_image_view(temp_images.0),
-                            params.get_image_view(temp_images.1),
-                            params.get_image_view(temp_images.2),
-                        ];
-                        let result_image_view = params.get_image_view(result_image);
-
-                        let descriptor_set = filter_descriptor_set_layout.write(
-                            &descriptor_pool,
-                            |buf: &mut FilterData| {
-                                *buf = FilterData {
-                                    image_size: trace_size,
-                                    sample_index: next_sample_index,
-                                    filter_type: filter_type.into_integer(),
-                                };
-                            },
-                            sample_image_view,
-                            &temp_image_views,
-                            result_image_view,
-                        );
-
-                        dispatch_helper(
-                            &context.device,
-                            &pipeline_cache,
-                            cmd,
-                            filter_pipeline_layout,
-                            "trace/filter.comp.spv",
-                            descriptor_set,
-                            trace_size.div_round_up(16),
-                        );
-                    }
-                },
-            );
-
-            self.next_sample_index + 1
-        } else {
-            0
-        };
+        let result_image = self.renderer.render(
+            &mut self.renderer_state,
+            &base.context,
+            &mut schedule,
+            &base.systems.pipeline_cache,
+            &base.systems.descriptor_pool,
+            &base.systems.resource_loader,
+            world_from_camera,
+            self.fov_y,
+        );
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore);
         let swap_size = base.display.swapchain.get_size();
@@ -518,8 +296,8 @@ impl App {
             command_name!("main"),
             main_render_state,
             |params| {
-                if next_sample_index != 0 {
-                    params.add_image(self.result_image, ImageUsage::FRAGMENT_STORAGE_READ);
+                if let Some(result_image) = result_image {
+                    params.add_image(result_image, ImageUsage::FRAGMENT_STORAGE_READ);
                 }
             },
             {
@@ -528,18 +306,17 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
                 let copy_pipeline_layout = self.copy_pipeline_layout;
-                let result_image = self.result_image;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 let show_debug_ui = self.show_debug_ui;
                 let log2_exposure_scale = self.log2_exposure_scale;
-                let render_color_space = self.render_color_space;
+                let render_color_space = self.renderer.params.render_color_space;
                 let tone_map_method = self.tone_map_method;
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_size);
 
-                    if next_sample_index != 0 {
+                    if let Some(result_image) = result_image {
                         let result_image_view = params.get_image_view(result_image);
 
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
@@ -589,8 +366,6 @@ impl App {
 
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
         base.display.present(swap_vk_image, rendering_finished_semaphore);
-
-        self.next_sample_index = next_sample_index;
     }
 }
 
@@ -665,13 +440,17 @@ fn main() {
 
     if run_commandline_app {
         let app = CommandlineApp::new(&context_params);
+
+        // TODO
     } else {
         let event_loop = EventLoop::new();
 
-        let size = App::trace_size();
         let window = WindowBuilder::new()
             .with_title("trace")
-            .with_inner_size(Size::Logical(LogicalSize::new(size.x as f64, size.y as f64)))
+            .with_inner_size(Size::Logical(LogicalSize::new(
+                renderer_params.size.x as f64,
+                renderer_params.size.y as f64,
+            )))
             .build(&event_loop)
             .unwrap();
 

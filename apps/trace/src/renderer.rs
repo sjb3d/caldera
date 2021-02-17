@@ -1,9 +1,11 @@
 use crate::accel::*;
 use crate::scene::*;
-use crate::RenderColorSpace;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::{im_str, Slider, StyleColor, Ui};
+use rand::prelude::*;
+use rand::rngs::SmallRng;
+use rayon::prelude::*;
 use spark::{vk, Builder};
 use std::{
     collections::HashMap,
@@ -407,7 +409,7 @@ impl TextureBindingSet {
         }
     }
 
-    fn prepare_write(&self, resource_loader: &ResourceLoader) -> Option<Vec<vk::DescriptorImageInfo>> {
+    fn try_write(&mut self, resource_loader: &ResourceLoader) -> Option<()> {
         let mut image_info = Vec::new();
         for image in self.images.iter().cloned() {
             image_info.push(vk::DescriptorImageInfo {
@@ -416,29 +418,31 @@ impl TextureBindingSet {
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             });
         }
-        Some(image_info)
+        if !image_info.is_empty() {
+            let write = vk::WriteDescriptorSet::builder()
+                .dst_set(self.descriptor_set)
+                .p_image_info(&image_info)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+            unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
+        }
+        Some(())
     }
 
     fn update(&mut self, resource_loader: &ResourceLoader) {
-        if self.is_written {
-            return;
-        }
-
-        if let Some(image_info) = self.prepare_write(resource_loader) {
-            if !image_info.is_empty() {
-                let write = vk::WriteDescriptorSet::builder()
-                    .dst_set(self.descriptor_set)
-                    .p_image_info(&image_info)
-                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
-
-                unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
+        if !self.is_written {
+            if self.try_write(resource_loader).is_some() {
+                self.is_written = true;
             }
-            self.is_written = true;
         }
     }
 
-    fn is_ready(&self) -> bool {
-        self.is_written
+    fn descriptor_set(&self) -> Option<vk::DescriptorSet> {
+        if self.is_written {
+            Some(self.descriptor_set)
+        } else {
+            None
+        }
     }
 }
 
@@ -456,25 +460,82 @@ impl Drop for TextureBindingSet {
     }
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
+pub enum RenderColorSpace {
+    Rec709 = 0,
+    ACEScg = 1,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
+pub enum FilterType {
+    Box,
+    Gaussian,
+    Mitchell,
+}
+
 pub struct RendererParams {
+    pub size: UVec2,
     pub max_bounces: u32,
     pub accumulate_roughness: bool,
     pub sphere_light_sample_solid_angle: bool,
     pub quad_light_is_two_sided: bool,
     pub sampling_technique: SamplingTechnique,
     pub mis_heuristic: MultipleImportanceHeuristic,
+    pub render_color_space: RenderColorSpace,
+    pub filter_type: FilterType,
 }
 
 impl Default for RendererParams {
     fn default() -> Self {
         Self {
+            size: UVec2::new(1920, 1080),
             max_bounces: 8,
             accumulate_roughness: true,
             sphere_light_sample_solid_angle: true,
             quad_light_is_two_sided: false,
             sampling_technique: SamplingTechnique::LightsAndSurfaces,
             mis_heuristic: MultipleImportanceHeuristic::Balance,
+            render_color_space: RenderColorSpace::ACEScg,
+            filter_type: FilterType::Gaussian,
         }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct SamplePixel {
+    x: u16,
+    y: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct FilterData {
+    image_size: UVec2,
+    sample_index: u32,
+    filter_type: u32,
+}
+
+descriptor_set_layout!(FilterDescriptorSetLayout {
+    data: UniformData<FilterData>,
+    samples: StorageImage,
+    input: [StorageImage; 3],
+    result: StorageImage,
+});
+
+pub struct RendererState {
+    next_sample_index: u32,
+}
+
+impl RendererState {
+    pub fn new() -> Self {
+        Self { next_sample_index: 0 }
+    }
+
+    pub fn reset_image(&mut self) {
+        self.next_sample_index = 0;
     }
 }
 
@@ -482,17 +543,29 @@ pub struct Renderer {
     context: Arc<Context>,
     scene: Arc<Scene>,
     accel: SceneAccel,
+
     path_trace_pipeline_layout: vk::PipelineLayout,
     path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
+
+    filter_descriptor_set_layout: FilterDescriptorSetLayout,
+    filter_pipeline_layout: vk::PipelineLayout,
+
     texture_binding_set: TextureBindingSet,
     shader_data: Vec<ShaderData>,
     geometry_attrib_data: Vec<GeometryAttribData>,
     shader_binding_data: Option<ShaderBindingData>,
-    params: RendererParams,
+
+    sample_image: StaticImageHandle,
+    result_image: ImageHandle,
+
+    pub params: RendererParams,
 }
 
 impl Renderer {
+    const SEQUENCE_COUNT: u32 = 1024;
+    const SAMPLES_PER_SEQUENCE: u32 = 256;
+
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
     const MISS_ENTRY_COUNT: u32 = 2;
 
@@ -502,6 +575,8 @@ impl Renderer {
         descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
+        render_graph: &mut RenderGraph,
+        global_allocator: &mut Allocator,
         params: RendererParams,
     ) -> Self {
         let accel = SceneAccel::new(context, scene, resource_loader);
@@ -701,6 +776,49 @@ impl Renderer {
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
+        let filter_descriptor_set_layout = FilterDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
+
+        let sample_image = resource_loader.create_image();
+        resource_loader.async_load(move |allocator| {
+            let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
+                .into_par_iter()
+                .map(|i| {
+                    let mut rng = SmallRng::seed_from_u64(i as u64);
+                    pmj::generate(Self::SAMPLES_PER_SEQUENCE as usize, 4, &mut rng)
+                })
+                .collect();
+
+            let desc = ImageDesc::new_2d(
+                UVec2::new(Self::SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
+                vk::Format::R16G16_UINT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let mut writer = allocator
+                .map_image(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
+                .unwrap();
+
+            for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
+                let pixel = SamplePixel {
+                    x: sample.x_bits(16) as u16,
+                    y: sample.y_bits(16) as u16,
+                };
+                writer.write(&pixel);
+            }
+        });
+
+        let result_image = {
+            let desc = ImageDesc::new_2d(
+                params.size,
+                vk::Format::R32G32B32A32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let usage = ImageUsage::FRAGMENT_STORAGE_READ
+                | ImageUsage::COMPUTE_STORAGE_READ
+                | ImageUsage::COMPUTE_STORAGE_WRITE;
+            render_graph.create_image(&desc, usage, global_allocator)
+        };
+
         Self {
             context: Arc::clone(context),
             scene: Arc::clone(scene),
@@ -708,10 +826,14 @@ impl Renderer {
             path_trace_descriptor_set_layout,
             path_trace_pipeline_layout,
             path_trace_pipeline,
+            filter_descriptor_set_layout,
+            filter_pipeline_layout,
             texture_binding_set,
             shader_data,
             geometry_attrib_data,
             shader_binding_data: None,
+            sample_image,
+            result_image,
             params,
         }
     }
@@ -1165,9 +1287,26 @@ impl Renderer {
         })
     }
 
-    #[must_use]
-    pub fn debug_ui(&mut self, ui: &Ui) -> bool {
+    pub fn debug_ui(&mut self, state: &mut RendererState, ui: &Ui) {
         let mut needs_reset = false;
+
+        ui.text("Color Space:");
+        needs_reset |= ui.radio_button(
+            im_str!("Rec709 (sRGB primaries)"),
+            &mut self.params.render_color_space,
+            RenderColorSpace::Rec709,
+        );
+        needs_reset |= ui.radio_button(
+            im_str!("ACEScg (AP1 primaries)"),
+            &mut self.params.render_color_space,
+            RenderColorSpace::ACEScg,
+        );
+
+        ui.text("Filter:");
+        needs_reset |= ui.radio_button(im_str!("Box"), &mut self.params.filter_type, FilterType::Box);
+        needs_reset |= ui.radio_button(im_str!("Gaussian"), &mut self.params.filter_type, FilterType::Gaussian);
+        needs_reset |= ui.radio_button(im_str!("Mitchell"), &mut self.params.filter_type, FilterType::Mitchell);
+
         ui.text("Sampling Technique:");
         needs_reset |= ui.radio_button(
             im_str!("Lights Only"),
@@ -1184,6 +1323,7 @@ impl Renderer {
             &mut self.params.sampling_technique,
             SamplingTechnique::LightsAndSurfaces,
         );
+
         let id = ui.push_id(im_str!("MIS Heuristic"));
         if self.params.sampling_technique == SamplingTechnique::LightsAndSurfaces {
             ui.text("MIS Heuristic:");
@@ -1211,6 +1351,7 @@ impl Renderer {
             style.pop(&ui);
         }
         id.pop(&ui);
+
         needs_reset |= Slider::new(im_str!("Max Bounces"))
             .range(0..=24)
             .build(&ui, &mut self.params.max_bounces);
@@ -1223,15 +1364,18 @@ impl Renderer {
             im_str!("Quad Light Is Two Sided"),
             &mut self.params.quad_light_is_two_sided,
         );
-        needs_reset
+
+        if needs_reset {
+            state.reset_image();
+        }
     }
 
     pub fn update<'a>(
         &mut self,
         context: &'a Context,
+        schedule: &mut RenderSchedule<'a>,
         resource_loader: &mut ResourceLoader,
         global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
     ) {
         // continue with acceleration structures
         self.accel.update(
@@ -1251,140 +1395,210 @@ impl Renderer {
         }
     }
 
-    pub fn is_ready(&self, resource_loader: &ResourceLoader) -> bool {
-        self.accel.is_ready()
-            && self.texture_binding_set.is_ready()
-            && self
-                .shader_binding_data
-                .as_ref()
-                .map(|data| {
-                    resource_loader.get_buffer(data.shader_binding_table).is_some()
-                        && resource_loader.get_buffer(data.light_info_table).is_some()
-                })
-                .unwrap_or(false)
-    }
-
-    pub fn declare_parameters(&self, params: &mut RenderParameterDeclaration) {
-        self.accel.declare_parameters(params);
-    }
-
-    pub fn emit_trace(
-        &self,
-        cmd: vk::CommandBuffer,
-        descriptor_pool: &DescriptorPool,
-        resource_loader: &ResourceLoader,
-        render_color_space: RenderColorSpace,
-        sample_image_view: vk::ImageView,
-        sample_index: u32,
+    pub fn render<'a>(
+        &'a self,
+        state: &mut RendererState,
+        context: &'a Context,
+        schedule: &mut RenderSchedule<'a>,
+        pipeline_cache: &'a PipelineCache,
+        descriptor_pool: &'a DescriptorPool,
+        resource_loader: &'a ResourceLoader,
         world_from_camera: Similarity3,
         fov_y: f32,
-        result_image_views: &[vk::ImageView],
-        trace_size: UVec2,
-    ) {
-        let aspect_ratio = (trace_size.x as f32) / (trace_size.y as f32);
-        let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
+    ) -> Option<ImageHandle> {
+        // check readiness
+        let top_level_accel = self.accel.top_level_accel()?;
+        let texture_binding_descriptor_set = self.texture_binding_set.descriptor_set()?;
+        let shader_binding_data = self.shader_binding_data.as_ref()?;
+        let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_data.shader_binding_table)?;
+        let light_info_table_buffer = resource_loader.get_buffer(shader_binding_data.light_info_table)?;
+        let sample_image_view = resource_loader.get_image_view(self.sample_image)?;
 
-        let shader_binding_data = self.shader_binding_data.as_ref().unwrap();
-
-        let mut path_trace_flags = match self.params.sampling_technique {
-            SamplingTechnique::LightsOnly => PathTraceFlags::ALLOW_LIGHT_SAMPLING,
-            SamplingTechnique::SurfacesOnly => PathTraceFlags::ALLOW_BSDF_SAMPLING,
-            SamplingTechnique::LightsAndSurfaces => {
-                PathTraceFlags::ALLOW_LIGHT_SAMPLING | PathTraceFlags::ALLOW_BSDF_SAMPLING
-            }
-        };
-        if self.params.accumulate_roughness {
-            path_trace_flags |= PathTraceFlags::ACCUMULATE_ROUGHNESS;
-        }
-        if self.params.sphere_light_sample_solid_angle {
-            path_trace_flags |= PathTraceFlags::SPHERE_LIGHT_SAMPLE_SOLID_ANGLE;
-        }
-        if self.params.quad_light_is_two_sided {
-            path_trace_flags |= PathTraceFlags::QUAD_LIGHT_IS_TWO_SIDED;
-        }
-
-        let light_info_table_address = unsafe {
-            self.context.device.get_buffer_device_address_helper(
-                resource_loader
-                    .get_buffer(shader_binding_data.light_info_table)
-                    .unwrap(),
-            )
-        };
-        let align16 = |n: u64| (n + 15) & !15;
-        let light_alias_table_address = align16(
-            light_info_table_address
-                + (shader_binding_data.external_light_end as u64) * (mem::size_of::<LightInfoEntry>() as u64),
-        );
-        let light_params_base_address = align16(
-            light_alias_table_address
-                + (shader_binding_data.sampled_light_count as u64) * (mem::size_of::<LightAliasEntry>() as u64),
-        );
-
-        let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
-            descriptor_pool,
-            |buf: &mut PathTraceUniforms| {
-                *buf = PathTraceUniforms {
-                    light_info_table_address,
-                    light_alias_table_address,
-                    light_params_base_address,
-                    sampled_light_count: shader_binding_data.sampled_light_count,
-                    external_light_begin: shader_binding_data.external_light_begin,
-                    external_light_end: shader_binding_data.external_light_end,
-                    world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
-                    fov_size_at_unit_z,
-                    sample_index,
-                    max_segment_count: self.params.max_bounces + 2,
-                    render_color_space: render_color_space.into_integer(),
-                    mis_heuristic: self.params.mis_heuristic.into_integer(),
-                    flags: path_trace_flags,
-                }
-            },
-            self.accel.top_level_accel().unwrap(),
-            sample_image_view,
-            result_image_views,
-        );
-
-        let device = &self.context.device;
-
-        let shader_binding_table_buffer = resource_loader
-            .get_buffer(shader_binding_data.shader_binding_table)
-            .unwrap();
-        let shader_binding_table_address =
-            unsafe { device.get_buffer_device_address_helper(shader_binding_table_buffer) };
-
-        unsafe {
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::RAY_TRACING_KHR, self.path_trace_pipeline);
-            device.cmd_bind_descriptor_sets(
-                cmd,
-                vk::PipelineBindPoint::RAY_TRACING_KHR,
-                self.path_trace_pipeline_layout,
-                0,
-                &[path_trace_descriptor_set, self.texture_binding_set.descriptor_set],
-                &[],
+        // do a pass
+        if state.next_sample_index != Self::SAMPLES_PER_SEQUENCE {
+            let temp_desc = ImageDesc::new_2d(self.params.size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let temp_images = (
+                schedule.describe_image(&temp_desc),
+                schedule.describe_image(&temp_desc),
+                schedule.describe_image(&temp_desc),
             );
+
+            schedule.add_compute(
+                command_name!("trace"),
+                |params| {
+                    self.accel.declare_parameters(params);
+                    params.add_image(temp_images.0, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_images.1, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                },
+                {
+                    let sample_index = state.next_sample_index;
+                    move |params, cmd| {
+                        let temp_image_views = [
+                            params.get_image_view(temp_images.0),
+                            params.get_image_view(temp_images.1),
+                            params.get_image_view(temp_images.2),
+                        ];
+
+                        let aspect_ratio = (self.params.size.x as f32) / (self.params.size.y as f32);
+                        let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
+
+                        let mut path_trace_flags = match self.params.sampling_technique {
+                            SamplingTechnique::LightsOnly => PathTraceFlags::ALLOW_LIGHT_SAMPLING,
+                            SamplingTechnique::SurfacesOnly => PathTraceFlags::ALLOW_BSDF_SAMPLING,
+                            SamplingTechnique::LightsAndSurfaces => {
+                                PathTraceFlags::ALLOW_LIGHT_SAMPLING | PathTraceFlags::ALLOW_BSDF_SAMPLING
+                            }
+                        };
+                        if self.params.accumulate_roughness {
+                            path_trace_flags |= PathTraceFlags::ACCUMULATE_ROUGHNESS;
+                        }
+                        if self.params.sphere_light_sample_solid_angle {
+                            path_trace_flags |= PathTraceFlags::SPHERE_LIGHT_SAMPLE_SOLID_ANGLE;
+                        }
+                        if self.params.quad_light_is_two_sided {
+                            path_trace_flags |= PathTraceFlags::QUAD_LIGHT_IS_TWO_SIDED;
+                        }
+
+                        let light_info_table_address = unsafe {
+                            self.context
+                                .device
+                                .get_buffer_device_address_helper(light_info_table_buffer)
+                        };
+                        let align16 = |n: u64| (n + 15) & !15;
+                        let light_alias_table_address = align16(
+                            light_info_table_address
+                                + (shader_binding_data.external_light_end as u64)
+                                    * (mem::size_of::<LightInfoEntry>() as u64),
+                        );
+                        let light_params_base_address = align16(
+                            light_alias_table_address
+                                + (shader_binding_data.sampled_light_count as u64)
+                                    * (mem::size_of::<LightAliasEntry>() as u64),
+                        );
+
+                        let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
+                            descriptor_pool,
+                            |buf: &mut PathTraceUniforms| {
+                                *buf = PathTraceUniforms {
+                                    light_info_table_address,
+                                    light_alias_table_address,
+                                    light_params_base_address,
+                                    sampled_light_count: shader_binding_data.sampled_light_count,
+                                    external_light_begin: shader_binding_data.external_light_begin,
+                                    external_light_end: shader_binding_data.external_light_end,
+                                    world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
+                                    fov_size_at_unit_z,
+                                    sample_index,
+                                    max_segment_count: self.params.max_bounces + 2,
+                                    render_color_space: self.params.render_color_space.into_integer(),
+                                    mis_heuristic: self.params.mis_heuristic.into_integer(),
+                                    flags: path_trace_flags,
+                                }
+                            },
+                            top_level_accel,
+                            sample_image_view,
+                            &temp_image_views,
+                        );
+
+                        let device = &context.device;
+
+                        let shader_binding_table_address =
+                            unsafe { device.get_buffer_device_address_helper(shader_binding_table_buffer) };
+
+                        unsafe {
+                            device.cmd_bind_pipeline(
+                                cmd,
+                                vk::PipelineBindPoint::RAY_TRACING_KHR,
+                                self.path_trace_pipeline,
+                            );
+                            device.cmd_bind_descriptor_sets(
+                                cmd,
+                                vk::PipelineBindPoint::RAY_TRACING_KHR,
+                                self.path_trace_pipeline_layout,
+                                0,
+                                &[path_trace_descriptor_set, texture_binding_descriptor_set],
+                                &[],
+                            );
+                        }
+
+                        let raygen_shader_binding_table = shader_binding_data
+                            .raygen_region
+                            .into_device_address_region(shader_binding_table_address);
+                        let miss_shader_binding_table = shader_binding_data
+                            .miss_region
+                            .into_device_address_region(shader_binding_table_address);
+                        let hit_shader_binding_table = shader_binding_data
+                            .hit_region
+                            .into_device_address_region(shader_binding_table_address);
+                        let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
+                        unsafe {
+                            device.cmd_trace_rays_khr(
+                                cmd,
+                                &raygen_shader_binding_table,
+                                &miss_shader_binding_table,
+                                &hit_shader_binding_table,
+                                &callable_shader_binding_table,
+                                self.params.size.x,
+                                self.params.size.y,
+                                1,
+                            );
+                        }
+                    }
+                },
+            );
+
+            schedule.add_compute(
+                command_name!("filter"),
+                |params| {
+                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(
+                        self.result_image,
+                        ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
+                    );
+                },
+                {
+                    let sample_index = state.next_sample_index;
+                    move |params, cmd| {
+                        let temp_image_views = [
+                            params.get_image_view(temp_images.0),
+                            params.get_image_view(temp_images.1),
+                            params.get_image_view(temp_images.2),
+                        ];
+                        let result_image_view = params.get_image_view(self.result_image);
+
+                        let descriptor_set = self.filter_descriptor_set_layout.write(
+                            &descriptor_pool,
+                            |buf: &mut FilterData| {
+                                *buf = FilterData {
+                                    image_size: self.params.size,
+                                    sample_index,
+                                    filter_type: self.params.filter_type.into_integer(),
+                                };
+                            },
+                            sample_image_view,
+                            &temp_image_views,
+                            result_image_view,
+                        );
+
+                        dispatch_helper(
+                            &context.device,
+                            pipeline_cache,
+                            cmd,
+                            self.filter_pipeline_layout,
+                            "trace/filter.comp.spv",
+                            descriptor_set,
+                            self.params.size.div_round_up(16),
+                        );
+                    }
+                },
+            );
+
+            state.next_sample_index += 1;
         }
 
-        let raygen_shader_binding_table = shader_binding_data
-            .raygen_region
-            .into_device_address_region(shader_binding_table_address);
-        let miss_shader_binding_table = shader_binding_data
-            .miss_region
-            .into_device_address_region(shader_binding_table_address);
-        let hit_shader_binding_table = shader_binding_data
-            .hit_region
-            .into_device_address_region(shader_binding_table_address);
-        let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
-        unsafe {
-            device.cmd_trace_rays_khr(
-                cmd,
-                &raygen_shader_binding_table,
-                &miss_shader_binding_table,
-                &hit_shader_binding_table,
-                &callable_shader_binding_table,
-                trace_size.x,
-                trace_size.y,
-                1,
-            );
-        }
+        Some(self.result_image)
     }
 }

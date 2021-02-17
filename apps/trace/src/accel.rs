@@ -266,7 +266,7 @@ impl SceneAccel {
         }
     }
 
-    fn create_bottom_level_accel<'a>(
+    fn try_create_bottom_level_accel<'a>(
         &self,
         cluster: &Cluster,
         context: &'a Context,
@@ -604,6 +604,36 @@ impl SceneAccel {
         TopLevelAccel { accel, buffer }
     }
 
+    fn try_create_top_level_accel<'a>(
+        &mut self,
+        context: &'a Context,
+        resource_loader: &mut ResourceLoader,
+        global_allocator: &mut Allocator,
+        schedule: &mut RenderSchedule<'a>,
+        hit_group_count_per_instance: u32,
+    ) -> Option<TopLevelAccel> {
+        // make all bottom level acceleration structures
+        while self.cluster_accel.len() < self.clusters.0.len() {
+            let bottom_level_accel = self.try_create_bottom_level_accel(
+                self.clusters.0.get(self.cluster_accel.len()).unwrap(),
+                context,
+                resource_loader,
+                global_allocator,
+                schedule,
+            )?;
+            self.cluster_accel.push(bottom_level_accel);
+        }
+
+        // make instance buffer from transforms
+        if self.instance_buffer.is_none() {
+            self.instance_buffer = Some(self.create_instance_buffer(resource_loader, hit_group_count_per_instance));
+        }
+        let instance_buffer = resource_loader.get_buffer(self.instance_buffer?)?;
+
+        // now we have all the inputs
+        Some(self.create_top_level_accel(context, instance_buffer, global_allocator, schedule))
+    }
+
     pub fn update<'a>(
         &mut self,
         context: &'a Context,
@@ -612,40 +642,16 @@ impl SceneAccel {
         schedule: &mut RenderSchedule<'a>,
         hit_group_count_per_instance: u32,
     ) {
-        // make all bottom level acceleration structures
-        while self.cluster_accel.len() < self.clusters.0.len() {
-            if let Some(bottom_level_accel) = self.create_bottom_level_accel(
-                self.clusters.0.get(self.cluster_accel.len()).unwrap(),
+        // keep trying to make the top level acceleration structure
+        if self.top_level_accel.is_none() {
+            self.top_level_accel = self.try_create_top_level_accel(
                 context,
                 resource_loader,
                 global_allocator,
                 schedule,
-            ) {
-                self.cluster_accel.push(bottom_level_accel);
-            } else {
-                break;
-            }
+                hit_group_count_per_instance,
+            );
         }
-
-        // make instance buffer from transforms
-        if self.instance_buffer.is_none() && self.cluster_accel.len() == self.clusters.0.len() {
-            self.instance_buffer = Some(self.create_instance_buffer(resource_loader, hit_group_count_per_instance));
-        }
-
-        // make the top level acceleration structure
-        if self.top_level_accel.is_none() {
-            if let Some(instance_buffer) = self
-                .instance_buffer
-                .and_then(|handle| resource_loader.get_buffer(handle))
-            {
-                self.top_level_accel =
-                    Some(self.create_top_level_accel(context, instance_buffer, global_allocator, schedule));
-            }
-        }
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.top_level_accel.is_some()
     }
 
     pub fn top_level_accel(&self) -> Option<vk::AccelerationStructureKHR> {
