@@ -197,6 +197,7 @@ enum SamplingTechnique {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
 enum BsdfType {
+    None,
     Diffuse,
     Mirror,
     SmoothDielectric,
@@ -208,6 +209,7 @@ enum BsdfType {
 impl From<Surface> for BsdfType {
     fn from(surface: Surface) -> Self {
         match surface {
+            Surface::None => BsdfType::None,
             Surface::Diffuse => BsdfType::Diffuse,
             Surface::Mirror => BsdfType::Mirror,
             Surface::SmoothDielectric => BsdfType::SmoothDielectric,
@@ -227,7 +229,7 @@ trait Roughness {
 impl Roughness for Surface {
     fn roughness(&self) -> f32 {
         match self {
-            Surface::Diffuse => 1.0,
+            Surface::None | Surface::Diffuse => 1.0,
             Surface::Mirror | Surface::SmoothDielectric | Surface::SmoothPlastic => 0.0,
             Surface::RoughPlastic { roughness } | Surface::RoughConductor { roughness } => roughness.max(MIN_ROUGHNESS),
         }
@@ -490,18 +492,18 @@ impl Renderer {
         // start loading textures and attributes for all meshes
         let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
         let mut texture_images = Vec::new();
-        let mut shader_data = vec![ShaderData::default(); scene.shaders.len()];
+        let mut shader_data = vec![ShaderData::default(); scene.materials.len()];
         let mut geometry_attrib_data = vec![GeometryAttribData::default(); scene.geometries.len()];
         for instance_ref in accel.clusters().instance_iter().cloned() {
             let instance = scene.instance(instance_ref);
-            let shader_ref = instance.shader_ref;
+            let material_ref = instance.material_ref;
             let geometry_ref = instance.geometry_ref;
-            let shader = scene.shader(shader_ref);
+            let material = scene.material(material_ref);
             let geometry = scene.geometry(geometry_ref);
 
             let has_normals = matches!(geometry, Geometry::TriangleMesh { normals: Some(_), .. });
             let has_uvs_and_texture = matches!(geometry, Geometry::TriangleMesh { uvs: Some(_), .. })
-                && matches!(shader.reflectance, Reflectance::Texture(_));
+                && matches!(material.reflectance, Reflectance::Texture(_));
 
             if has_normals {
                 geometry_attrib_data
@@ -555,7 +557,10 @@ impl Renderer {
                     Some(uv_buffer)
                 };
 
-                shader_data.get_mut(shader_ref.0 as usize).unwrap().reflectance_texture = match &shader.reflectance {
+                shader_data
+                    .get_mut(material_ref.0 as usize)
+                    .unwrap()
+                    .reflectance_texture = match &material.reflectance {
                     Reflectance::Texture(filename) => {
                         Some(*texture_indices.entry(filename.clone()).or_insert_with(|| {
                             let image_handle = resource_loader.create_image();
@@ -723,8 +728,8 @@ impl Renderer {
             .instance_iter()
             .cloned()
             .filter(|&instance_ref| {
-                let shader_ref = self.scene.instance(instance_ref).shader_ref;
-                self.scene.shader(shader_ref).emission.is_some()
+                let material_ref = self.scene.instance(instance_ref).material_ref;
+                self.scene.material(material_ref).emission.is_some()
             })
             .count() as u32;
         let external_light_begin = emissive_instance_count;
@@ -829,22 +834,22 @@ impl Renderer {
                     let instance = scene.instance(instance_ref);
                     let geometry = scene.geometry(instance.geometry_ref);
                     let transform = scene.transform(instance.transform_ref);
-                    let shader_desc = scene.shader(instance.shader_ref);
+                    let material = scene.material(instance.material_ref);
 
-                    let reflectance_texture = shader_data[instance.shader_ref.0 as usize].reflectance_texture;
-                    let reflectance = match shader_desc.reflectance {
+                    let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture;
+                    let reflectance = match material.reflectance {
                         Reflectance::Constant(c) => c,
                         Reflectance::Texture(_) => Vec3::zero(),
                     }
                     .clamped(Vec3::zero(), Vec3::one());
 
                     let mut shader = ExtendShader {
-                        flags: ExtendShaderFlags::new(shader_desc.surface.into(), reflectance_texture),
+                        flags: ExtendShaderFlags::new(material.surface.into(), reflectance_texture),
                         reflectance,
-                        roughness: shader_desc.surface.roughness(),
+                        roughness: material.surface.roughness(),
                         light_index: 0,
                     };
-                    if let Some(emission) = shader_desc.emission {
+                    if let Some(emission) = material.emission {
                         shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
                         shader.light_index = light_info.len() as u32;
 

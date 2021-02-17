@@ -40,6 +40,7 @@ pub enum Reflectance {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Surface {
+    None,
     Diffuse,
     Mirror,
     SmoothDielectric,
@@ -56,10 +57,18 @@ pub enum Surface {
     and produces a closure for the BRDF (and emitter if present).
 
     For now we just enumerate some fixed options for the result of
-    this shader.
+    this shader:
+
+      * Reflectance is a constant colour or a texture read
+
+      * Pick from a fixed set of surface models (some also have
+        a roughness parameter.
+
+      * Geometry can optionally emit a fixed colour (quads/spheres
+        only for now).
 */
 #[derive(Debug)]
-pub struct Shader {
+pub struct Material {
     pub reflectance: Reflectance,
     pub surface: Surface,
     pub emission: Option<Vec3>,
@@ -69,7 +78,7 @@ pub struct Shader {
 pub struct Instance {
     pub transform_ref: TransformRef,
     pub geometry_ref: GeometryRef,
-    pub shader_ref: ShaderRef,
+    pub material_ref: MaterialRef,
 }
 
 #[derive(Debug)]
@@ -97,7 +106,7 @@ pub struct TransformRef(pub u32);
 pub struct GeometryRef(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ShaderRef(pub u32);
+pub struct MaterialRef(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceRef(pub u32);
@@ -109,11 +118,11 @@ pub struct LightRef(pub u32);
 pub struct CameraRef(pub u32);
 
 impl Instance {
-    pub fn new(transform_ref: TransformRef, geometry_ref: GeometryRef, shader_ref: ShaderRef) -> Self {
+    pub fn new(transform_ref: TransformRef, geometry_ref: GeometryRef, material_ref: MaterialRef) -> Self {
         Self {
             transform_ref,
             geometry_ref,
-            shader_ref,
+            material_ref,
         }
     }
 }
@@ -122,7 +131,7 @@ impl Instance {
 pub struct Scene {
     pub transforms: Vec<Transform>,
     pub geometries: Vec<Geometry>,
-    pub shaders: Vec<Shader>,
+    pub materials: Vec<Material>,
     pub instances: Vec<Instance>,
     pub lights: Vec<Light>,
     pub cameras: Vec<Camera>,
@@ -141,10 +150,10 @@ impl Scene {
         GeometryRef(index as u32)
     }
 
-    pub fn add_shader(&mut self, shader: Shader) -> ShaderRef {
-        let index = self.shaders.len();
-        self.shaders.push(shader);
-        ShaderRef(index as u32)
+    pub fn add_material(&mut self, material: Material) -> MaterialRef {
+        let index = self.materials.len();
+        self.materials.push(material);
+        MaterialRef(index as u32)
     }
 
     pub fn add_instance(&mut self, instance: Instance) -> InstanceRef {
@@ -185,8 +194,8 @@ impl Scene {
         self.geometries.get(r.0 as usize).unwrap()
     }
 
-    pub fn shader(&self, r: ShaderRef) -> &Shader {
-        self.shaders.get(r.0 as usize).unwrap()
+    pub fn material(&self, r: MaterialRef) -> &Material {
+        self.materials.get(r.0 as usize).unwrap()
     }
 
     pub fn instance(&self, r: InstanceRef) -> &Instance {
@@ -289,43 +298,6 @@ impl TriangleMeshBuilder {
             min,
             max,
         }
-    }
-}
-
-pub struct ShaderBuilder(Shader);
-
-impl ShaderBuilder {
-    pub fn new_diffuse(reflectance: Vec3) -> Self {
-        Self(Shader {
-            reflectance: Reflectance::Constant(reflectance),
-            surface: Surface::Diffuse,
-            emission: None,
-        })
-    }
-
-    pub fn new_conductor(reflectance: Vec3, roughness: f32) -> Self {
-        Self(Shader {
-            reflectance: Reflectance::Constant(reflectance),
-            surface: Surface::RoughConductor { roughness },
-            emission: None,
-        })
-    }
-
-    pub fn new_mirror(reflectance: Vec3) -> Self {
-        Self(Shader {
-            reflectance: Reflectance::Constant(reflectance),
-            surface: Surface::Mirror,
-            emission: None,
-        })
-    }
-
-    pub fn with_emission(mut self, emission: Vec3) -> Self {
-        self.0.emission = Some(emission);
-        self
-    }
-
-    pub fn build(self) -> Shader {
-        self.0
     }
 }
 
@@ -558,14 +530,32 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let red_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_RED_SAMPLES);
     let green_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_GREEN_SAMPLES);
 
-    let white_shader = scene.add_shader(ShaderBuilder::new_diffuse(white_reflectance).build());
-    let red_shader = scene.add_shader(ShaderBuilder::new_diffuse(red_reflectance).build());
-    let green_shader = scene.add_shader(ShaderBuilder::new_diffuse(green_reflectance).build());
+    let white_shader = scene.add_material(Material {
+        reflectance: Reflectance::Constant(white_reflectance),
+        surface: Surface::Diffuse,
+        emission: None,
+    });
+    let red_shader = scene.add_material(Material {
+        reflectance: Reflectance::Constant(red_reflectance),
+        surface: Surface::Diffuse,
+        emission: None,
+    });
+    let green_shader = scene.add_material(Material {
+        reflectance: Reflectance::Constant(green_reflectance),
+        surface: Surface::Diffuse,
+        emission: None,
+    });
     let tall_block_shader = match variant {
-        CornellBoxVariant::Mirror => scene.add_shader(ShaderBuilder::new_mirror(Vec3::broadcast(1.0)).build()),
-        CornellBoxVariant::Conductor => {
-            scene.add_shader(ShaderBuilder::new_conductor(Vec3::broadcast(1.0), 0.2).build())
-        }
+        CornellBoxVariant::Mirror => scene.add_material(Material {
+            reflectance: Reflectance::Constant(Vec3::broadcast(1.0)),
+            surface: Surface::Mirror,
+            emission: None,
+        }),
+        CornellBoxVariant::Conductor => scene.add_material(Material {
+            reflectance: Reflectance::Constant(Vec3::broadcast(1.0)),
+            surface: Surface::RoughConductor { roughness: 0.2 },
+            emission: None,
+        }),
         _ => white_shader,
     };
 
@@ -616,11 +606,11 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
                 size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
             })
         };
-        let light_shader = scene.add_shader(
-            ShaderBuilder::new_diffuse(Vec3::broadcast(0.78))
-                .with_emission(light_emission)
-                .build(),
-        );
+        let light_shader = scene.add_material(Material {
+            reflectance: Reflectance::Constant(Vec3::broadcast(0.78)),
+            surface: Surface::Diffuse,
+            emission: Some(light_emission),
+        });
         scene.add_instance(Instance::new(identity, light_geometry, light_shader));
     }
 

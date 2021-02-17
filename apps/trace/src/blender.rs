@@ -195,7 +195,7 @@ pub fn load_export(i: &str) -> Scene {
                 surface,
                 reflectance,
             } => {
-                let shader_ref = scene.add_shader(Shader {
+                let material_ref = scene.add_material(Material {
                     reflectance: Reflectance::Constant(reflectance),
                     surface,
                     emission: None,
@@ -203,7 +203,7 @@ pub fn load_export(i: &str) -> Scene {
                 scene.add_instance(Instance::new(
                     *transform_refs.get(transform_ref).unwrap(),
                     *geometry_refs.get(geometry_ref).unwrap(),
-                    shader_ref,
+                    material_ref,
                 ));
             }
             Element::Camera { transform_ref, fov_y } => {

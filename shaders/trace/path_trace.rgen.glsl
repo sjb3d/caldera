@@ -409,7 +409,7 @@ void main()
         }
 
         // end the ray if we didn't hit any surface
-        if (!has_surface(hit.info)) {
+        if (!has_surface(hit.info) || get_bsdf_type(hit.info) == BSDF_TYPE_NONE) {
             break;
         }
         if (segment_index >= g_path_trace.max_segment_count) {

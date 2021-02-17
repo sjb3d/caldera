@@ -362,7 +362,7 @@ impl App {
                                 + scene
                                     .instances
                                     .iter()
-                                    .filter_map(|instance| scene.shader(instance.shader_ref).emission)
+                                    .filter_map(|instance| scene.material(instance.material_ref).emission)
                                     .count()
                         ));
                     }

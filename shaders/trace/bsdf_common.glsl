@@ -65,12 +65,13 @@ BsdfParams replace_roughness(BsdfParams p, float roughness)
     return p;
 }
 
-#define BSDF_TYPE_DIFFUSE           0
-#define BSDF_TYPE_MIRROR            1
-#define BSDF_TYPE_SMOOTH_DIELECTRIC 2
-#define BSDF_TYPE_SMOOTH_PLASTIC    3
-#define BSDF_TYPE_ROUGH_PLASTIC     4
-#define BSDF_TYPE_ROUGH_CONDUCTOR   5
+#define BSDF_TYPE_NONE              0
+#define BSDF_TYPE_DIFFUSE           1
+#define BSDF_TYPE_MIRROR            2
+#define BSDF_TYPE_SMOOTH_DIELECTRIC 3
+#define BSDF_TYPE_SMOOTH_PLASTIC    4
+#define BSDF_TYPE_ROUGH_PLASTIC     5
+#define BSDF_TYPE_ROUGH_CONDUCTOR   6
 
 bool bsdf_is_always_delta(uint bsdf_type)
 {

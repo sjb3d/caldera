@@ -234,7 +234,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
 
     let scene: Scene = serde_json::from_reader(reader).unwrap();
 
-    let load_shader = |bsdf_ref: &BsdfRef| {
+    let load_material = |bsdf_ref: &BsdfRef| {
         let bsdf = match bsdf_ref {
             BsdfRef::Inline(bsdf) => bsdf,
             BsdfRef::Named(name) => scene
@@ -243,15 +243,12 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 .find(|bsdf| bsdf.name.as_ref() == Some(name))
                 .unwrap(),
         };
-        let mut reflectance = match &bsdf.albedo {
+        let reflectance = match &bsdf.albedo {
             TextureOrValue::Value(value) => scene::Reflectance::Constant(value.ungamma_colour().into_vec3()),
             TextureOrValue::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
         };
         let surface = match bsdf.bsdf_type {
-            BsdfType::Null => {
-                reflectance = scene::Reflectance::Constant(Vec3::zero());
-                scene::Surface::Diffuse
-            }
+            BsdfType::Null => scene::Surface::None,
             BsdfType::Lambert => scene::Surface::Diffuse,
             BsdfType::Mirror => scene::Surface::Mirror,
             BsdfType::Dielectric => scene::Surface::SmoothDielectric,
@@ -266,7 +263,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
             },
             _ => scene::Surface::Diffuse,
         };
-        scene::Shader {
+        scene::Material {
             reflectance,
             surface,
             emission: None,
@@ -287,19 +284,19 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                     size,
                 };
 
-                let mut shader = load_shader(primitive.bsdf.as_ref().unwrap());
+                let mut material = load_material(primitive.bsdf.as_ref().unwrap());
                 if let Some(s) = primitive.power.as_ref() {
                     let area = (size.x * size.y * world_from_local.scale * world_from_local.scale).abs();
-                    shader.emission = Some(s.into_vec3() / (area * PI));
+                    material.emission = Some(s.into_vec3() / (area * PI));
                 }
                 if let Some(TextureOrValue::Value(v)) = &primitive.emission {
-                    shader.emission = Some(v.into_vec3());
+                    material.emission = Some(v.into_vec3());
                 }
 
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
-                let shader_ref = output.add_shader(shader);
-                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
+                let material_ref = output.add_material(material);
+                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, material_ref));
             }
             PrimitiveType::Mesh => {
                 let (world_from_local, extra_scale) = primitive.transform.decompose();
@@ -308,12 +305,12 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                     path.as_ref().with_file_name(primitive.file.as_ref().unwrap()),
                     extra_scale,
                 );
-                let shader = load_shader(&primitive.bsdf.as_ref().unwrap());
+                let shader = load_material(&primitive.bsdf.as_ref().unwrap());
 
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
-                let shader_ref = output.add_shader(shader);
-                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
+                let material_ref = output.add_material(shader);
+                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, material_ref));
             }
             PrimitiveType::Sphere => {
                 let (world_from_local, extra_scale) = primitive.transform.decompose();
@@ -324,7 +321,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 let centre = world_from_local.translation;
                 let radius = world_from_local.scale.abs();
 
-                let mut shader = load_shader(&primitive.bsdf.as_ref().unwrap());
+                let mut shader = load_material(&primitive.bsdf.as_ref().unwrap());
                 if let Some(s) = primitive.power.as_ref() {
                     let area = 4.0 * PI * radius * radius;
                     shader.emission = Some(s.into_vec3() / (area * PI));
@@ -332,8 +329,8 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
 
                 let geometry_ref = output.add_geometry(scene::Geometry::Sphere { centre, radius });
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
-                let shader_ref = output.add_shader(shader);
-                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, shader_ref));
+                let material_ref = output.add_material(shader);
+                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, material_ref));
             }
             PrimitiveType::InfiniteSphereCap => {
                 let (world_from_local, _extra_scale) = primitive.transform.decompose();
