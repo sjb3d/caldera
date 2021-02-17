@@ -161,8 +161,7 @@ void sample_single_light(
     float solid_angle_pdf_and_ext_bit;
     float unit_scale;
     switch (light_info.light_type) {
-#define PARAMS  target_position, target_normal, rand_u01, \
-                light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
+#define PARAMS  target_position, target_normal, rand_u01, light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
         case LIGHT_TYPE_QUAD: {
             QuadLightParamsBuffer buf = QuadLightParamsBuffer(params_addr);
             const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_QUAD_LIGHT_IS_TWO_SIDED) != 0;
@@ -433,6 +432,9 @@ void main()
                     break;
                 case BSDF_TYPE_SMOOTH_DIELECTRIC:
                     // TODO: degrade to rough dielectric
+                    if (roughness_acc != 0.f) {
+                        hit.info = replace_bsdf_type(hit.info, BSDF_TYPE_NONE);
+                    }
                     break;
                 case BSDF_TYPE_DIFFUSE:
                     // nothing to do
@@ -446,6 +448,9 @@ void main()
                     }
                     break;
             }
+        }
+        if (get_bsdf_type(hit.info) == BSDF_TYPE_NONE) {
+            break;
         }
 
         // unpack the BRDF
@@ -580,11 +585,7 @@ void main()
         }
     }
 
-    if (any(isinf(result_sum)) || any(isnan(result_sum))) {
-        // skip
-    } else {
-        imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
-        imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
-        imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));
-    }
+    imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
+    imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
+    imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));
 }

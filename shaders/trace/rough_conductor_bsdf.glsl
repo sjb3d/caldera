@@ -54,6 +54,6 @@ void rough_conductor_bsdf_sample(
         * fresnel_conductor(CONDUCTOR_ETA, CONDUCTOR_K, h_dot_v)
         * ggx_vndf_sampled_estimator_without_fresnel(v, l, alpha);
 
-    solid_angle_pdf_or_negative = ggx_vndf_sampled_pdf(v, h, alpha);    
+    solid_angle_pdf_or_negative = ggx_vndf_sampled_pdf(v, h, alpha);
     sampled_roughness = roughness;
 }
