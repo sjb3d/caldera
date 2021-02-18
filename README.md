@@ -27,7 +27,7 @@ make && cargo run --bin <app_name>
 
 ### `compute`
 
-![compute](https://github.com/sjb3d/caldera/blob/main/docs/compute.jpg)
+![compute](docs/compute.jpg)
 
 A simple path tracer in a compute shader, also for tinkering with:
 
@@ -38,7 +38,7 @@ A simple path tracer in a compute shader, also for tinkering with:
 
 ### `mesh`
 
-![mesh](https://github.com/sjb3d/caldera/blob/main/docs/mesh.jpg)
+![mesh](docs/mesh.jpg)
 
 Initial test project for `VK_KHR_acceleration_structure` and `VK_KHR_ray_tracing_pipeline`.  Takes a PLY mesh filename as argument ([Stanford bunny](http://graphics.stanford.edu/data/3Dscanrep/) shown above), draws a few instances using either rasterisation or ray tracing.
 
@@ -54,7 +54,9 @@ Has code for:
 
 ### `trace`
 
-_TODO: document_
+![trace](docs/bathroom2.jpg)
+
+A path tracer built on Vulkan ray tracing.  **More information about this app and a gallery can be found on [this page with more details](docs/path_tracer.md).**
 
 ## Library Details
 

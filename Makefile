@@ -63,10 +63,19 @@ INCLUDES=$(INC:%=$(SRC_DIR)/%)
 SHADERS=$(SRC:%.glsl=$(BIN_DIR)/%.spv)
 LISTINGS=$(SRC:%.glsl=$(LISTING_DIR)/%.spv.txt)
 
+IMAGES=\
+	docs/bathroom2.jpg \
+	docs/coffee.jpg \
+	docs/glass-of-water.jpg \
+	docs/staircase.jpg \
+	docs/living-room-2.jpg
+
+TRACE=cargo run --release --bin trace --
+
 $(info $(shell mkdir -p $(DIRS)))
 
 all: shaders listings
-.PHONY: all clean shaders listings
+.PHONY: all clean shaders listings images
 
 clean:
 	$(RM) $(SHADERS) $(LISTINGS)
@@ -98,3 +107,23 @@ listings: $(LISTINGS)
 
 $(LISTING_DIR)/%.spv.txt: $(BIN_DIR)/%.spv Makefile
 	$(DISASM) -o $@ $<
+
+clean-images:
+	$(RM) $(IMAGES)
+
+images: $(IMAGES)
+
+docs/bathroom2.%: ../tungsten_scenes/bathroom2/scene.json shaders Makefile
+	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 0.62 tungsten $<
+
+docs/coffee.%: ../tungsten_scenes/coffee/scene.json shaders Makefile
+	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 tungsten $<
+
+docs/glass-of-water.%: ../tungsten_scenes/glass-of-water/scene.json shaders Makefile
+	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 -b 24 tungsten $<
+
+docs/living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders Makefile
+	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 1.03 tungsten $<
+
+docs/staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
+	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 tungsten $<
