@@ -1,5 +1,5 @@
 mod accel;
-mod blender;
+mod import;
 mod renderer;
 mod scene;
 mod tungsten;
@@ -648,15 +648,15 @@ enum SceneDesc {
 #[structopt(no_version)]
 struct AppParams {
     /// Core Vulkan version to load
-    #[structopt(short, long, parse(try_from_str=try_version_from_str), default_value="1.1")]
+    #[structopt(short, long, parse(try_from_str=try_version_from_str), default_value="1.1", global=true)]
     version: vk::Version,
 
     /// Whether to use EXT_inline_uniform_block
-    #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
+    #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional", global=true)]
     inline_uniform_block: ContextFeature,
 
     /// Run without a window and output to file
-    #[structopt(short, long)]
+    #[structopt(short, long, global = true, display_order = 3)]
     output: Option<PathBuf>,
 
     #[structopt(flatten)]
@@ -682,7 +682,7 @@ fn main() {
         SceneDesc::CornellBox { variant } => create_cornell_box_scene(variant),
         SceneDesc::Import { filename } => {
             let contents = std::fs::read_to_string(filename).unwrap();
-            blender::load_export(&contents)
+            import::load_scene(&contents)
         }
         SceneDesc::Tungsten { filename } => tungsten::load_scene(filename),
     };

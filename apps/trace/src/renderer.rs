@@ -490,43 +490,43 @@ type BoolParam = bool;
 #[derive(Debug, StructOpt)]
 pub struct RendererParams {
     /// Image width
-    #[structopt(short, long, default_value = "1920")]
+    #[structopt(short, long, default_value = "1920", global = true, display_order = 1)]
     pub width: u32,
 
     /// Image height
-    #[structopt(short, long, default_value = "1080")]
+    #[structopt(short, long, default_value = "1080", global = true, display_order = 2)]
     pub height: u32,
 
     /// Maximum number eye path bounces
-    #[structopt(short = "b", long, default_value = "8")]
+    #[structopt(short = "b", long, default_value = "8", global = true)]
     pub max_bounces: u32,
 
     /// Roughness accumulates along eye paths
-    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="enable")]
+    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="enable", global=true)]
     pub accumulate_roughness: BoolParam,
 
     /// Sample sphere lights by solid angle from the target point
-    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="enable")]
+    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="enable", global=true)]
     pub sphere_light_sample_solid_angle: BoolParam,
 
     /// Quad lights emit light from both sides
-    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="disable")]
+    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="disable", global=true)]
     pub quad_light_is_two_sided: BoolParam,
 
     /// Which sampling techniques are allowed
-    #[structopt(long, possible_values=SamplingTechnique::VARIANTS, default_value = "lights-and-surfaces")]
+    #[structopt(short, long, possible_values=SamplingTechnique::VARIANTS, default_value = "lights-and-surfaces", global=true)]
     pub sampling_technique: SamplingTechnique,
 
     /// How to combine samples between techniques
-    #[structopt(long, possible_values=MultipleImportanceHeuristic::VARIANTS, default_value = "balance")]
+    #[structopt(short, long, possible_values=MultipleImportanceHeuristic::VARIANTS, default_value = "balance", global=true)]
     pub mis_heuristic: MultipleImportanceHeuristic,
 
     /// Which primaries to use during rendering
-    #[structopt(long, possible_values=RenderColorSpace::VARIANTS, default_value = "aces-cg")]
+    #[structopt(short, long, possible_values=RenderColorSpace::VARIANTS, default_value = "aces-cg", global=true)]
     pub render_color_space: RenderColorSpace,
 
     /// Image reconstruction filter
-    #[structopt(long, possible_values=FilterType::VARIANTS, default_value = "gaussian")]
+    #[structopt(short, long, possible_values=FilterType::VARIANTS, default_value = "gaussian", global=true)]
     pub filter_type: FilterType,
 }
 

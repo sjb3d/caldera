@@ -1,10 +1,13 @@
 use crate::window_surface;
 use caldera_macro::EnumFromStr;
 use spark::{vk, Builder, Device, DeviceExtensions, Instance, InstanceExtensions, Loader};
-use std::ffi::CStr;
-use std::os::raw::c_void;
-use std::slice;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    ffi::CStr,
+    num,
+    os::raw::c_void,
+    slice,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use winit::window::Window;
 
 unsafe extern "system" fn debug_messenger(
@@ -89,13 +92,12 @@ impl ContextFeature {
     }
 }
 
-pub fn try_version_from_str(s: &str) -> Result<vk::Version, String> {
-    match s {
-        "1.0" => Ok(vk::Version::from_raw_parts(1, 0, 0)),
-        "1.1" => Ok(vk::Version::from_raw_parts(1, 1, 0)),
-        "1.2" => Ok(vk::Version::from_raw_parts(1, 2, 0)),
-        _ => Err(format!("{:?} is not one of 1.0/1.1/1.2", s)),
-    }
+pub fn try_version_from_str(s: &str) -> Result<vk::Version, num::ParseIntError> {
+    let mut parts = s.split('.');
+    let major = parts.next().unwrap_or("").parse::<u32>()?;
+    let minor = parts.next().unwrap_or("0").parse::<u32>()?;
+    let patch = parts.next().unwrap_or("0").parse::<u32>()?;
+    Ok(vk::Version::from_raw_parts(major, minor, patch))
 }
 
 pub struct ContextParams {
