@@ -12,3 +12,4 @@ bytemuck = { version = "1.5", features = ["derive"] }
 winit = "0.24"
 imgui = "0.6.1"
 ply-rs = "0.1.3"
+structopt = "0.3"

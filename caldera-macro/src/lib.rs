@@ -1,5 +1,6 @@
 extern crate proc_macro;
 
+use heck::KebabCase;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -8,7 +9,7 @@ use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
-    token, Error, Ident, LitInt, Result, Token,
+    token, Data, DeriveInput, Error, Ident, LitInt, LitStr, Result, Token,
 };
 
 mod kw {
@@ -224,4 +225,44 @@ pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
         }
     )
     .into()
+}
+
+#[proc_macro_derive(EnumFromStr)]
+pub fn derive_enum_from_str(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let e = input.ident;
+
+    match input.data {
+        Data::Enum(enum_data) => {
+            let idents = enum_data.variants.iter().map(|v| &v.ident);
+            let names: Vec<_> = enum_data
+                .variants
+                .iter()
+                .map(|v| {
+                    let ident = &v.ident;
+                    LitStr::new(&ident.to_string().to_kebab_case(), ident.span())
+                })
+                .collect();
+            quote!(
+                impl #e {
+                    pub const VARIANTS: &'static [&'static str] = &[
+                        #(#names),*
+                    ];
+                }
+
+                impl ::std::str::FromStr for #e {
+                    type Err = String;
+                    fn from_str(s: &str) -> Result<#e, Self::Err> {
+                        match s {
+                            #(#names => Ok(Self::#idents),)*
+                            _ => Err(format!("{:?} is not one of {}.", s, Self::VARIANTS.join(", "))),
+                        }
+                    }
+                }
+            )
+            .into()
+        }
+        _ => unimplemented!(),
+    }
 }

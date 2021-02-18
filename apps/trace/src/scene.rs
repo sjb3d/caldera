@@ -393,6 +393,7 @@ fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
     xyz_from_spectrum(measure) / xyz_from_spectrum(|_| 1.0).y
 }
 
+#[derive(Debug, EnumFromStr)]
 pub enum CornellBoxVariant {
     Original,
     Mirror,

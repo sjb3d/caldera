@@ -8,8 +8,13 @@ use caldera::*;
 use imgui::im_str;
 use imgui::Key;
 use spark::vk;
-use std::sync::{Arc, Mutex};
-use std::{env, mem, slice};
+use std::{
+    mem,
+    path::PathBuf,
+    slice,
+    sync::{Arc, Mutex},
+};
+use structopt::StructOpt;
 use winit::{
     dpi::{LogicalSize, Size},
     event_loop::EventLoop,
@@ -52,7 +57,7 @@ struct App {
 }
 
 impl App {
-    fn new(base: &mut AppBase, mesh_file_name: String) -> Self {
+    fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
         let context = &base.context;
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
@@ -391,29 +396,33 @@ impl App {
     }
 }
 
+#[derive(Debug, StructOpt)]
+#[structopt(no_version)]
+struct AppParams {
+    /// Core Vulkan version to load
+    #[structopt(short, long, parse(try_from_str=try_version_from_str), default_value="1.1")]
+    version: vk::Version,
+
+    /// Whether to use EXT_inline_uniform_block
+    #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
+    inline_uniform_block: ContextFeature,
+
+    /// Whether to use KHR_ray_tracing_pipeline
+    #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
+    ray_tracing: ContextFeature,
+
+    /// The PLY file to load
+    mesh_file_name: PathBuf,
+}
+
 fn main() {
-    let mut params = ContextParams {
-        version: vk::Version::from_raw_parts(1, 1, 0), // Vulkan 1.1 needed for ray tracing
-        ray_tracing: ContextFeature::Optional,
+    let app_params = AppParams::from_args();
+    let context_params = ContextParams {
+        version: app_params.version,
+        inline_uniform_block: app_params.inline_uniform_block,
+        ray_tracing: app_params.ray_tracing,
         ..Default::default()
     };
-    let mut mesh_file_name = None;
-    for arg in env::args().skip(1) {
-        let arg = arg.as_str();
-        match arg {
-            "--no-rays" => params.ray_tracing = ContextFeature::Disabled,
-            _ => {
-                if !params.parse_arg(arg) {
-                    if mesh_file_name.is_none() {
-                        mesh_file_name = Some(arg.to_owned());
-                    } else {
-                        panic!("unknown argument {:?}", arg);
-                    }
-                }
-            }
-        }
-    }
-    let mesh_file_name = mesh_file_name.expect("missing PLY mesh filename argument");
 
     let event_loop = EventLoop::new();
 
@@ -423,8 +432,8 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut base = AppBase::new(window, &params);
-    let app = App::new(&mut base, mesh_file_name);
+    let mut base = AppBase::new(window, &context_params);
+    let app = App::new(&mut base, app_params.mesh_file_name);
 
     let mut apps = Some((base, app));
     event_loop.run(move |event, target, control_flow| {

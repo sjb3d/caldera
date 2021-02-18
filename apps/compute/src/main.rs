@@ -6,8 +6,8 @@ use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
 use spark::vk;
-use std::env;
 use std::sync::Arc;
+use structopt::StructOpt;
 use winit::{
     dpi::{LogicalSize, Size},
     event_loop::EventLoop,
@@ -56,7 +56,7 @@ descriptor_set_layout!(CopyDescriptorSetLayout {
 #[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
 enum RenderColorSpace {
     Rec709 = 0,
-    ACEScg = 1,
+    AcesCg = 1,
 }
 
 #[repr(u32)]
@@ -161,7 +161,7 @@ impl App {
             log2_exposure_scale: 0f32,
             target_pass_count: 16,
             next_pass_index: 0,
-            render_color_space: RenderColorSpace::ACEScg,
+            render_color_space: RenderColorSpace::AcesCg,
             tone_map_method: ToneMapMethod::AcesFit,
         }
     }
@@ -185,7 +185,7 @@ impl App {
                 needs_reset |= ui.radio_button(
                     im_str!("ACEScg (AP1 primaries)"),
                     &mut self.render_color_space,
-                    RenderColorSpace::ACEScg,
+                    RenderColorSpace::AcesCg,
                 );
                 ui.text("Tone Map Method:");
                 ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
@@ -388,29 +388,42 @@ impl App {
     }
 }
 
+#[derive(Debug, StructOpt)]
+#[structopt(no_version)]
+struct AppParams {
+    /// Core Vulkan version to load
+    #[structopt(short, long, parse(try_from_str=try_version_from_str), default_value="1.0")]
+    version: vk::Version,
+
+    /// Whether to use EXT_inline_uniform_block
+    #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
+    inline_uniform_block: ContextFeature,
+
+    /// Run fullscreen
+    #[structopt(short, long)]
+    fullscreen: bool,
+
+    /// Test ACES fit matrices and exit
+    #[structopt(long)]
+    test: bool,
+}
+
 fn main() {
-    let mut params = ContextParams::default();
-    let mut is_fullscreen = false;
-    for arg in env::args().skip(1) {
-        let arg = arg.as_str();
-        match arg {
-            "-f" => is_fullscreen = true,
-            "--test" => {
-                derive_aces_fit_matrices();
-                return;
-            }
-            _ => {
-                if !params.parse_arg(arg) {
-                    panic!("unknown argument {:?}", arg);
-                }
-            }
-        }
+    let app_params = AppParams::from_args();
+    let context_params = ContextParams {
+        version: app_params.version,
+        inline_uniform_block: app_params.inline_uniform_block,
+        ..Default::default()
+    };
+    if app_params.test {
+        derive_aces_fit_matrices();
+        return;
     }
 
     let event_loop = EventLoop::new();
 
     let mut window_builder = WindowBuilder::new().with_title("compute");
-    window_builder = if is_fullscreen {
+    window_builder = if app_params.fullscreen {
         let monitor = event_loop.primary_monitor().unwrap();
         let size = monitor.size();
         let video_mode = monitor
@@ -434,7 +447,7 @@ fn main() {
     };
     let window = window_builder.build(&event_loop).unwrap();
 
-    let mut base = AppBase::new(window, &params);
+    let mut base = AppBase::new(window, &context_params);
     let app = App::new(&mut base);
 
     let mut apps = Some((base, app));

@@ -1,6 +1,6 @@
 use caldera::*;
 use ply_rs::{parser, ply};
-use std::{fs, io, mem};
+use std::{fs, io, mem, path::Path};
 
 #[derive(Clone, Copy)]
 struct PlyVertex {
@@ -73,7 +73,7 @@ impl MeshInfo {
         }
     }
 
-    pub fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &str, with_ray_tracing: bool) {
+    pub fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &Path, with_ray_tracing: bool) {
         let vertex_parser = parser::Parser::<PlyVertex>::new();
         let face_parser = parser::Parser::<PlyFace>::new();
 

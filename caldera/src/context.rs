@@ -1,4 +1,5 @@
 use crate::window_surface;
+use caldera_macro::EnumFromStr;
 use spark::{vk, Builder, Device, DeviceExtensions, Instance, InstanceExtensions, Loader};
 use std::ffi::CStr;
 use std::os::raw::c_void;
@@ -62,28 +63,38 @@ pub type UniqueImageView = Unique<vk::ImageView>;
 pub type UniqueRenderPass = Unique<vk::RenderPass>;
 pub type UniqueFramebuffer = Unique<vk::Framebuffer>;
 
+#[derive(Debug, EnumFromStr)]
 pub enum ContextFeature {
-    Disabled,
+    Disable,
     Optional,
-    Required,
+    Require,
 }
 
 impl ContextFeature {
     fn apply(&self, is_supported: impl FnOnce() -> bool, enable_support: impl FnOnce(), on_error: impl FnOnce()) {
         match self {
-            ContextFeature::Disabled => {}
+            ContextFeature::Disable => {}
             ContextFeature::Optional => {
                 if is_supported() {
                     enable_support();
                 }
             }
-            ContextFeature::Required => {
+            ContextFeature::Require => {
                 if !is_supported() {
                     on_error();
                 }
                 enable_support();
             }
         }
+    }
+}
+
+pub fn try_version_from_str(s: &str) -> Result<vk::Version, String> {
+    match s {
+        "1.0" => Ok(vk::Version::from_raw_parts(1, 0, 0)),
+        "1.1" => Ok(vk::Version::from_raw_parts(1, 1, 0)),
+        "1.2" => Ok(vk::Version::from_raw_parts(1, 2, 0)),
+        _ => Err(format!("{:?} is not one of 1.0/1.1/1.2", s)),
     }
 }
 
@@ -97,44 +108,16 @@ pub struct ContextParams {
     pub ray_tracing: ContextFeature,
 }
 
-impl ContextParams {
-    pub fn parse_arg(&mut self, s: &str) -> bool {
-        match s {
-            "-d" => {
-                self.debug_utils = ContextFeature::Required;
-                true
-            }
-            "--vk10" => {
-                self.version = vk::Version::from_raw_parts(1, 0, 0);
-                true
-            }
-            "--vk11" => {
-                self.version = vk::Version::from_raw_parts(1, 1, 0);
-                true
-            }
-            "--vk12" => {
-                self.version = vk::Version::from_raw_parts(1, 2, 0);
-                true
-            }
-            "--no-iub" => {
-                self.inline_uniform_block = ContextFeature::Disabled;
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
 impl Default for ContextParams {
     fn default() -> Self {
         Self {
             version: Default::default(),
-            debug_utils: ContextFeature::Disabled,
-            scalar_block_layout: ContextFeature::Required,
+            debug_utils: ContextFeature::Disable,
+            scalar_block_layout: ContextFeature::Require,
             pipeline_creation_cache_control: ContextFeature::Optional,
-            geometry_shader: ContextFeature::Disabled,
+            geometry_shader: ContextFeature::Disable,
             inline_uniform_block: ContextFeature::Optional,
-            ray_tracing: ContextFeature::Disabled,
+            ray_tracing: ContextFeature::Disable,
         }
     }
 }
@@ -206,7 +189,7 @@ impl Context {
                     extensions.enable_khr_acceleration_structure();
                     extensions.enable_khr_ray_tracing_pipeline();
                 },
-                || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
+                || panic!("KHR_acceleration_structure/KHR_ray_tracing_pipeline not supported"),
             );
 
             let extension_names = extensions.to_name_vec();

@@ -10,11 +10,13 @@ use spark::{vk, Builder};
 use std::{
     collections::HashMap,
     fs::File,
+    mem,
     ops::{BitOr, BitOrAssign},
     path::PathBuf,
+    slice,
     sync::Arc,
 };
-use std::{mem, slice};
+use structopt::StructOpt;
 
 trait UnitScale {
     fn unit_scale(&self, world_from_local: Similarity3) -> f32;
@@ -124,7 +126,7 @@ impl BitOrAssign for PathTraceFlags {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, Contiguous, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
 pub enum MultipleImportanceHeuristic {
     None,
     Balance,
@@ -189,7 +191,7 @@ enum GeometryRecordData {
     Sphere,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumFromStr)]
 pub enum SamplingTechnique {
     LightsOnly,
     SurfacesOnly,
@@ -461,45 +463,76 @@ impl Drop for TextureBindingSet {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
 pub enum RenderColorSpace {
-    Rec709 = 0,
-    ACEScg = 1,
+    Rec709,
+    AcesCg,
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq, Contiguous)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
 pub enum FilterType {
     Box,
     Gaussian,
     Mitchell,
 }
 
+pub fn try_bool_from_str(s: &str) -> Result<bool, String> {
+    match s {
+        "enable" => Ok(true),
+        "disable" => Ok(false),
+        _ => Err(format!("{:?} is not one of enable/disable.", s)),
+    }
+}
+
+type BoolParam = bool;
+
+#[derive(Debug, StructOpt)]
 pub struct RendererParams {
-    pub size: UVec2,
+    /// Image width
+    #[structopt(short, long, default_value = "1920")]
+    pub width: u32,
+
+    /// Image height
+    #[structopt(short, long, default_value = "1080")]
+    pub height: u32,
+
+    /// Maximum number eye path bounces
+    #[structopt(short = "b", long, default_value = "8")]
     pub max_bounces: u32,
-    pub accumulate_roughness: bool,
-    pub sphere_light_sample_solid_angle: bool,
-    pub quad_light_is_two_sided: bool,
+
+    /// Roughness accumulates along eye paths
+    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="enable")]
+    pub accumulate_roughness: BoolParam,
+
+    /// Sample sphere lights by solid angle from the target point
+    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="enable")]
+    pub sphere_light_sample_solid_angle: BoolParam,
+
+    /// Quad lights emit light from both sides
+    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="disable")]
+    pub quad_light_is_two_sided: BoolParam,
+
+    /// Which sampling techniques are allowed
+    #[structopt(long, possible_values=SamplingTechnique::VARIANTS, default_value = "lights-and-surfaces")]
     pub sampling_technique: SamplingTechnique,
+
+    /// How to combine samples between techniques
+    #[structopt(long, possible_values=MultipleImportanceHeuristic::VARIANTS, default_value = "balance")]
     pub mis_heuristic: MultipleImportanceHeuristic,
+
+    /// Which primaries to use during rendering
+    #[structopt(long, possible_values=RenderColorSpace::VARIANTS, default_value = "aces-cg")]
     pub render_color_space: RenderColorSpace,
+
+    /// Image reconstruction filter
+    #[structopt(long, possible_values=FilterType::VARIANTS, default_value = "gaussian")]
     pub filter_type: FilterType,
 }
 
-impl Default for RendererParams {
-    fn default() -> Self {
-        Self {
-            size: UVec2::new(1920, 1080),
-            max_bounces: 8,
-            accumulate_roughness: true,
-            sphere_light_sample_solid_angle: true,
-            quad_light_is_two_sided: false,
-            sampling_technique: SamplingTechnique::LightsAndSurfaces,
-            mis_heuristic: MultipleImportanceHeuristic::Balance,
-            render_color_space: RenderColorSpace::ACEScg,
-            filter_type: FilterType::Gaussian,
-        }
+impl RendererParams {
+    pub fn size(&self) -> UVec2 {
+        UVec2::new(self.width, self.height)
     }
 }
 
@@ -813,7 +846,7 @@ impl Renderer {
 
         let result_image = {
             let desc = ImageDesc::new_2d(
-                params.size,
+                params.size(),
                 vk::Format::R32G32B32A32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
@@ -1303,7 +1336,7 @@ impl Renderer {
         needs_reset |= ui.radio_button(
             im_str!("ACEScg (AP1 primaries)"),
             &mut self.params.render_color_space,
-            RenderColorSpace::ACEScg,
+            RenderColorSpace::AcesCg,
         );
 
         ui.text("Filter:");
@@ -1420,7 +1453,7 @@ impl Renderer {
 
         // do a pass
         if !progress.done() {
-            let temp_desc = ImageDesc::new_2d(self.params.size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let temp_desc = ImageDesc::new_2d(self.params.size(), vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let temp_images = (
                 schedule.describe_image(&temp_desc),
                 schedule.describe_image(&temp_desc),
@@ -1444,7 +1477,8 @@ impl Renderer {
                             params.get_image_view(temp_images.2),
                         ];
 
-                        let aspect_ratio = (self.params.size.x as f32) / (self.params.size.y as f32);
+                        let size_flt = self.params.size().as_float();
+                        let aspect_ratio = size_flt.x / size_flt.y;
                         let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
                         let mut path_trace_flags = match self.params.sampling_technique {
@@ -1543,8 +1577,8 @@ impl Renderer {
                                 &miss_shader_binding_table,
                                 &hit_shader_binding_table,
                                 &callable_shader_binding_table,
-                                self.params.size.x,
-                                self.params.size.y,
+                                self.params.width,
+                                self.params.height,
                                 1,
                             );
                         }
@@ -1577,7 +1611,7 @@ impl Renderer {
                             &descriptor_pool,
                             |buf: &mut FilterData| {
                                 *buf = FilterData {
-                                    image_size: self.params.size,
+                                    image_size: self.params.size(),
                                     sample_index,
                                     filter_type: self.params.filter_type.into_integer(),
                                 };
@@ -1594,7 +1628,7 @@ impl Renderer {
                             self.filter_pipeline_layout,
                             "trace/filter.comp.spv",
                             descriptor_set,
-                            self.params.size.div_round_up(16),
+                            self.params.size().div_round_up(16),
                         );
                     }
                 },

@@ -10,7 +10,14 @@ use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
 use imgui::{im_str, CollapsingHeader, Drag, Key, MouseButton};
 use spark::vk;
-use std::{env, ffi::CStr, ops::Deref, slice, sync::Arc};
+use std::{
+    ffi::CString,
+    ops::Deref,
+    path::{Path, PathBuf},
+    slice,
+    sync::Arc,
+};
+use structopt::StructOpt;
 use winit::{
     dpi::{LogicalSize, Size},
     event::VirtualKeyCode,
@@ -483,7 +490,7 @@ impl CommandlineApp {
             .descriptor_set_layout_cache
             .create_pipeline_layout(capture_descriptor_set_layout.0);
 
-        let capture_buffer = CaptureBuffer::new(&context, renderer.params.size.x * renderer.params.size.y * 3);
+        let capture_buffer = CaptureBuffer::new(&context, renderer.params.width * renderer.params.height * 3);
 
         Self {
             context,
@@ -497,7 +504,8 @@ impl CommandlineApp {
         }
     }
 
-    fn run(&mut self) {
+    fn run(&mut self, filename: &Path) {
+        let mut render_started = false;
         loop {
             let cbar = self.systems.acquire_command_buffer();
 
@@ -525,6 +533,11 @@ impl CommandlineApp {
                 world_from_camera,
                 fov_y,
             ) {
+                if !render_started {
+                    println!("starting render");
+                    render_started = true;
+                }
+
                 if self.progress.done() {
                     let capture_desc = BufferDesc::new(self.capture_buffer.size as usize);
                     let capture_buffer = schedule.import_buffer(
@@ -555,7 +568,7 @@ impl CommandlineApp {
                                     &descriptor_pool,
                                     |buf: &mut CaptureData| {
                                         *buf = CaptureData {
-                                            size: renderer.params.size,
+                                            size: renderer.params.size(),
                                             exposure_scale: 1.0,
                                             render_color_space: renderer.params.render_color_space.into_integer(),
                                             tone_map_method: ToneMapMethod::AcesFit.into_integer(),
@@ -572,7 +585,7 @@ impl CommandlineApp {
                                     capture_pipeline_layout,
                                     "trace/capture.comp.spv",
                                     descriptor_set,
-                                    renderer.params.size.div_round_up(16),
+                                    renderer.params.size().div_round_up(16),
                                 );
                             }
                         },
@@ -603,11 +616,12 @@ impl CommandlineApp {
         println!("waiting for idle");
         unsafe { self.context.device.device_wait_idle() }.unwrap();
 
-        println!("saving image");
+        let filename = filename.to_str().unwrap();
+        println!("saving image to {:?}", filename);
         stb::image_write::stbi_write_tga(
-            &CStr::from_bytes_with_nul(b"output.tga\0").unwrap(),
-            self.renderer.params.size.x as i32,
-            self.renderer.params.size.y as i32,
+            CString::new(filename).unwrap().as_c_str(),
+            self.renderer.params.width as i32,
+            self.renderer.params.height as i32,
             3,
             self.capture_buffer.mapping(),
         )
@@ -617,73 +631,73 @@ impl CommandlineApp {
     }
 }
 
+#[derive(Debug, StructOpt)]
 enum SceneDesc {
-    CornellBox(CornellBoxVariant),
-    BlenderExport(String),
-    Tungsten(String),
+    /// Load a cornell box scene
+    CornellBox {
+        #[structopt(possible_values=&CornellBoxVariant::VARIANTS, default_value="original")]
+        variant: CornellBoxVariant,
+    },
+    /// Import from .caldera file
+    Import { filename: PathBuf },
+    /// Import from Tungsten scene.json file
+    Tungsten { filename: PathBuf },
+}
+
+#[derive(Debug, StructOpt)]
+#[structopt(no_version)]
+struct AppParams {
+    /// Core Vulkan version to load
+    #[structopt(short, long, parse(try_from_str=try_version_from_str), default_value="1.1")]
+    version: vk::Version,
+
+    /// Whether to use EXT_inline_uniform_block
+    #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
+    inline_uniform_block: ContextFeature,
+
+    /// Run without a window and output to file
+    #[structopt(short, long)]
+    output: Option<PathBuf>,
+
+    #[structopt(flatten)]
+    renderer_params: RendererParams,
+
+    #[structopt(subcommand)]
+    scene_desc: Option<SceneDesc>,
 }
 
 fn main() {
-    let mut context_params = ContextParams {
-        version: vk::Version::from_raw_parts(1, 1, 0), // Vulkan 1.1 needed for ray tracing
-        ray_tracing: ContextFeature::Required,
+    let app_params = AppParams::from_args();
+    let context_params = ContextParams {
+        version: app_params.version,
+        inline_uniform_block: app_params.inline_uniform_block,
+        ray_tracing: ContextFeature::Require,
         ..Default::default()
     };
-    let mut renderer_params = RendererParams::default();
-    let mut scene_desc = SceneDesc::CornellBox(CornellBoxVariant::Original);
-    let mut run_commandline_app = false;
-    {
-        let mut it = env::args().skip(1);
-        while let Some(arg) = it.next() {
-            match arg.as_str() {
-                "-c" => run_commandline_app = true,
-                "-b" => renderer_params.max_bounces = it.next().and_then(|s| s.as_str().parse::<u32>().ok()).unwrap(),
-                "-s" => {
-                    scene_desc = match it.next().unwrap().as_str() {
-                        "cornell" => SceneDesc::CornellBox(CornellBoxVariant::Original),
-                        "cornell-mirror" => SceneDesc::CornellBox(CornellBoxVariant::Mirror),
-                        "cornell-conductor" => SceneDesc::CornellBox(CornellBoxVariant::Conductor),
-                        "cornell-instances" => SceneDesc::CornellBox(CornellBoxVariant::Instances),
-                        "cornell-domelight" => SceneDesc::CornellBox(CornellBoxVariant::DomeLight),
-                        "cornell-spherelight" => SceneDesc::CornellBox(CornellBoxVariant::SphereLight),
-                        s => panic!("unknown scene {:?}", s),
-                    }
-                }
-                "-f" => {
-                    scene_desc = SceneDesc::BlenderExport(it.next().unwrap());
-                }
-                "-t" => {
-                    scene_desc = SceneDesc::Tungsten(it.next().unwrap());
-                }
-                _ => {
-                    if !context_params.parse_arg(arg.as_str()) {
-                        panic!("unknown argument {:?}", arg);
-                    }
-                }
-            }
-        }
-    }
+    let renderer_params = app_params.renderer_params;
 
-    let scene = match scene_desc {
-        SceneDesc::CornellBox(variant) => create_cornell_box_scene(&variant),
-        SceneDesc::BlenderExport(filename) => {
-            let contents = std::fs::read_to_string(filename.as_str()).unwrap();
+    let scene = match app_params.scene_desc.as_ref().unwrap_or(&SceneDesc::CornellBox {
+        variant: CornellBoxVariant::Original,
+    }) {
+        SceneDesc::CornellBox { variant } => create_cornell_box_scene(variant),
+        SceneDesc::Import { filename } => {
+            let contents = std::fs::read_to_string(filename).unwrap();
             blender::load_export(&contents)
         }
-        SceneDesc::Tungsten(filename) => tungsten::load_scene(filename),
+        SceneDesc::Tungsten { filename } => tungsten::load_scene(filename),
     };
 
-    if run_commandline_app {
+    if let Some(output) = app_params.output {
         let mut app = CommandlineApp::new(&context_params, scene, renderer_params);
-        app.run();
+        app.run(&output);
     } else {
         let event_loop = EventLoop::new();
 
         let window = WindowBuilder::new()
             .with_title("trace")
             .with_inner_size(Size::Logical(LogicalSize::new(
-                renderer_params.size.x as f64,
-                renderer_params.size.y as f64,
+                renderer_params.width as f64,
+                renderer_params.height as f64,
             )))
             .build(&event_loop)
             .unwrap();
