@@ -2,7 +2,7 @@ use crate::accel::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
-use imgui::{im_str, Slider, StyleColor, Ui};
+use imgui::{im_str, Slider, StyleColor, Ui, Drag, CollapsingHeader};
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
@@ -471,6 +471,14 @@ pub enum RenderColorSpace {
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
+pub enum ToneMapMethod {
+    None = 0,
+    FilmicSrgb = 1,
+    AcesFit = 2,
+}
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
 pub enum FilterType {
     Box,
     Gaussian,
@@ -514,7 +522,7 @@ pub struct RendererParams {
     pub quad_light_is_two_sided: BoolParam,
 
     /// Which sampling techniques are allowed
-    #[structopt(short, long, possible_values=SamplingTechnique::VARIANTS, default_value = "lights-and-surfaces", global=true)]
+    #[structopt(long, possible_values=SamplingTechnique::VARIANTS, default_value = "lights-and-surfaces", global=true)]
     pub sampling_technique: SamplingTechnique,
 
     /// How to combine samples between techniques
@@ -528,6 +536,21 @@ pub struct RendererParams {
     /// Image reconstruction filter
     #[structopt(short, long, possible_values=FilterType::VARIANTS, default_value = "gaussian", global=true)]
     pub filter_type: FilterType,
+
+    /// Tone mapping method
+    #[structopt(short, long, possible_values=ToneMapMethod::VARIANTS, default_value = "aces-fit", global=true)]
+    pub tone_map_method: ToneMapMethod,
+
+    /// Exposure bias
+    #[structopt(name="exposure_bias", short, long, allow_hyphen_values=true, default_value = "0", global=true)]
+    pub log2_exposure_scale: f32,
+
+    /// Override the camera vertical field of view
+    #[structopt(name="fov", long, global=true)]
+    pub fov_y_override: Option<f32>,
+
+    #[structopt(short, long, default_value = "256", global=true)]
+    pub sample_count: u32,
 }
 
 impl RendererParams {
@@ -571,8 +594,8 @@ impl RenderProgress {
         self.next_sample_index = 0;
     }
 
-    pub fn done(&self) -> bool {
-        self.next_sample_index == Renderer::SAMPLES_PER_SEQUENCE
+    pub fn done(&self, params: &RendererParams) -> bool {
+        self.next_sample_index >= params.sample_count
     }
 }
 
@@ -614,9 +637,12 @@ impl Renderer {
         resource_loader: &mut ResourceLoader,
         render_graph: &mut RenderGraph,
         global_allocator: &mut Allocator,
-        params: RendererParams,
+        mut params: RendererParams,
     ) -> Self {
         let accel = SceneAccel::new(context, scene, resource_loader);
+
+        // sanitise parameters
+        params.sample_count = params.sample_count.min(Self::SAMPLES_PER_SEQUENCE);
 
         // start loading textures and attributes for all meshes
         let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
@@ -1327,81 +1353,110 @@ impl Renderer {
     pub fn debug_ui(&mut self, progress: &mut RenderProgress, ui: &Ui) {
         let mut needs_reset = false;
 
-        ui.text("Color Space:");
-        needs_reset |= ui.radio_button(
-            im_str!("Rec709 (sRGB primaries)"),
-            &mut self.params.render_color_space,
-            RenderColorSpace::Rec709,
-        );
-        needs_reset |= ui.radio_button(
-            im_str!("ACEScg (AP1 primaries)"),
-            &mut self.params.render_color_space,
-            RenderColorSpace::AcesCg,
-        );
+        if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
+            Slider::new(im_str!("Sample Count"))
+                .range(1..=Self::SAMPLES_PER_SEQUENCE)
+                .build(&ui, &mut self.params.sample_count);
 
-        ui.text("Filter:");
-        needs_reset |= ui.radio_button(im_str!("Box"), &mut self.params.filter_type, FilterType::Box);
-        needs_reset |= ui.radio_button(im_str!("Gaussian"), &mut self.params.filter_type, FilterType::Gaussian);
-        needs_reset |= ui.radio_button(im_str!("Mitchell"), &mut self.params.filter_type, FilterType::Mitchell);
-
-        ui.text("Sampling Technique:");
-        needs_reset |= ui.radio_button(
-            im_str!("Lights Only"),
-            &mut self.params.sampling_technique,
-            SamplingTechnique::LightsOnly,
-        );
-        needs_reset |= ui.radio_button(
-            im_str!("Surfaces Only"),
-            &mut self.params.sampling_technique,
-            SamplingTechnique::SurfacesOnly,
-        );
-        needs_reset |= ui.radio_button(
-            im_str!("Lights And Surfaces"),
-            &mut self.params.sampling_technique,
-            SamplingTechnique::LightsAndSurfaces,
-        );
-
-        let id = ui.push_id(im_str!("MIS Heuristic"));
-        if self.params.sampling_technique == SamplingTechnique::LightsAndSurfaces {
-            ui.text("MIS Heuristic:");
+            ui.text("Color Space:");
             needs_reset |= ui.radio_button(
-                im_str!("None"),
-                &mut self.params.mis_heuristic,
-                MultipleImportanceHeuristic::None,
+                im_str!("Rec709 (sRGB primaries)"),
+                &mut self.params.render_color_space,
+                RenderColorSpace::Rec709,
             );
             needs_reset |= ui.radio_button(
-                im_str!("Balance"),
-                &mut self.params.mis_heuristic,
-                MultipleImportanceHeuristic::Balance,
+                im_str!("ACEScg (AP1 primaries)"),
+                &mut self.params.render_color_space,
+                RenderColorSpace::AcesCg,
+            );
+
+            ui.text("Sampling Technique:");
+            needs_reset |= ui.radio_button(
+                im_str!("Lights Only"),
+                &mut self.params.sampling_technique,
+                SamplingTechnique::LightsOnly,
             );
             needs_reset |= ui.radio_button(
-                im_str!("Power2"),
-                &mut self.params.mis_heuristic,
-                MultipleImportanceHeuristic::Power2,
+                im_str!("Surfaces Only"),
+                &mut self.params.sampling_technique,
+                SamplingTechnique::SurfacesOnly,
             );
-        } else {
-            ui.text_disabled("MIS Heuristic:");
-            let style = ui.push_style_color(StyleColor::Text, ui.style_color(StyleColor::TextDisabled));
-            ui.radio_button_bool(im_str!("None"), true);
-            ui.radio_button_bool(im_str!("Balance"), false);
-            ui.radio_button_bool(im_str!("Power2"), false);
-            style.pop(&ui);
+            needs_reset |= ui.radio_button(
+                im_str!("Lights And Surfaces"),
+                &mut self.params.sampling_technique,
+                SamplingTechnique::LightsAndSurfaces,
+            );
+
+            let id = ui.push_id(im_str!("MIS Heuristic"));
+            if self.params.sampling_technique == SamplingTechnique::LightsAndSurfaces {
+                ui.text("MIS Heuristic:");
+                needs_reset |= ui.radio_button(
+                    im_str!("None"),
+                    &mut self.params.mis_heuristic,
+                    MultipleImportanceHeuristic::None,
+                );
+                needs_reset |= ui.radio_button(
+                    im_str!("Balance"),
+                    &mut self.params.mis_heuristic,
+                    MultipleImportanceHeuristic::Balance,
+                );
+                needs_reset |= ui.radio_button(
+                    im_str!("Power2"),
+                    &mut self.params.mis_heuristic,
+                    MultipleImportanceHeuristic::Power2,
+                );
+            } else {
+                ui.text_disabled("MIS Heuristic:");
+                let style = ui.push_style_color(StyleColor::Text, ui.style_color(StyleColor::TextDisabled));
+                ui.radio_button_bool(im_str!("None"), true);
+                ui.radio_button_bool(im_str!("Balance"), false);
+                ui.radio_button_bool(im_str!("Power2"), false);
+                style.pop(&ui);
+            }
+            id.pop(&ui);
+
+            needs_reset |= Slider::new(im_str!("Max Bounces"))
+                .range(0..=24)
+                .build(&ui, &mut self.params.max_bounces);
+            needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.params.accumulate_roughness);
+            needs_reset |= ui.checkbox(
+                im_str!("Sample Sphere Light Solid Angle"),
+                &mut self.params.sphere_light_sample_solid_angle,
+            );
+            needs_reset |= ui.checkbox(
+                im_str!("Quad Light Is Two Sided"),
+                &mut self.params.quad_light_is_two_sided,
+            );
         }
-        id.pop(&ui);
 
-        needs_reset |= Slider::new(im_str!("Max Bounces"))
-            .range(0..=24)
-            .build(&ui, &mut self.params.max_bounces);
-        needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.params.accumulate_roughness);
-        needs_reset |= ui.checkbox(
-            im_str!("Sample Sphere Light Solid Angle"),
-            &mut self.params.sphere_light_sample_solid_angle,
-        );
-        needs_reset |= ui.checkbox(
-            im_str!("Quad Light Is Two Sided"),
-            &mut self.params.quad_light_is_two_sided,
-        );
+        if CollapsingHeader::new(im_str!("Film")).default_open(true).build(&ui) {
+            ui.text("Filter:");
+            needs_reset |= ui.radio_button(im_str!("Box"), &mut self.params.filter_type, FilterType::Box);
+            needs_reset |= ui.radio_button(im_str!("Gaussian"), &mut self.params.filter_type, FilterType::Gaussian);
+            needs_reset |= ui.radio_button(im_str!("Mitchell"), &mut self.params.filter_type, FilterType::Mitchell);
+    
+            let id = ui.push_id(im_str!("Tone Map"));
+            Drag::new(im_str!("Exposure Bias"))
+                .speed(0.05)
+                .build(&ui, &mut self.params.log2_exposure_scale);
+            ui.text("Tone Map:");
+            ui.radio_button(im_str!("None"), &mut self.params.tone_map_method, ToneMapMethod::None);
+            ui.radio_button(
+                im_str!("Filmic sRGB"),
+                &mut self.params.tone_map_method,
+                ToneMapMethod::FilmicSrgb,
+            );
+            ui.radio_button(
+                im_str!("ACES (fitted)"),
+                &mut self.params.tone_map_method,
+                ToneMapMethod::AcesFit,
+            );
+            id.pop(&ui);
+        }
 
+        if progress.next_sample_index > self.params.sample_count {
+            needs_reset = true;
+        }        
         if needs_reset {
             progress.reset();
         }
@@ -1452,7 +1507,7 @@ impl Renderer {
         let sample_image_view = resource_loader.get_image_view(self.sample_image)?;
 
         // do a pass
-        if !progress.done() {
+        if !progress.done(&self.params) {
             let temp_desc = ImageDesc::new_2d(self.params.size(), vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let temp_images = (
                 schedule.describe_image(&temp_desc),

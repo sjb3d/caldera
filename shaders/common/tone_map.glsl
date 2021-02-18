@@ -7,6 +7,8 @@
 #define TONE_MAP_METHOD_FILMIC_SRGB 1
 #define TONE_MAP_METHOD_ACES_FIT    2
 
+#define ACES_EXPOSURE_ADJUST_TO_BALANCE     1.8f
+
 vec3 acescg_from_sample(vec3 c, uint render_color_space)
 {
     switch (render_color_space) {
@@ -47,8 +49,7 @@ vec3 tone_map_sample(vec3 c, uint render_color_space, uint tone_map_method)
         }
 
         case TONE_MAP_METHOD_ACES_FIT: {
-            const float exposure_adjust_to_balance_comparisons = 1.8f;
-            const vec3 src = acescg_from_sample(c, render_color_space)*exposure_adjust_to_balance_comparisons;
+            const vec3 src = acescg_from_sample(c, render_color_space)*ACES_EXPOSURE_ADJUST_TO_BALANCE;
             return rec709_from_fit(odt_and_rrt_fit(rrt_sat(src)));
         }
     }
@@ -68,8 +69,7 @@ vec3 tone_map_sample_to_gamma(vec3 c, uint render_color_space, uint tone_map_met
         }
 
         case TONE_MAP_METHOD_ACES_FIT: {
-            const float exposure_adjust_to_balance_comparisons = 1.8f;
-            const vec3 src = acescg_from_sample(c, render_color_space)*exposure_adjust_to_balance_comparisons;
+            const vec3 src = acescg_from_sample(c, render_color_space)*ACES_EXPOSURE_ADJUST_TO_BALANCE;
             return gamma_from_linear(rec709_from_fit(odt_and_rrt_fit(rrt_sat(src))));
         }
     }

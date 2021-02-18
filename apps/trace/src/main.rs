@@ -33,14 +33,6 @@ struct CopyData {
     tone_map_method: u32,
 }
 
-#[repr(u32)]
-#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
-enum ToneMapMethod {
-    None = 0,
-    FilmicSrgb = 1,
-    AcesFit = 2,
-}
-
 descriptor_set_layout!(CopyDescriptorSetLayout {
     data: UniformData<CopyData>,
     result: StorageImage,
@@ -153,8 +145,6 @@ struct App {
     progress: RenderProgress,
 
     show_debug_ui: bool,
-    log2_exposure_scale: f32,
-    tone_map_method: ToneMapMethod,
     view_adjust: ViewAdjust,
     fov_y: f32,
 }
@@ -182,7 +172,7 @@ impl App {
 
         let camera = scene.cameras.first().unwrap();
         let world_from_camera = scene.transform(camera.transform_ref).world_from_local;
-        let fov_y = camera.fov_y;
+        let fov_y = renderer.params.fov_y_override.unwrap_or(camera.fov_y);
 
         Self {
             context: Arc::clone(&context),
@@ -192,8 +182,6 @@ impl App {
             renderer,
             progress,
             show_debug_ui: true,
-            log2_exposure_scale: 0f32,
-            tone_map_method: ToneMapMethod::AcesFit,
             view_adjust: ViewAdjust::new(world_from_camera),
             fov_y,
         }
@@ -213,28 +201,7 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
                 || {
-                    if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
-                        self.renderer.debug_ui(&mut self.progress, &ui);
-                    }
-                    if CollapsingHeader::new(im_str!("Film")).default_open(true).build(&ui) {
-                        let id = ui.push_id(im_str!("Tone Map"));
-                        Drag::new(im_str!("Exposure Bias"))
-                            .speed(0.05)
-                            .build(&ui, &mut self.log2_exposure_scale);
-                        ui.text("Tone Map:");
-                        ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
-                        ui.radio_button(
-                            im_str!("Filmic sRGB"),
-                            &mut self.tone_map_method,
-                            ToneMapMethod::FilmicSrgb,
-                        );
-                        ui.radio_button(
-                            im_str!("ACES (fitted)"),
-                            &mut self.tone_map_method,
-                            ToneMapMethod::AcesFit,
-                        );
-                        id.pop(&ui);
-                    }
+                    self.renderer.debug_ui(&mut self.progress, &ui);
                     let mut needs_reset = false;
                     if CollapsingHeader::new(im_str!("Scene")).default_open(true).build(&ui) {
                         let scene = self.scene.deref();
@@ -332,9 +299,7 @@ impl App {
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 let show_debug_ui = self.show_debug_ui;
-                let log2_exposure_scale = self.log2_exposure_scale;
-                let render_color_space = self.renderer.params.render_color_space;
-                let tone_map_method = self.tone_map_method;
+                let renderer_params = &self.renderer.params;
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_size);
 
@@ -345,9 +310,9 @@ impl App {
                             &descriptor_pool,
                             |buf: &mut CopyData| {
                                 *buf = CopyData {
-                                    exposure_scale: log2_exposure_scale.exp2(),
-                                    render_color_space: render_color_space.into_integer(),
-                                    tone_map_method: tone_map_method.into_integer(),
+                                    exposure_scale: renderer_params.log2_exposure_scale.exp2(),
+                                    render_color_space: renderer_params.render_color_space.into_integer(),
+                                    tone_map_method: renderer_params.tone_map_method.into_integer(),
                                 }
                             },
                             result_image_view,
@@ -505,6 +470,10 @@ impl CommandlineApp {
     }
 
     fn run(&mut self, filename: &Path) {
+        let camera = self.scene.cameras.first().unwrap();
+        let world_from_camera = self.scene.transform(camera.transform_ref).world_from_local;
+        let fov_y = self.renderer.params.fov_y_override.unwrap_or(camera.fov_y);
+
         let mut render_started = false;
         loop {
             let cbar = self.systems.acquire_command_buffer();
@@ -517,10 +486,6 @@ impl CommandlineApp {
                 &mut self.systems.resource_loader,
                 &mut self.systems.global_allocator,
             );
-
-            let camera = self.scene.cameras.first().unwrap();
-            let world_from_camera = self.scene.transform(camera.transform_ref).world_from_local;
-            let fov_y = camera.fov_y;
 
             let mut copy_done = false;
             if let Some(result_image) = self.renderer.render(
@@ -538,7 +503,7 @@ impl CommandlineApp {
                     render_started = true;
                 }
 
-                if self.progress.done() {
+                if self.progress.done(&self.renderer.params) {
                     let capture_desc = BufferDesc::new(self.capture_buffer.size as usize);
                     let capture_buffer = schedule.import_buffer(
                         &capture_desc,
@@ -559,7 +524,7 @@ impl CommandlineApp {
                             let pipeline_cache = &self.systems.pipeline_cache;
                             let descriptor_pool = &self.systems.descriptor_pool;
                             let context = &self.context;
-                            let renderer = &self.renderer;
+                            let renderer_params = &self.renderer.params;
                             move |params, cmd| {
                                 let result_image_view = params.get_image_view(result_image);
                                 let capture_buffer = params.get_buffer(capture_buffer);
@@ -568,10 +533,10 @@ impl CommandlineApp {
                                     &descriptor_pool,
                                     |buf: &mut CaptureData| {
                                         *buf = CaptureData {
-                                            size: renderer.params.size(),
-                                            exposure_scale: 1.0,
-                                            render_color_space: renderer.params.render_color_space.into_integer(),
-                                            tone_map_method: ToneMapMethod::AcesFit.into_integer(),
+                                            size: renderer_params.size(),
+                                            exposure_scale: renderer_params.log2_exposure_scale.exp2(),
+                                            render_color_space: renderer_params.render_color_space.into_integer(),
+                                            tone_map_method: renderer_params.tone_map_method.into_integer(),
                                         };
                                     },
                                     capture_buffer,
@@ -585,7 +550,7 @@ impl CommandlineApp {
                                     capture_pipeline_layout,
                                     "trace/capture.comp.spv",
                                     descriptor_set,
-                                    renderer.params.size().div_round_up(16),
+                                    renderer_params.size().div_round_up(16),
                                 );
                             }
                         },
@@ -616,16 +581,43 @@ impl CommandlineApp {
         println!("waiting for idle");
         unsafe { self.context.device.device_wait_idle() }.unwrap();
 
-        let filename = filename.to_str().unwrap();
         println!("saving image to {:?}", filename);
-        stb::image_write::stbi_write_tga(
-            CString::new(filename).unwrap().as_c_str(),
-            self.renderer.params.width as i32,
-            self.renderer.params.height as i32,
-            3,
-            self.capture_buffer.mapping(),
-        )
-        .unwrap();
+        match filename.extension().unwrap().to_str().unwrap() {
+            "png" => {
+                stb::image_write::stbi_write_png(
+                    CString::new(filename.to_str().unwrap()).unwrap().as_c_str(),
+                    self.renderer.params.width as i32,
+                    self.renderer.params.height as i32,
+                    3,
+                    self.capture_buffer.mapping(),
+                    (self.renderer.params.width * 3) as i32
+                )
+                .unwrap();             
+            },
+            "tga" => {
+                stb::image_write::stbi_write_tga(
+                    CString::new(filename.to_str().unwrap()).unwrap().as_c_str(),
+                    self.renderer.params.width as i32,
+                    self.renderer.params.height as i32,
+                    3,
+                    self.capture_buffer.mapping()
+                )
+                .unwrap();
+            },
+            "jpg" => {
+                let quality = 95;
+                stb::image_write::stbi_write_jpg(
+                    CString::new(filename.to_str().unwrap()).unwrap().as_c_str(),
+                    self.renderer.params.width as i32,
+                    self.renderer.params.height as i32,
+                    3,
+                    self.capture_buffer.mapping(),
+                    quality
+                )
+                .unwrap();
+            },
+            _ => panic!("unknown extension"),
+        }
 
         println!("shutting down");
     }
