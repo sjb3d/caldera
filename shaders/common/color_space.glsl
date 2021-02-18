@@ -80,7 +80,7 @@ vec3 linear_from_gamma(vec3 c)
 float gamma_from_linear(float x)
 {
     const float lo = x*12.92f;
-    const float hi = pow(x*1.055f, 1.f/2.4f) - 0.055f;
+    const float hi = 1.055f*pow(x, 1.f/2.4f) - 0.055f;
     return (x < 0.0031308f) ? lo : hi;
 }
 vec3 gamma_from_linear(vec3 c)
