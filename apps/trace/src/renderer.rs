@@ -1360,6 +1360,17 @@ impl Renderer {
     pub fn debug_ui(&mut self, progress: &mut RenderProgress, ui: &Ui) {
         let mut needs_reset = false;
 
+        if CollapsingHeader::new(im_str!("Stats")).default_open(true).build(&ui) {
+            ui.text(format!("Unique BLAS: {}", self.accel.unique_bottom_level_accel_count()));
+            ui.text(format!("Instanced BLAS: {}", self.accel.instanced_bottom_level_accel_count()));
+            ui.text(format!("Unique Prims: {}", self.accel.unique_primitive_count()));
+            ui.text(format!("Instanced Prims: {}", self.accel.instanced_primitive_count()));
+            if let Some(shader_binding_data) = self.shader_binding_data.as_ref() {
+                ui.text(format!("Sampled Lights: {}", shader_binding_data.sampled_light_count));
+                ui.text(format!("Total Lights: {}", shader_binding_data.external_light_end));
+            }
+        }
+
         if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
             Slider::new(im_str!("Sample Count"))
                 .range(1..=Self::SAMPLES_PER_SEQUENCE)

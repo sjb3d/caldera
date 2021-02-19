@@ -54,6 +54,20 @@ struct Cluster {
     elements: Vec<ClusterElement>,
 }
 
+impl Cluster {
+    fn unique_primitive_count(&self, scene: &Scene) -> usize {
+        self.elements.iter().map(|element| match scene.geometry(element.geometry_ref) {
+            Geometry::TriangleMesh { indices, .. } => indices.len(),
+            Geometry::Quad { .. } => 2,
+            Geometry::Sphere { .. } => 1,
+        }).sum()
+    }
+
+    fn instanced_primitive_count(&self, scene: &Scene) -> usize {
+        self.transform_refs.len() * self.unique_primitive_count(scene)
+    }
+}
+
 pub struct SceneClusters(Vec<Cluster>);
 
 impl SceneClusters {
@@ -155,6 +169,22 @@ pub struct SceneAccel {
 }
 
 impl SceneAccel {
+    pub fn unique_bottom_level_accel_count(&self) -> usize {
+        self.clusters.0.len()
+    }
+
+    pub fn instanced_bottom_level_accel_count(&self) -> usize {
+        self.clusters.0.iter().map(|cluster| cluster.transform_refs.len()).sum()
+    }
+
+    pub fn unique_primitive_count(&self) -> usize {
+        self.clusters.0.iter().map(|cluster| cluster.unique_primitive_count(&self.scene)).sum()
+    }
+
+    pub fn instanced_primitive_count(&self) -> usize {
+        self.clusters.0.iter().map(|cluster| cluster.instanced_primitive_count(&self.scene)).sum()
+    }
+
     pub fn clusters(&self) -> &Arc<SceneClusters> {
         &self.clusters
     }

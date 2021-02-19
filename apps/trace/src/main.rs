@@ -203,7 +203,7 @@ impl App {
                 || {
                     self.renderer.debug_ui(&mut self.progress, &ui);
                     let mut needs_reset = false;
-                    if CollapsingHeader::new(im_str!("Scene")).default_open(true).build(&ui) {
+                    if CollapsingHeader::new(im_str!("Camera")).default_open(true).build(&ui) {
                         let scene = self.scene.deref();
                         ui.text("Cameras:");
                         for camera_ref in scene.camera_ref_iter() {
@@ -221,15 +221,6 @@ impl App {
                         Drag::new(im_str!("Camera Scale Bias"))
                             .speed(0.05)
                             .build(&ui, &mut self.view_adjust.log2_scale);
-                        ui.text(format!(
-                            "Lights: {}",
-                            scene.lights.len()
-                                + scene
-                                    .instances
-                                    .iter()
-                                    .filter_map(|instance| scene.material(instance.material_ref).emission)
-                                    .count()
-                        ));
                     }
                     if needs_reset {
                         self.progress.reset();
