@@ -20,6 +20,7 @@ enum Element<'a> {
     Mesh {
         name: &'a str,
         positions: Vec<Vec3>,
+        normals: Vec<Vec3>,
         indices: Vec<UVec3>,
     },
     Instance {
@@ -88,12 +89,17 @@ fn uvec3(i: &str) -> IResult<&str, UVec3> {
 fn element_mesh(i: &str) -> IResult<&str, Element> {
     let (i, name) = quoted_name(i)?;
     let (i, positions) = delimited(
-        preceded(multispace0, char('{')),
+        tuple((multispace0, tag("positions"), multispace0, char('{'))),
+        many1(preceded(multispace0, vec3)),
+        preceded(multispace0, char('}')),
+    )(i)?;
+    let (i, normals) = delimited(
+        tuple((multispace0, tag("normals"), multispace0, char('{'))),
         many1(preceded(multispace0, vec3)),
         preceded(multispace0, char('}')),
     )(i)?;
     let (i, indices) = delimited(
-        preceded(multispace0, char('{')),
+        tuple((multispace0, tag("indices"), multispace0, char('{'))),
         many1(preceded(multispace0, uvec3)),
         preceded(multispace0, char('}')),
     )(i)?;
@@ -102,6 +108,7 @@ fn element_mesh(i: &str) -> IResult<&str, Element> {
         Element::Mesh {
             name,
             positions,
+            normals,
             indices,
         },
     ))
@@ -116,6 +123,9 @@ fn element_camera(i: &str) -> IResult<&str, Element> {
 fn surface(i: &str) -> IResult<&str, Surface> {
     alt((
         map(tag("diffuse"), |_| Surface::Diffuse),
+        map(preceded(tuple((tag("conductor"), multispace1)), float), |roughness| {
+            Surface::RoughConductor { roughness }
+        }),
         map(tag("mirror"), |_| Surface::Mirror),
     ))(i)
 }
@@ -169,6 +179,7 @@ pub fn load_scene(i: &str) -> Scene {
             Element::Mesh {
                 name,
                 positions,
+                normals,
                 indices,
             } => {
                 let mut min = Vec3::broadcast(f32::INFINITY);
@@ -179,7 +190,7 @@ pub fn load_scene(i: &str) -> Scene {
                 }
                 let geometry_ref = scene.add_geometry(Geometry::TriangleMesh {
                     positions,
-                    normals: None,
+                    normals: Some(normals),
                     uvs: None,
                     indices,
                     min,

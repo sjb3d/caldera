@@ -5,13 +5,18 @@ bl_info = {
 }
 
 '''
-Mesh "id"
-{
+mesh "id"
+positions {
     %f %f %f
     %f %f %f
     ...
 }
-{
+normals {
+    %f %f %f
+    %f %f %f
+    ...
+}
+indices {
     %u %u %u
     %u %u %u
     ...
@@ -24,6 +29,7 @@ Transform "id"
 
 Instance "transform_id" "geometry_id"
 
+
 Camera "transform_id" %f
 '''
 
@@ -34,26 +40,46 @@ import mathutils
 from bpy_extras.io_utils import ExportHelper
 
 class Mesh:
-    def __init__(self, mesh, bake_scale):
+    def __init__(self, mesh, bake_scale, is_flipped):
         self.positions = list()
+        self.normals = list()
         self.indices = list()
-        for v in mesh.vertices:
-            if bake_scale:
-                self.positions.append((v.co * bake_scale)[:])
-            else:
-                self.positions.append(v.co[:])
-        for p in mesh.polygons:
-            for idx in range(2, len(p.vertices)):
-                tri = (p.vertices[0], p.vertices[idx - 1], p.vertices[idx])
-                self.indices.append(tri)
+        bake_scale_rcp = None
+        if bake_scale:
+            bake_scale_rcp = mathutils.Vector((1.0/bake_scale.x, 1.0/bake_scale.y, 1.0/bake_scale.z))
+        unique_verts = dict()
+        mesh.calc_normals_split()
+        mesh.calc_loop_triangles()
+        for tri in mesh.loop_triangles:
+            t = list()
+            for (pos_idx, loop_idx) in zip(tri.vertices, tri.loops):
+                normal = mesh.loops[loop_idx].normal
+                if is_flipped:
+                    normal = -normal;
+                idx = unique_verts.setdefault((pos_idx, normal[:]), len(self.positions))
+                if idx == len(self.positions):
+                    pos = mesh.vertices[pos_idx].co
+                    if bake_scale:
+                        self.positions.append((pos * bake_scale)[:])
+                        self.normals.append((normal * bake_scale_rcp).normalized()[:])
+                    else:
+                        self.positions.append(pos[:])
+                        self.normals.append(normal[:])
+                t.append(idx)
+            self.indices.append(tuple(t))
 
     def matches(self, other):
         if len(self.positions) != len(other.positions):
+            return False
+        if len(self.normals) != len(other.normals):
             return False
         if len(self.indices) != len(other.indices):
             return False
         
         for (a, b) in zip(self.positions, other.positions):
+            if a != b:
+                return False
+        for (a, b) in zip(self.normals, other.normals):
             if a != b:
                 return False
         for (a, b) in zip(self.indices, other.indices):
@@ -76,8 +102,8 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         self.meshes.clear()
         self.transforms.clear()
 
-    def export_mesh_data(self, fw, ob, mesh, bake_scale):
-        check = Mesh(mesh, bake_scale)
+    def export_mesh_data(self, fw, ob, mesh, bake_scale, is_flipped):
+        check = Mesh(mesh, bake_scale, is_flipped)
         if len(check.indices) == 0:
             return None
 
@@ -89,11 +115,15 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         self.meshes.append((key, check))
     
         fw('mesh "%s"\n' % key)
-        fw('{\n')
+        fw('positions {\n')
         for v in check.positions:
             fw('%f %f %f\n' % v)
         fw('}\n')
-        fw('{\n')
+        fw('normals {\n')
+        for v in check.normals:
+            fw('%f %f %f\n' % v)
+        fw('}\n')
+        fw('indices {\n')
         for t in check.indices:
             fw('%i %i %i\n' % t)
         fw('}\n')
@@ -131,7 +161,7 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
 
         for (key, other) in self.transforms:
             if (translation, rotation, scale) == other:
-                return (key, bake_scale)
+                return (key, bake_scale, scale < 0.0)
 
         key = '%i-%s' % (len(self.transforms), name)
         self.transforms.append((key, (translation, rotation, scale)))
@@ -143,7 +173,7 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
 
         fw('\n')
 
-        return (key, bake_scale)
+        return (key, bake_scale, scale < 0.0)
 
     def translate_material(self, material):
         if not material:
@@ -152,33 +182,36 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         if not tree:
             return None
 
+        diffuse_color = tuple(material.diffuse_color[:3])
+
         input_nodes = dict([[link.to_socket, link.from_node] for link in tree.links])
         for node in tree.nodes:
             if node.bl_idname == 'ShaderNodeOutputMaterial':
                 surface_node = input_nodes[node.inputs['Surface']]
                 if surface_node:
                     if surface_node.bl_idname == 'ShaderNodeBsdfGlossy':
-                        if surface_node.distribution == 'BECKMANN':
-                            return ("mirror", 0.5, 0.0, 0.0)
+                        if surface_node.distribution == 'BECKMANN' or surface_node.distribution == 'GGX':
+                            return 'conductor 0.2 %f %f %f' % diffuse_color
+                        if surface_node.distribution == 'SHARP':
+                            return 'mirror %f %f %f' % diffuse_color
                     
-        return ("diffuse",) + tuple(material.diffuse_color[:3])
-                
+        return 'diffuse %f %f %f' % diffuse_color
 
     def export_mesh(self, fw, ob, m):
         mesh = ob.to_mesh()
 
-        (transform_key, bake_scale) = self.export_transform(fw, ob.name, m)
-        mesh_key = self.export_mesh_data(fw, ob, mesh, bake_scale)
+        (transform_key, bake_scale, is_flipped) = self.export_transform(fw, ob.name, m)
+        mesh_key = self.export_mesh_data(fw, ob, mesh, bake_scale, is_flipped)
 
         if mesh_key is not None:
             material = None
             if len(mesh.materials) > 0:
                 material = self.translate_material(mesh.materials[0])
             if not material:
-                material = ("diffuse", 0.8, 0.8, 0.8)
+                material = 'diffuse 0.8 0.8 0.8'
 
             fw('instance "%s" "%s"\n' % (transform_key, mesh_key))
-            fw('%s %f %f %f' % material)
+            fw('%s' % material)
             fw('\n')
 
         ob.to_mesh_clear()
@@ -186,7 +219,7 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
     def export_camera(self, fw, ob, m):
         # rotate to look down position z
         adjusted_m = m @ mathutils.Matrix.Rotation(math.pi, 4, 'Y')
-        (transform_key, bake_scale) = self.export_transform(fw, ob.name, adjusted_m)
+        (transform_key, bake_scale, is_flipped) = self.export_transform(fw, ob.name, adjusted_m)
 
         fw('camera "%s" %f\n' % (transform_key, ob.data.angle_y))
         fw('\n')
