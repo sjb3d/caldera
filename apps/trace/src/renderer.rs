@@ -2,7 +2,7 @@ use crate::accel::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
-use imgui::{im_str, Slider, StyleColor, Ui, Drag, CollapsingHeader};
+use imgui::{im_str, CollapsingHeader, Drag, Slider, StyleColor, Ui};
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
@@ -542,14 +542,21 @@ pub struct RendererParams {
     pub tone_map_method: ToneMapMethod,
 
     /// Exposure bias
-    #[structopt(name="exposure_bias", short, long, allow_hyphen_values=true, default_value = "0", global=true)]
+    #[structopt(
+        name = "exposure_bias",
+        short,
+        long,
+        allow_hyphen_values = true,
+        default_value = "0",
+        global = true
+    )]
     pub log2_exposure_scale: f32,
 
     /// Override the camera vertical field of view
-    #[structopt(name="fov", long, global=true)]
+    #[structopt(name = "fov", long, global = true)]
     pub fov_y_override: Option<f32>,
 
-    #[structopt(short, long, default_value = "256", global=true)]
+    #[structopt(short, long, default_value = "256", global = true)]
     pub sample_count: u32,
 }
 
@@ -1434,7 +1441,7 @@ impl Renderer {
             needs_reset |= ui.radio_button(im_str!("Box"), &mut self.params.filter_type, FilterType::Box);
             needs_reset |= ui.radio_button(im_str!("Gaussian"), &mut self.params.filter_type, FilterType::Gaussian);
             needs_reset |= ui.radio_button(im_str!("Mitchell"), &mut self.params.filter_type, FilterType::Mitchell);
-    
+
             let id = ui.push_id(im_str!("Tone Map"));
             Drag::new(im_str!("Exposure Bias"))
                 .speed(0.05)
@@ -1456,7 +1463,7 @@ impl Renderer {
 
         if progress.next_sample_index > self.params.sample_count {
             needs_reset = true;
-        }        
+        }
         if needs_reset {
             progress.reset();
         }

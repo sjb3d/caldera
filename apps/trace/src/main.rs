@@ -590,20 +590,20 @@ impl CommandlineApp {
                     self.renderer.params.height as i32,
                     3,
                     self.capture_buffer.mapping(),
-                    (self.renderer.params.width * 3) as i32
+                    (self.renderer.params.width * 3) as i32,
                 )
-                .unwrap();             
-            },
+                .unwrap();
+            }
             "tga" => {
                 stb::image_write::stbi_write_tga(
                     CString::new(filename.to_str().unwrap()).unwrap().as_c_str(),
                     self.renderer.params.width as i32,
                     self.renderer.params.height as i32,
                     3,
-                    self.capture_buffer.mapping()
+                    self.capture_buffer.mapping(),
                 )
                 .unwrap();
-            },
+            }
             "jpg" => {
                 let quality = 95;
                 stb::image_write::stbi_write_jpg(
@@ -612,10 +612,10 @@ impl CommandlineApp {
                     self.renderer.params.height as i32,
                     3,
                     self.capture_buffer.mapping(),
-                    quality
+                    quality,
                 )
                 .unwrap();
-            },
+            }
             _ => panic!("unknown extension"),
         }
 
