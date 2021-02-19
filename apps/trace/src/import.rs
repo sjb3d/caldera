@@ -33,6 +33,11 @@ enum Element<'a> {
         transform_ref: &'a str,
         fov_y: f32,
     },
+    SolidAngleLight {
+        angle: f32,
+        direction: Vec3,
+        emission: Vec3,
+    },
 }
 
 fn rotor3_from_quaternion(q: Vec4) -> Rotor3 {
@@ -123,10 +128,13 @@ fn element_camera(i: &str) -> IResult<&str, Element> {
 fn surface(i: &str) -> IResult<&str, Surface> {
     alt((
         map(tag("diffuse"), |_| Surface::Diffuse),
-        map(preceded(tuple((tag("conductor"), multispace1)), float), |roughness| {
+        map(tag("mirror"), |_| Surface::Mirror),
+        map(preceded(tuple((tag("rough_conductor"), multispace1)), float), |roughness| {
             Surface::RoughConductor { roughness }
         }),
-        map(tag("mirror"), |_| Surface::Mirror),
+        map(preceded(tuple((tag("rough_plastic"), multispace1)), float), |roughness| {
+            Surface::RoughPlastic { roughness }
+        }),
     ))(i)
 }
 
@@ -146,12 +154,20 @@ fn element_instance(i: &str) -> IResult<&str, Element> {
     ))
 }
 
+fn element_solid_angle_light(i: &str) -> IResult<&str, Element> {
+    let (i, angle) = float(i)?;
+    let (i, direction) = preceded(multispace1, vec3)(i)?;
+    let (i, emission) = preceded(multispace1, vec3)(i)?;
+    Ok((i, Element::SolidAngleLight { angle, direction, emission }))
+}
+
 fn element(i: &str) -> IResult<&str, Element> {
     alt((
         preceded(tag("transform"), preceded(multispace0, element_transform)),
         preceded(tag("mesh"), preceded(multispace0, element_mesh)),
         preceded(tag("instance"), preceded(multispace0, element_instance)),
         preceded(tag("camera"), preceded(multispace0, element_camera)),
+        preceded(tag("solid_angle_light"), preceded(multispace0, element_solid_angle_light)),
     ))(i)
 }
 
@@ -163,10 +179,6 @@ pub fn load_scene(i: &str) -> Scene {
     let mut scene = Scene::default();
     let mut transform_refs = HashMap::new();
     let mut geometry_refs = HashMap::new();
-
-    scene.add_light(Light::Dome {
-        emission: Vec3::new(0.5, 0.6, 0.7),
-    });
 
     for element in elements.drain(..) {
         match element {
@@ -221,6 +233,14 @@ pub fn load_scene(i: &str) -> Scene {
                 scene.add_camera(Camera {
                     transform_ref: *transform_refs.get(transform_ref).unwrap(),
                     fov_y,
+                });
+            }
+            Element::SolidAngleLight { angle, direction, emission } => {
+                let solid_angle = 2.0*PI*(1.0 - angle.cos());
+                scene.add_light(Light::SolidAngle {
+                    solid_angle,
+                    direction_ws: direction,
+                    emission: emission/solid_angle,
                 });
             }
         }

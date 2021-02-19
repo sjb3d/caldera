@@ -191,9 +191,11 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
                 if surface_node:
                     if surface_node.bl_idname == 'ShaderNodeBsdfGlossy':
                         if surface_node.distribution == 'BECKMANN' or surface_node.distribution == 'GGX':
-                            return 'conductor 0.2 %f %f %f' % diffuse_color
+                            return 'rough_conductor 0.3 %f %f %f' % diffuse_color
                         if surface_node.distribution == 'SHARP':
                             return 'mirror %f %f %f' % diffuse_color
+                    if surface_node.bl_idname == 'ShaderNodeMixShader':
+                        return 'rough_plastic 0.2 %f %f %f' % diffuse_color
                     
         return 'diffuse %f %f %f' % diffuse_color
 
@@ -224,6 +226,17 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
         fw('camera "%s" %f\n' % (transform_key, ob.data.angle_y))
         fw('\n')
 
+    def export_light(self, fw, ob, m):
+        light = ob.data
+        if light.type == 'SUN':
+            angle = light.angle
+            direction = m.to_3x3() @ mathutils.Vector((0.0, 0.0, 1.0))
+            # TODO: export properly
+            emission = (15.0, 15.0, 15.0)
+            
+            fw('solid_angle_light %f %f %f %f %f %f %f\n' % ((angle,) + direction[:] + emission[:]))
+            fw('\n')
+
     def execute(self, context):
         self.reset()
 
@@ -238,6 +251,8 @@ class ExportCaldera(bpy.types.Operator, ExportHelper):
                 self.export_mesh(fw, ob, m)
             elif ob.type == 'CAMERA':
                 self.export_camera(fw, ob, m)
+            elif ob.type == 'LIGHT':
+                self.export_light(fw, ob, m)
   
         file.close()
         self.reset()
