@@ -624,7 +624,7 @@ pub struct Renderer {
 
 impl Renderer {
     const SEQUENCE_COUNT: u32 = 1024;
-    const SAMPLES_PER_SEQUENCE: u32 = 256;
+    const MAX_SAMPLES_PER_SEQUENCE: u32 = 1024;
 
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
     const MISS_ENTRY_COUNT: u32 = 2;
@@ -642,7 +642,7 @@ impl Renderer {
         let accel = SceneAccel::new(context, scene, resource_loader);
 
         // sanitise parameters
-        params.sample_count = params.sample_count.min(Self::SAMPLES_PER_SEQUENCE);
+        params.sample_count = params.sample_count.min(Self::MAX_SAMPLES_PER_SEQUENCE);
 
         // start loading textures and attributes for all meshes
         let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
@@ -848,12 +848,12 @@ impl Renderer {
                 .into_par_iter()
                 .map(|i| {
                     let mut rng = SmallRng::seed_from_u64(i as u64);
-                    pmj::generate(Self::SAMPLES_PER_SEQUENCE as usize, 4, &mut rng)
+                    pmj::generate(Self::MAX_SAMPLES_PER_SEQUENCE as usize, 4, &mut rng)
                 })
                 .collect();
 
             let desc = ImageDesc::new_2d(
-                UVec2::new(Self::SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
+                UVec2::new(Self::MAX_SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
                 vk::Format::R32G32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
@@ -1363,7 +1363,7 @@ impl Renderer {
 
         if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
             Slider::new(im_str!("Sample Count"))
-                .range(1..=Self::SAMPLES_PER_SEQUENCE)
+                .range(1..=Self::MAX_SAMPLES_PER_SEQUENCE)
                 .build(&ui, &mut self.params.sample_count);
 
             ui.text("Color Space:");
