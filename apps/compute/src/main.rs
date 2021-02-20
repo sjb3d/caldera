@@ -15,13 +15,6 @@ use winit::{
     window::{Fullscreen, WindowBuilder},
 };
 
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct SamplePixel {
-    x: u16,
-    y: u16,
-}
-
 #[derive(Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 struct TraceData {
@@ -86,8 +79,7 @@ struct App {
 }
 
 impl App {
-    const LOG2_SEQUENCE_COUNT: u32 = 12;
-    const SEQUENCE_COUNT: u32 = 1 << Self::LOG2_SEQUENCE_COUNT;
+    const SEQUENCE_COUNT: u32 = 1024;
     const SAMPLES_PER_SEQUENCE: u32 = 256;
     const MAX_PASS_COUNT: u32 = Self::SAMPLES_PER_SEQUENCE / 4;
 
@@ -116,7 +108,7 @@ impl App {
 
             let desc = ImageDesc::new_2d(
                 UVec2::new(Self::SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
-                vk::Format::R16G16_UINT,
+                vk::Format::R32G32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
             let mut writer = allocator
@@ -124,10 +116,7 @@ impl App {
                 .unwrap();
 
             for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
-                let pixel = SamplePixel {
-                    x: sample.x_bits(16) as u16,
-                    y: sample.y_bits(16) as u16,
-                };
+                let pixel: [f32; 2] = [sample.x(), sample.y()];
                 writer.write(&pixel);
             }
         });

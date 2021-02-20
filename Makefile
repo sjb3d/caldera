@@ -20,7 +20,6 @@ INC=\
 	trace/mirror_bsdf.glsl \
 	trace/occlusion_common.glsl \
 	trace/quad_light.glsl \
-	trace/rand_common.glsl \
 	trace/rough_conductor_bsdf.glsl \
 	trace/rough_plastic_bsdf.glsl \
 	trace/solid_angle_light.glsl \

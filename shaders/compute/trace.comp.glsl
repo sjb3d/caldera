@@ -17,9 +17,7 @@ layout(set = 0, binding = 0, scalar) uniform TraceData {
 } g_trace;
 
 layout(set = 0, binding = 1, r32f) uniform restrict image2D g_result[3];
-layout(set = 0, binding = 2, rg16ui) uniform restrict readonly uimage2D g_samples;
-
-#define LOG2_SEQUENCE_COUNT         12
+layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_samples;
 
 void sample_camera(
     const vec2 film_uv,
@@ -72,13 +70,12 @@ bool intersect_sphere(
     return is_closest_hit;
 }
 
+#define SEQUENCE_COUNT         1024
+
 vec2 rand_u01(uvec2 pixel_coord, uint seq_index, uint sample_index)
 {
-    // hash the pixel coordinate and ray index to pick a sequence
-    const uint seq_hash = hash((seq_index << 24) ^ (pixel_coord.y << 12) ^ pixel_coord.x);
-    const ivec2 sample_coord = ivec2(sample_index, seq_hash >> (32 - LOG2_SEQUENCE_COUNT));
-    const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
-    return (vec2(sample_bits) + .5f)/65536.f;
+    const uint seq_hash = get_seq_hash(pixel_coord, seq_index, sample_index);
+    return imageLoad(g_samples, ivec2(sample_index, seq_hash % SEQUENCE_COUNT)).xy;
 }
 
 #define HIT_NONE    0

@@ -16,6 +16,11 @@ uint hash(uint a)
     return a;
 }
 
+uint get_seq_hash(uvec2 pixel_coord, uint seq_index, uint sample_index)
+{
+    return hash((seq_index << 24) ^ (pixel_coord.y << 12) ^ pixel_coord.x);
+}
+
 bool split_random_variable(float accept_probability, inout float u01)
 {
     const bool is_accept = (u01 <= accept_probability);

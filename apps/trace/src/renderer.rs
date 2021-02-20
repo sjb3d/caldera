@@ -568,13 +568,6 @@ impl RendererParams {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct SamplePixel {
-    x: u16,
-    y: u16,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
 struct FilterData {
     image_size: UVec2,
     sample_index: u32,
@@ -861,7 +854,7 @@ impl Renderer {
 
             let desc = ImageDesc::new_2d(
                 UVec2::new(Self::SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
-                vk::Format::R16G16_UINT,
+                vk::Format::R32G32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
             let mut writer = allocator
@@ -869,10 +862,7 @@ impl Renderer {
                 .unwrap();
 
             for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
-                let pixel = SamplePixel {
-                    x: sample.x_bits(16) as u16,
-                    y: sample.y_bits(16) as u16,
-                };
+                let pixel: [f32; 2] = [sample.x(), sample.y()];
                 writer.write(&pixel);
             }
         });

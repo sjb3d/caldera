@@ -13,7 +13,6 @@
 #include "light_common.glsl"
 #include "ggx.glsl"
 #include "fresnel.glsl"
-#include "rand_common.glsl"
 
 #include "quad_light.glsl"
 #include "sphere_light.glsl"
@@ -54,16 +53,18 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 } g_path_trace;
 
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
-layout(set = 0, binding = 2, rg16ui) uniform restrict readonly uimage2D g_samples;
+layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_samples;
 layout(set = 0, binding = 3, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
+#define SEQUENCE_COUNT          1024
+
 vec2 rand_u01(uint seq_index)
 {
-    const ivec2 sample_coord = rand_sample_coord(gl_LaunchIDEXT.xy, seq_index, g_path_trace.sample_index);
-    const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
-    return (vec2(sample_bits) + .5f)/65536.f;
+    const uint sample_index = g_path_trace.sample_index;
+    const uint seq_hash = get_seq_hash(gl_LaunchIDEXT.xy, seq_index, sample_index);
+    return imageLoad(g_samples, ivec2(sample_index, seq_hash % SEQUENCE_COUNT)).xy;
 }
 
 uint sample_uniform_discrete(uint count, inout float u01)

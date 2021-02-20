@@ -2,7 +2,7 @@
 #extension GL_EXT_scalar_block_layout : require
 
 #extension GL_GOOGLE_include_directive : require
-#include "rand_common.glsl"
+#include "sampler.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -16,15 +16,17 @@ layout(set = 0, binding = 0, scalar) uniform FilterData {
     uint filter_type;
 } g_filter;
 
-layout(set = 0, binding = 1, rg16ui) uniform restrict readonly uimage2D g_samples;
+layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_samples;
 layout(set = 0, binding = 2, r32f) uniform restrict readonly image2D g_input[3];
 layout(set = 0, binding = 3, rgba32f) uniform restrict image2D g_result;
 
+#define SEQUENCE_COUNT          1024
+
 vec2 rand_u01(uvec2 pixel_coord)
 {
-    const ivec2 sample_coord = rand_sample_coord(pixel_coord, 0, g_filter.sample_index);
-    const uvec2 sample_bits = imageLoad(g_samples, sample_coord).xy;
-    return (vec2(sample_bits) + .5f)/65536.f;
+    const uint sample_index = g_filter.sample_index;
+    const uint seq_hash = get_seq_hash(pixel_coord, 0, sample_index);
+    return imageLoad(g_samples, ivec2(sample_index, seq_hash % SEQUENCE_COUNT)).xy;
 }
 
 float mitchell(float x)
