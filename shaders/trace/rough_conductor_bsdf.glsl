@@ -45,7 +45,7 @@ void rough_conductor_bsdf_sample(
 
     const vec3 h = sample_vndf(out_dir, alpha, rand_u01);
     in_dir = reflect(-out_dir, h);
-    in_dir.z = abs(in_dir.z);
+    in_dir.z = max(in_dir.z, MIN_SAMPLED_N_DOT_L);
 
     const vec3 l = in_dir;
     const float h_dot_v = abs(dot(h, v));

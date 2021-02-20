@@ -27,6 +27,8 @@ void diffuse_bsdf_sample(
     const vec3 reflectance = get_reflectance(params);
     
     in_dir = sample_hemisphere_cosine_weighted(rand_u01);
+    in_dir.z = max(in_dir.z, MIN_SAMPLED_N_DOT_L);
+
     const float n_dot_l = in_dir.z;
 
     estimator = reflectance;

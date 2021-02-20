@@ -2,8 +2,6 @@
 #include "sampler.glsl"
 #include "fresnel.glsl"
 
-#define MIN_DIFFUSE_PROBABILITY      .01f
-
 void smooth_plastic_bsdf_eval(
     vec3 out_dir,
     vec3 in_dir,
@@ -17,7 +15,7 @@ void smooth_plastic_bsdf_eval(
     const float n_dot_l = in_dir.z;
     const float n_dot_v = out_dir.z;
     const float diffuse_strength = remaining_diffuse_strength(n_dot_v, PLASTIC_F0, roughness);
-    const float diffuse_probability = max(diffuse_strength, MIN_DIFFUSE_PROBABILITY);
+    const float diffuse_probability = max(diffuse_strength, MIN_LAYER_PROBABILITY);
 
     f = reflectance*(diffuse_strength/PI);
     solid_angle_pdf = diffuse_probability*get_hemisphere_cosine_weighted_pdf(n_dot_l);
@@ -37,7 +35,7 @@ void smooth_plastic_bsdf_sample(
 
     const float n_dot_v = out_dir.z;
     const float diffuse_strength = remaining_diffuse_strength(n_dot_v, PLASTIC_F0, roughness);
-    const float diffuse_probability = max(diffuse_strength, MIN_DIFFUSE_PROBABILITY);
+    const float diffuse_probability = max(diffuse_strength, MIN_LAYER_PROBABILITY);
     const float spec_probability = 1.f - diffuse_probability;
 
     const bool sample_diffuse = split_random_variable(diffuse_probability, rand_u01.x);
@@ -48,8 +46,9 @@ void smooth_plastic_bsdf_sample(
         in_dir = vec3(-out_dir.xy, out_dir.z);
         sampled_roughness = roughness;
     }
-    const float n_dot_l = in_dir.z;
+    in_dir.z = max(in_dir.z, MIN_SAMPLED_N_DOT_L);
 
+    const float n_dot_l = in_dir.z;
     if (sample_diffuse) {
         const vec3 diff_f = reflectance*(diffuse_strength/PI);
 

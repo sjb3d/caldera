@@ -4,13 +4,24 @@
 #include "maths.glsl"
 #include "sampler.glsl"
 
+// fixed for now
+// TODO: choose from palette of dieletric materials
 #define PLASTIC_F0              0.04f
 
+// fixed for now
+// TODO: choose from palette of dieletric materials
 #define DIELECTRIC_IOR          1.333f
 
 // vaguely Aluminium, need to convert some spectral data
+// TODO: choose from palette of conductor materials
 #define CONDUCTOR_ETA           vec3(1.09f)
 #define CONDUCTOR_K             vec3(6.79f)
+
+// limit on multi-layer BRDFs to avoid divide by zero
+#define MIN_LAYER_PROBABILITY   .01f
+
+// limit on BSDF incoding direction sample to avoid divide by zero
+#define MIN_SAMPLED_N_DOT_L     .0001f
 
 /*
     Parameters for a BSDF implementation (assumes that the type
