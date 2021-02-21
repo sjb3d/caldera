@@ -35,7 +35,7 @@ void rough_conductor_bsdf_sample(
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
-    out float sampled_roughness)
+    inout float path_max_roughness)
 {
     const vec3 reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
@@ -55,5 +55,4 @@ void rough_conductor_bsdf_sample(
         * ggx_vndf_sampled_estimator_without_fresnel(v, l, alpha);
 
     solid_angle_pdf_or_negative = ggx_vndf_sampled_pdf(v, h, alpha);
-    sampled_roughness = roughness;
 }

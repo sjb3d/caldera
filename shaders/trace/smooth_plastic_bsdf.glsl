@@ -28,7 +28,7 @@ void smooth_plastic_bsdf_sample(
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
-    out float sampled_roughness)
+    inout float path_max_roughness)
 {
     const vec3 reflectance = get_reflectance(params);
     const float roughness = 0.f;
@@ -41,10 +41,9 @@ void smooth_plastic_bsdf_sample(
     const bool sample_diffuse = split_random_variable(diffuse_probability, rand_u01.x);
     if (sample_diffuse) {
         in_dir = sample_hemisphere_cosine_weighted(rand_u01);
-        sampled_roughness = 1.f;
+        path_max_roughness = 1.f;
     } else {
         in_dir = vec3(-out_dir.xy, out_dir.z);
-        sampled_roughness = roughness;
     }
     in_dir.z = max(in_dir.z, MIN_SAMPLED_N_DOT_L);
 

@@ -9,7 +9,7 @@ void smooth_dielectric_bsdf_sample(
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
-    out float sampled_roughness)
+    inout float path_max_roughness)
 {
     const vec3 reflectance = get_reflectance(params);
 
@@ -23,5 +23,4 @@ void smooth_dielectric_bsdf_sample(
     }
     estimator = reflectance;
     solid_angle_pdf_or_negative = -1.f;
-    sampled_roughness = 0.f;
 }

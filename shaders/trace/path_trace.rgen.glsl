@@ -115,9 +115,9 @@ void sample_bsdf(
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
-    out float sampled_roughness)
+    inout float path_max_roughness)
 {
-#define CALL(F) F(out_dir, params, rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, sampled_roughness)
+#define CALL(F) F(out_dir, params, rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, path_max_roughness)
     switch (bsdf_type) {
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_sample); break;
         case BSDF_TYPE_MIRROR:              CALL(mirror_bsdf_sample); break;
@@ -311,7 +311,7 @@ void main()
     vec3 prev_in_dir;
     float prev_in_solid_angle_pdf_or_negative;
     vec3 prev_sample;
-    float roughness_acc;
+    float path_max_roughness;
 
     // sample the camera
     {
@@ -335,7 +335,7 @@ void main()
         prev_in_dir = ray_dir;
         prev_in_solid_angle_pdf_or_negative = solid_angle_pdf;
         prev_sample = importance/sensor_area_pdf;
-        roughness_acc = 0.f;
+        path_max_roughness = 0.f;
     }
 
     // trace a path from the camera
@@ -364,7 +364,7 @@ void main()
         // handle ray hitting a light source
         uint light_index_begin = 0;
         uint light_index_end = 0;
-        if (allow_bsdf_sampling || roughness_acc == 0.f) {
+        if (allow_bsdf_sampling || path_max_roughness == 0.f) {
             if (has_light(hit.info)) {
                 light_index_begin = get_light_index(hit.info);
                 light_index_end = light_index_begin + 1;
@@ -406,22 +406,19 @@ void main()
 
         // rewrite the BRDF to ensure roughness never reduces when extending an eye path
         if (accumulate_roughness) {
-            const float orig_roughness = get_roughness(hit.bsdf_params);
-            const float p = 4.f;
-            roughness_acc = min(pow(pow(roughness_acc, p) + pow(orig_roughness, p), 1.f/p), 1.f);
-
+            path_max_roughness = max(path_max_roughness, get_roughness(hit.bsdf_params));
             switch (get_bsdf_type(hit.info)) {
                 case BSDF_TYPE_MIRROR:
                 case BSDF_TYPE_ROUGH_CONDUCTOR:
-                    if (roughness_acc != 0.f) {
-                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_CONDUCTOR : BSDF_TYPE_DIFFUSE;
+                    if (path_max_roughness != 0.f) {
+                        const uint bsdf_type = (path_max_roughness < 1.f) ? BSDF_TYPE_ROUGH_CONDUCTOR : BSDF_TYPE_DIFFUSE;
                         hit.info = replace_bsdf_type(hit.info, bsdf_type);
-                        hit.bsdf_params = replace_roughness(hit.bsdf_params, roughness_acc);
+                        hit.bsdf_params = replace_roughness(hit.bsdf_params, path_max_roughness);
                     }
                     break;
                 case BSDF_TYPE_SMOOTH_DIELECTRIC:
                     // TODO: degrade to rough dielectric
-                    if (roughness_acc != 0.f) {
+                    if (path_max_roughness != 0.f) {
                         hit.info = replace_bsdf_type(hit.info, BSDF_TYPE_NONE);
                     }
                     break;
@@ -430,10 +427,10 @@ void main()
                     break;
                 case BSDF_TYPE_ROUGH_PLASTIC:
                 case BSDF_TYPE_SMOOTH_PLASTIC:
-                    if (roughness_acc != 0.f) {
-                        const uint bsdf_type = (roughness_acc < 1.f) ? BSDF_TYPE_ROUGH_PLASTIC : BSDF_TYPE_DIFFUSE;
+                    if (path_max_roughness != 0.f) {
+                        const uint bsdf_type = (path_max_roughness < 1.f) ? BSDF_TYPE_ROUGH_PLASTIC : BSDF_TYPE_DIFFUSE;
                         hit.info = replace_bsdf_type(hit.info, bsdf_type);
-                        hit.bsdf_params = replace_roughness(hit.bsdf_params, roughness_acc);
+                        hit.bsdf_params = replace_roughness(hit.bsdf_params, path_max_roughness);
                     }
                     break;
             }
@@ -550,7 +547,6 @@ void main()
             vec3 in_dir_ls;
             vec3 estimator;
             float solid_angle_pdf_or_negative;
-            float sampled_roughness;
             sample_bsdf(
                 get_bsdf_type(hit.info),
                 out_dir_ls,
@@ -559,11 +555,10 @@ void main()
                 in_dir_ls,
                 estimator,
                 solid_angle_pdf_or_negative,
-                roughness_acc);
+                path_max_roughness);
             
             const mat3 hit_basis = basis_from_z_axis(get_dir(hit.shading_normal));
             const vec3 in_dir = normalize(hit_basis * in_dir_ls);
-            roughness_acc = max(roughness_acc, sampled_roughness);
 
             prev_position = hit.position_or_extdir;
             prev_geom_normal_packed = hit.geom_normal;

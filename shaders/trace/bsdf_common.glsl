@@ -21,7 +21,7 @@
 #define MIN_LAYER_PROBABILITY   .01f
 
 // limit on BSDF incoding direction sample to avoid divide by zero
-#define MIN_SAMPLED_N_DOT_L     .0001f
+#define MIN_SAMPLED_N_DOT_L     1.0e-7f
 
 /*
     Parameters for a BSDF implementation (assumes that the type

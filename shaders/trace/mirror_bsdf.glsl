@@ -7,10 +7,9 @@ void mirror_bsdf_sample(
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
-    out float sampled_roughness)
+    inout float path_max_roughness)
 {
     in_dir = vec3(-out_dir.xy, out_dir.z);
     estimator = get_reflectance(params);
     solid_angle_pdf_or_negative = -1.f;
-    sampled_roughness = 0.f;
 }
