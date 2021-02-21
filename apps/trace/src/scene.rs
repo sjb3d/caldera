@@ -396,11 +396,8 @@ fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
 #[derive(Debug, EnumFromStr)]
 pub enum CornellBoxVariant {
     Original,
-    Mirror,
-    Conductor,
-    Instances,
     DomeLight,
-    SphereLight,
+    Conductor,
 }
 
 #[allow(clippy::excessive_precision)]
@@ -531,127 +528,136 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let red_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_RED_SAMPLES);
     let green_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_GREEN_SAMPLES);
 
-    let white_shader = scene.add_material(Material {
+    let white_material = scene.add_material(Material {
         reflectance: Reflectance::Constant(white_reflectance),
         surface: Surface::Diffuse,
         emission: None,
     });
-    let red_shader = scene.add_material(Material {
+    let red_material = scene.add_material(Material {
         reflectance: Reflectance::Constant(red_reflectance),
         surface: Surface::Diffuse,
         emission: None,
     });
-    let green_shader = scene.add_material(Material {
+    let green_material = scene.add_material(Material {
         reflectance: Reflectance::Constant(green_reflectance),
         surface: Surface::Diffuse,
         emission: None,
     });
-    let tall_block_shader = match variant {
-        CornellBoxVariant::Mirror => scene.add_material(Material {
+    let tall_block_material = match variant {
+        CornellBoxVariant::DomeLight => scene.add_material(Material {
             reflectance: Reflectance::Constant(Vec3::broadcast(1.0)),
             surface: Surface::Mirror,
             emission: None,
         }),
-        CornellBoxVariant::Conductor => scene.add_material(Material {
-            reflectance: Reflectance::Constant(Vec3::broadcast(1.0)),
-            surface: Surface::RoughConductor { roughness: 0.2 },
-            emission: None,
-        }),
-        _ => white_shader,
+        _ => white_material,
     };
 
     let identity = scene.add_transform(Transform::default());
 
-    scene.add_instance(Instance::new(identity, floor, white_shader));
-    scene.add_instance(Instance::new(identity, ceiling, white_shader));
-    scene.add_instance(Instance::new(identity, grey_wall, white_shader));
-    scene.add_instance(Instance::new(identity, red_wall, red_shader));
-    scene.add_instance(Instance::new(identity, green_wall, green_shader));
-    scene.add_instance(Instance::new(identity, short_block, white_shader));
-    scene.add_instance(Instance::new(identity, tall_block, tall_block_shader));
+    scene.add_instance(Instance::new(identity, floor, white_material));
+    scene.add_instance(Instance::new(identity, ceiling, white_material));
+    scene.add_instance(Instance::new(identity, grey_wall, white_material));
+    scene.add_instance(Instance::new(identity, red_wall, red_material));
+    scene.add_instance(Instance::new(identity, green_wall, green_material));
+    if !matches!(variant, CornellBoxVariant::Conductor) {
+        scene.add_instance(Instance::new(identity, short_block, white_material));
+        scene.add_instance(Instance::new(identity, tall_block, tall_block_material));
+    }
 
-    if matches!(variant, CornellBoxVariant::DomeLight) {
-        scene.add_light(Light::Dome {
-            emission: Vec3::new(0.4, 0.5, 0.6) * 0.5,
-        });
-        let solid_angle = PI / 1024.0;
-        scene.add_light(Light::SolidAngle {
-            emission: Vec3::new(1.0, 0.8, 0.6) * 2.0 / solid_angle,
-            direction_ws: Vec3::new(-1.0, 8.0, -5.0).normalized(),
-            solid_angle,
-        });
-    } else {
-        let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
-        let light_x0 = 0.213;
-        let light_x1 = 0.343;
-        let light_z0 = 0.227;
-        let light_z1 = 0.332;
-        let light_y = 0.5488 - 0.0001;
-        let light_geometry = if matches!(variant, CornellBoxVariant::SphereLight) {
-            let radius = 0.036;
-            scene.add_geometry(Geometry::Sphere {
-                centre: Vec3::new(
-                    0.5 * (light_x1 + light_x0),
-                    light_y - radius,
-                    0.5 * (light_z1 + light_z0),
-                ),
-                radius,
-            })
-        } else {
-            scene.add_geometry(Geometry::Quad {
+    let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
+    match variant {
+        CornellBoxVariant::DomeLight => {
+            scene.add_light(Light::Dome {
+                emission: Vec3::new(0.4, 0.6, 0.8) * 0.8,
+            });
+            let solid_angle = PI / 4096.0;
+            scene.add_light(Light::SolidAngle {
+                emission: Vec3::new(1.0, 0.8, 0.6) * 2.0 / solid_angle,
+                direction_ws: Vec3::new(-1.0, 8.0, -5.0).normalized(),
+                solid_angle,
+            });
+        }
+        CornellBoxVariant::Conductor => {
+            let light_x = 0.45;
+            let light_z = 0.1;
+            let r_a = 0.05;
+            let r_b = 0.0005;
+            let power = 0.005 * light_emission;
+            for i in 0..4 {
+                let r = r_a + (r_b - r_a) * ((i as f32) / 3.0).powf(0.5);
+                let sphere = scene.add_geometry(Geometry::Sphere {
+                    centre: Vec3::new(light_x, 0.1 + 0.1 * (i as f32), light_z),
+                    radius: r,
+                });
+                let material = scene.add_material(Material {
+                    reflectance: Reflectance::Constant(Vec3::zero()),
+                    surface: Surface::None,
+                    emission: Some(power / (4.0 * PI * r * r)),
+                });
+                scene.add_instance(Instance::new(identity, sphere, material));
+            }
+
+            let camera_x = 0.278;
+            let camera_z = -0.8;
+            let roughness = [0.05, 0.1, 0.25, 0.5];
+            for (i, roughness) in roughness.iter().cloned().enumerate() {
+                let x = 0.35 - 0.11 * (i as f32).powf(0.85);
+                let y = 0.5488 / 2.0;
+                let z = 0.25 - 0.06 * (i as f32).powf(1.2);
+
+                let look_dir = Vec3::new(camera_x - x, 0.0, camera_z - z).normalized();
+                let light_dir = Vec3::new(light_x - x, 0.0, light_z - z).normalized();
+                let half_dir = (look_dir + light_dir).normalized();
+                let rotation = Rotor3::from_rotation_between(Vec3::unit_z(), half_dir);
+
+                let quad = scene.add_geometry(Geometry::Quad {
+                    local_from_quad: Similarity3 {
+                        translation: Vec3::new(x, y, z),
+                        rotation,
+                        scale: 1.0,
+                    },
+                    size: Vec2::new(0.1, 0.5488 * 0.9),
+                });
+                let material = scene.add_material(Material {
+                    reflectance: Reflectance::Constant(Vec3::broadcast(0.8)),
+                    surface: Surface::RoughConductor { roughness },
+                    emission: None,
+                });
+                scene.add_instance(Instance::new(identity, quad, material));
+            }
+        }
+        _ => {
+            let light_x0 = 0.213;
+            let light_x1 = 0.343;
+            let light_z0 = 0.227;
+            let light_z1 = 0.332;
+            let light_y = 0.5488 - 0.0001;
+            let light_geometry = scene.add_geometry(Geometry::Quad {
                 local_from_quad: Similarity3::new(
                     Vec3::new(0.5 * (light_x1 + light_x0), light_y, 0.5 * (light_z1 + light_z0)),
                     Rotor3::from_rotation_yz(0.5 * PI),
                     1.0,
                 ),
                 size: Vec2::new(light_x1 - light_x0, light_z1 - light_z0),
-            })
-        };
-        let light_shader = scene.add_material(Material {
-            reflectance: Reflectance::Constant(Vec3::broadcast(0.78)),
-            surface: Surface::Diffuse,
-            emission: Some(light_emission),
-        });
-        scene.add_instance(Instance::new(identity, light_geometry, light_shader));
+            });
+            let light_material = scene.add_material(Material {
+                reflectance: Reflectance::Constant(Vec3::broadcast(0.78)),
+                surface: Surface::Diffuse,
+                emission: Some(light_emission),
+            });
+            scene.add_instance(Instance::new(identity, light_geometry, light_material));
+        }
     }
 
     let camera_transform = scene.add_transform(Transform::new(Similarity3::new(
         Vec3::new(0.278, 0.273, -0.8),
         Rotor3::identity(),
-        0.5,
+        0.25,
     )));
     scene.add_camera(Camera {
         transform_ref: camera_transform,
         fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
     });
-
-    if matches!(variant, CornellBoxVariant::Instances) {
-        let extra_transforms: Vec<_> = (1..10)
-            .map(|i| {
-                let f = i as f32;
-                scene.add_transform(Transform::new(Similarity3::new(
-                    Vec3::new(-0.01 * f, 0.02 * f, 0.0),
-                    Rotor3::from_rotation_xz(0.05 * f),
-                    1.0,
-                )))
-            })
-            .collect();
-
-        for (i, extra) in extra_transforms.iter().cloned().enumerate() {
-            scene.add_instance(Instance::new(
-                extra,
-                tall_block,
-                if (i % 2) != 0 { green_shader } else { white_shader },
-            ));
-        }
-        for (i, extra) in extra_transforms.iter().rev().cloned().enumerate() {
-            scene.add_instance(Instance::new(
-                extra,
-                short_block,
-                if (i % 2) != 0 { red_shader } else { white_shader },
-            ));
-        }
-    }
 
     scene
 }

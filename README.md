@@ -54,9 +54,9 @@ Has code for:
 
 ### `trace`
 
-![trace](docs/bathroom2.jpg)
+![trace](docs/trace_living-room-2_ui.jpg)
 
-A path tracer built on Vulkan ray tracing.  **More information about this app and a gallery can be found on [this page with more details](docs/path_tracer.md).**
+A path tracer built on Vulkan ray tracing.  **More information about this path tracer and a gallery can be found on [this page](docs/path_tracer.md).**  The scene above is from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
 
 ## Library Details
 

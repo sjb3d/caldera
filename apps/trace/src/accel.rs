@@ -56,11 +56,14 @@ struct Cluster {
 
 impl Cluster {
     fn unique_primitive_count(&self, scene: &Scene) -> usize {
-        self.elements.iter().map(|element| match scene.geometry(element.geometry_ref) {
-            Geometry::TriangleMesh { indices, .. } => indices.len(),
-            Geometry::Quad { .. } => 2,
-            Geometry::Sphere { .. } => 1,
-        }).sum()
+        self.elements
+            .iter()
+            .map(|element| match scene.geometry(element.geometry_ref) {
+                Geometry::TriangleMesh { indices, .. } => indices.len(),
+                Geometry::Quad { .. } => 2,
+                Geometry::Sphere { .. } => 1,
+            })
+            .sum()
     }
 
     fn instanced_primitive_count(&self, scene: &Scene) -> usize {
@@ -178,11 +181,19 @@ impl SceneAccel {
     }
 
     pub fn unique_primitive_count(&self) -> usize {
-        self.clusters.0.iter().map(|cluster| cluster.unique_primitive_count(&self.scene)).sum()
+        self.clusters
+            .0
+            .iter()
+            .map(|cluster| cluster.unique_primitive_count(&self.scene))
+            .sum()
     }
 
     pub fn instanced_primitive_count(&self) -> usize {
-        self.clusters.0.iter().map(|cluster| cluster.instanced_primitive_count(&self.scene)).sum()
+        self.clusters
+            .0
+            .iter()
+            .map(|cluster| cluster.instanced_primitive_count(&self.scene))
+            .sum()
     }
 
     pub fn clusters(&self) -> &Arc<SceneClusters> {

@@ -129,12 +129,14 @@ fn surface(i: &str) -> IResult<&str, Surface> {
     alt((
         map(tag("diffuse"), |_| Surface::Diffuse),
         map(tag("mirror"), |_| Surface::Mirror),
-        map(preceded(tuple((tag("rough_conductor"), multispace1)), float), |roughness| {
-            Surface::RoughConductor { roughness }
-        }),
-        map(preceded(tuple((tag("rough_plastic"), multispace1)), float), |roughness| {
-            Surface::RoughPlastic { roughness }
-        }),
+        map(
+            preceded(tuple((tag("rough_conductor"), multispace1)), float),
+            |roughness| Surface::RoughConductor { roughness },
+        ),
+        map(
+            preceded(tuple((tag("rough_plastic"), multispace1)), float),
+            |roughness| Surface::RoughPlastic { roughness },
+        ),
     ))(i)
 }
 
@@ -158,7 +160,14 @@ fn element_solid_angle_light(i: &str) -> IResult<&str, Element> {
     let (i, angle) = float(i)?;
     let (i, direction) = preceded(multispace1, vec3)(i)?;
     let (i, emission) = preceded(multispace1, vec3)(i)?;
-    Ok((i, Element::SolidAngleLight { angle, direction, emission }))
+    Ok((
+        i,
+        Element::SolidAngleLight {
+            angle,
+            direction,
+            emission,
+        },
+    ))
 }
 
 fn element(i: &str) -> IResult<&str, Element> {
@@ -167,7 +176,10 @@ fn element(i: &str) -> IResult<&str, Element> {
         preceded(tag("mesh"), preceded(multispace0, element_mesh)),
         preceded(tag("instance"), preceded(multispace0, element_instance)),
         preceded(tag("camera"), preceded(multispace0, element_camera)),
-        preceded(tag("solid_angle_light"), preceded(multispace0, element_solid_angle_light)),
+        preceded(
+            tag("solid_angle_light"),
+            preceded(multispace0, element_solid_angle_light),
+        ),
     ))(i)
 }
 
@@ -235,12 +247,16 @@ pub fn load_scene(i: &str) -> Scene {
                     fov_y,
                 });
             }
-            Element::SolidAngleLight { angle, direction, emission } => {
-                let solid_angle = 2.0*PI*(1.0 - angle.cos());
+            Element::SolidAngleLight {
+                angle,
+                direction,
+                emission,
+            } => {
+                let solid_angle = 2.0 * PI * (1.0 - angle.cos());
                 scene.add_light(Light::SolidAngle {
                     solid_angle,
                     direction_ws: direction,
-                    emission: emission/solid_angle,
+                    emission: emission / solid_angle,
                 });
             }
         }

@@ -62,15 +62,6 @@ INCLUDES=$(INC:%=$(SRC_DIR)/%)
 SHADERS=$(SRC:%.glsl=$(BIN_DIR)/%.spv)
 LISTINGS=$(SRC:%.glsl=$(LISTING_DIR)/%.spv.txt)
 
-IMAGES=\
-	docs/trace_bathroom2.jpg \
-	docs/trace_coffee.jpg \
-	docs/trace_glass-of-water.jpg \
-	docs/trace_staircase.jpg \
-	docs/trace_living-room-2.jpg
-
-TRACE=cargo run --release --bin trace --
-
 $(info $(shell mkdir -p $(DIRS)))
 
 all: shaders listings
@@ -107,22 +98,52 @@ listings: $(LISTINGS)
 $(LISTING_DIR)/%.spv.txt: $(BIN_DIR)/%.spv Makefile
 	$(DISASM) -o $@ $<
 
+IMAGES=\
+	docs/trace_bathroom2.jpg \
+	docs/trace_coffee.jpg \
+	docs/trace_glass-of-water.jpg \
+	docs/trace_staircase.jpg \
+	docs/trace_living-room-2.jpg \
+	docs/trace_cornell-box.jpg \
+	docs/trace_cornell-box_dome-light.jpg \
+	docs/trace_cornell-box_conductor.jpg \
+	docs/trace_cornell-box_conductor_surfaces-only.jpg \
+	docs/trace_cornell-box_conductor_lights-only.jpg
+
 clean-images:
 	$(RM) $(IMAGES)
 
 images: $(IMAGES)
 
+MANY_SAMPLES=-s 1024
+TRACE=cargo run --release --bin trace --
+
 docs/trace_bathroom2.%: ../tungsten_scenes/bathroom2/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 0.62 tungsten $<
+	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 0.62 $(MANY_SAMPLES) tungsten $<
 
 docs/trace_coffee.%: ../tungsten_scenes/coffee/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 tungsten $<
+	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
 
 docs/trace_glass-of-water.%: ../tungsten_scenes/glass-of-water/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 -b 24 tungsten $<
+	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 -b 24 $(MANY_SAMPLES) tungsten $<
 
 docs/trace_living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 1.03 tungsten $<
+	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 1.03 $(MANY_SAMPLES) tungsten $<
 
 docs/trace_staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 tungsten $<
+	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
+
+docs/trace_cornell-box.%: shaders Makefile
+	$(TRACE) -o $@ -w 492 -h 492 -e 0.5 $(MANY_SAMPLES) cornell-box
+
+docs/trace_cornell-box_dome-light.%: shaders Makefile
+	$(TRACE) -o $@ -w 492 -h 492 $(MANY_SAMPLES) cornell-box dome-light
+
+docs/trace_cornell-box_conductor.%: shaders Makefile
+	$(TRACE) -o $@ -w 320 -h 320 -s 64 -f box cornell-box conductor
+
+docs/trace_cornell-box_conductor_surfaces-only.%: shaders Makefile
+	$(TRACE) -o $@ -w 320 -h 320 -s 64 -f box --sampling-technique surfaces-only cornell-box conductor
+
+docs/trace_cornell-box_conductor_lights-only.%: shaders Makefile
+	$(TRACE) -o $@ -w 320 -h 320 -s 64 -f box --sampling-technique lights-only cornell-box conductor
