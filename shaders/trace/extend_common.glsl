@@ -102,4 +102,25 @@ struct ExtendShader {
 #define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x00200000
 #define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x00400000
 
+uint get_bsdf_type(ExtendShader s)
+{
+    return (s.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
+}
+bool is_emissive(ExtendShader s)
+{
+    return (s.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0;
+}
+bool has_normals(ExtendShader s)
+{
+    return (s.flags & EXTEND_SHADER_FLAGS_HAS_NORMALS_BIT) != 0;
+}
+bool has_texture(ExtendShader s)
+{
+    return (s.flags & EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT) != 0;
+}
+uint get_texture_index(ExtendShader s)
+{
+    return s.flags & EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK;
+}
+
 #endif

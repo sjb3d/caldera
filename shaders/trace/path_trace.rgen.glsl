@@ -15,6 +15,7 @@
 #include "fresnel.glsl"
 
 #include "quad_light.glsl"
+#include "disc_light.glsl"
 #include "sphere_light.glsl"
 #include "dome_light.glsl"
 #include "solid_angle_light.glsl"
@@ -29,8 +30,8 @@
 #define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS                0x01
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING                0x02
 #define PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING                 0x04
-#define PATH_TRACE_FLAG_SPHERE_LIGHT_SAMPLE_SOLID_ANGLE     0x08
-#define PATH_TRACE_FLAG_QUAD_LIGHT_IS_TWO_SIDED             0x10
+#define PATH_TRACE_FLAG_SPHERE_LIGHTS_SAMPLE_SOLID_ANGLE    0x08
+#define PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED         0x10
 
 #define MIS_HEURISTIC_NONE      0
 #define MIS_HEURISTIC_BALANCE   1
@@ -152,13 +153,18 @@ void sample_single_light(
     switch (light_info.light_type) {
 #define PARAMS  target_position, target_normal, rand_u01, light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
         case LIGHT_TYPE_QUAD: {
-            QuadLightParamsBuffer buf = QuadLightParamsBuffer(params_addr);
-            const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_QUAD_LIGHT_IS_TWO_SIDED) != 0;
+            PlanarLightParamsBuffer buf = PlanarLightParamsBuffer(params_addr);
+            const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED) != 0;
             quad_light_sample(buf.params, is_two_sided, PARAMS);
+        } break;
+        case LIGHT_TYPE_DISC: {
+            PlanarLightParamsBuffer buf = PlanarLightParamsBuffer(params_addr);
+            const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED) != 0;
+            disc_light_sample(buf.params, is_two_sided, PARAMS);
         } break;
         case LIGHT_TYPE_SPHERE: {
             SphereLightParamsBuffer buf = SphereLightParamsBuffer(params_addr);
-            const bool sample_solid_angle = (g_path_trace.flags & PATH_TRACE_FLAG_SPHERE_LIGHT_SAMPLE_SOLID_ANGLE) != 0;
+            const bool sample_solid_angle = (g_path_trace.flags & PATH_TRACE_FLAG_SPHERE_LIGHTS_SAMPLE_SOLID_ANGLE) != 0;
             sphere_light_sample(buf.params, sample_solid_angle, PARAMS);
         } break;
         case LIGHT_TYPE_SOLID_ANGLE: {
@@ -225,14 +231,15 @@ void evaluate_single_light(
     float solid_angle_pdf;
     switch (light_info.light_type) {
 #define PARAMS  target_position, light_position_or_extdir, emission, solid_angle_pdf
-        case LIGHT_TYPE_QUAD: {
-            QuadLightParamsBuffer buf = QuadLightParamsBuffer(params_addr);
-            const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_QUAD_LIGHT_IS_TWO_SIDED) != 0;
-            quad_light_eval(buf.params, is_two_sided, PARAMS);
+        case LIGHT_TYPE_QUAD:
+        case LIGHT_TYPE_DISC: {
+            PlanarLightParamsBuffer buf = PlanarLightParamsBuffer(params_addr);
+            const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED) != 0;
+            planar_light_eval(buf.params, is_two_sided, PARAMS);
         } break;
         case LIGHT_TYPE_SPHERE: {
             SphereLightParamsBuffer buf = SphereLightParamsBuffer(params_addr);
-            const bool sample_solid_angle = (g_path_trace.flags & PATH_TRACE_FLAG_SPHERE_LIGHT_SAMPLE_SOLID_ANGLE) != 0;
+            const bool sample_solid_angle = (g_path_trace.flags & PATH_TRACE_FLAG_SPHERE_LIGHTS_SAMPLE_SOLID_ANGLE) != 0;
             sphere_light_eval(buf.params, sample_solid_angle, PARAMS);
         } break;
         case LIGHT_TYPE_DOME: {

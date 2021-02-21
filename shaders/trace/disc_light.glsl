@@ -1,24 +1,6 @@
 #include "light_common.glsl"
 
-void planar_light_eval(
-    PlanarLightParams params,
-    bool is_two_sided,
-    vec3 target_position,
-    vec3 light_position,
-    out vec3 emission,
-    out float solid_angle_pdf)
-{
-    const vec3 light_normal = params.normal_ws;
-    const vec3 target_from_light = target_position - light_position;
-    const vec3 connection_dir = normalize(target_from_light);
-    const float facing_term = dot(connection_dir, light_normal);
-    emission = (is_two_sided || facing_term > 0.f) ? params.emission : vec3(0.f);
-
-    const float distance_sq = dot(target_from_light, target_from_light);
-    solid_angle_pdf = solid_angle_pdf_from_area_pdf(params.area_pdf, facing_term, distance_sq);
-}
-
-void quad_light_sample(
+void disc_light_sample(
     PlanarLightParams params,
     bool is_two_sided,
     vec3 target_position,
@@ -30,7 +12,8 @@ void quad_light_sample(
     out float solid_angle_pdf_and_ext_bit,
     out float unit_scale)
 {
-    light_position = params.point_ws + rand_u01.x*params.vec0_ws + rand_u01.y*params.vec1_ws;
+    const vec2 disc_pos = sample_disc_uniform(rand_u01);
+    light_position = params.point_ws + disc_pos.x*params.vec0_ws + disc_pos.y*params.vec1_ws;
     
     const vec3 light_normal = params.normal_ws;
     light_normal_packed = make_normal32(light_normal);

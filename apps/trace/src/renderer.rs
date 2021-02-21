@@ -27,8 +27,13 @@ impl UnitScale for Geometry {
         let local_offset = match self {
             Geometry::TriangleMesh { min, max, .. } => max.abs().max_by_component(min.abs()).component_max(),
             Geometry::Quad { local_from_quad, size } => {
-                local_from_quad.translation.abs().component_max() + local_from_quad.scale * size.abs().component_max()
+                local_from_quad.translation.abs().component_max()
+                    + local_from_quad.scale.abs() * size.abs().component_max()
             }
+            Geometry::Disc {
+                local_from_disc,
+                radius,
+            } => local_from_disc.translation.abs().component_max() + local_from_disc.scale.abs() * radius.abs(),
             Geometry::Sphere { centre, radius } => centre.abs().component_max() + radius,
         };
         let world_offset = world_from_local.translation.abs().component_max();
@@ -53,6 +58,7 @@ impl LightCanBeSampled for Light {
 #[derive(Clone, Copy, Contiguous, PartialEq, Eq)]
 enum LightType {
     Quad,
+    Disc,
     Sphere,
     Dome,
     SolidAngle,
@@ -68,14 +74,14 @@ struct LightInfoEntry {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct QuadLightParams {
+struct PlanarLightParams {
     emission: Vec3,
     unit_scale: f32,
     area_pdf: f32,
     normal_ws: Vec3,
-    corner_ws: Vec3,
-    edge0_ws: Vec3,
-    edge1_ws: Vec3,
+    point_ws: Vec3,
+    vec0_ws: Vec3,
+    vec1_ws: Vec3,
 }
 
 #[repr(C)]
@@ -109,8 +115,8 @@ impl PathTraceFlags {
     const ACCUMULATE_ROUGHNESS: PathTraceFlags = PathTraceFlags(0x1);
     const ALLOW_LIGHT_SAMPLING: PathTraceFlags = PathTraceFlags(0x2);
     const ALLOW_BSDF_SAMPLING: PathTraceFlags = PathTraceFlags(0x4);
-    const SPHERE_LIGHT_SAMPLE_SOLID_ANGLE: PathTraceFlags = PathTraceFlags(0x8);
-    const QUAD_LIGHT_IS_TWO_SIDED: PathTraceFlags = PathTraceFlags(0x10);
+    const SPHERE_LIGHTS_SAMPLE_SOLID_ANGLE: PathTraceFlags = PathTraceFlags(0x8);
+    const PLANAR_LIGHTS_ARE_TWO_SIDED: PathTraceFlags = PathTraceFlags(0x10);
 }
 
 impl BitOr for PathTraceFlags {
@@ -188,7 +194,7 @@ enum GeometryRecordData {
         normal_buffer_address: u64,
         uv_buffer_address: u64,
     },
-    Sphere,
+    Procedural,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumFromStr)]
@@ -293,6 +299,22 @@ struct ExtendTriangleHitRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+struct DiscGeomData {
+    centre: Vec3,
+    normal: Vec3,
+    radius: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct ExtendDiscHitRecord {
+    geom: DiscGeomData,
+    unit_scale: f32,
+    shader: ExtendShader,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct SphereGeomData {
     centre: Vec3,
     radius: f32,
@@ -312,9 +334,11 @@ enum ShaderGroup {
     RayGenerator,
     ExtendMiss,
     ExtendHitTriangle,
+    ExtendHitDisc,
     ExtendHitSphere,
     OcclusionMiss,
     OcclusionHitTriangle,
+    OcclusionHitDisc,
     OcclusionHitSphere,
 }
 
@@ -515,11 +539,11 @@ pub struct RendererParams {
 
     /// Sample sphere lights by solid angle from the target point
     #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="enable", global=true)]
-    pub sphere_light_sample_solid_angle: BoolParam,
+    pub sphere_lights_sample_solid_angle: BoolParam,
 
-    /// Quad lights emit light from both sides
+    /// Quad and disc lights emit light from both sides
     #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="disable", global=true)]
-    pub quad_light_is_two_sided: BoolParam,
+    pub planar_lights_are_two_sided: BoolParam,
 
     /// Which sampling techniques are allowed
     #[structopt(long, possible_values=SamplingTechnique::VARIANTS, default_value = "lights-and-surfaces", global=true)]
@@ -819,6 +843,11 @@ impl Renderer {
                     any_hit: None,
                     intersection: None,
                 },
+                ShaderGroup::ExtendHitDisc => RayTracingShaderGroupDesc::Hit {
+                    closest_hit: "trace/extend_disc.rchit.spv",
+                    any_hit: None,
+                    intersection: Some("trace/disc.rint.spv"),
+                },
                 ShaderGroup::ExtendHitSphere => RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/extend_sphere.rchit.spv",
                     any_hit: None,
@@ -829,6 +858,11 @@ impl Renderer {
                     closest_hit: "trace/occlusion.rchit.spv",
                     any_hit: None,
                     intersection: None,
+                },
+                ShaderGroup::OcclusionHitDisc => RayTracingShaderGroupDesc::Hit {
+                    closest_hit: "trace/occlusion.rchit.spv",
+                    any_hit: None,
+                    intersection: Some("trace/disc.rint.spv"),
                 },
                 ShaderGroup::OcclusionHitSphere => RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/occlusion.rchit.spv",
@@ -949,7 +983,7 @@ impl Renderer {
                         uv_buffer_address,
                     })
                 }
-                GeometryAccelData::Sphere { .. } => Some(GeometryRecordData::Sphere),
+                GeometryAccelData::Procedural { .. } => Some(GeometryRecordData::Procedural),
             };
         }
 
@@ -1019,8 +1053,9 @@ impl Renderer {
         next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
 
         // hit shaders
-        let hit_record_size =
-            mem::size_of::<ExtendTriangleHitRecord>().max(mem::size_of::<ExtendSphereHitRecord>()) as u32;
+        let hit_record_size = mem::size_of::<ExtendTriangleHitRecord>()
+            .max(mem::size_of::<ExtendDiscHitRecord>())
+            .max(mem::size_of::<ExtendSphereHitRecord>()) as u32;
         let hit_stride = align_up(
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
@@ -1106,26 +1141,51 @@ impl Renderer {
                         let params_offset = light_params_data.len();
                         let (light_type, area_ws) = match geometry {
                             Geometry::TriangleMesh { .. } => unimplemented!(),
-                            Geometry::Quad { size, local_from_quad } => {
+                            Geometry::Quad { local_from_quad, size } => {
                                 let world_from_quad = world_from_local * *local_from_quad;
 
                                 let centre_ws = world_from_quad.translation;
-                                let edge0_ws = world_from_quad.transform_vec3(Vec3::new(size.x, 0.0, 0.0));
-                                let edge1_ws = world_from_quad.transform_vec3(Vec3::new(0.0, size.y, 0.0));
+                                let edge0_ws = world_from_quad.transform_vec3(size.x * Vec3::unit_x());
+                                let edge1_ws = world_from_quad.transform_vec3(size.y * Vec3::unit_y());
                                 let normal_ws = world_from_quad.transform_vec3(Vec3::unit_z()).normalized();
                                 let area_ws = (world_from_quad.scale * world_from_quad.scale * size.x * size.y).abs();
 
-                                light_params_data.extend_from_slice(bytemuck::bytes_of(&QuadLightParams {
+                                light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
                                     emission,
                                     unit_scale,
                                     area_pdf: 1.0 / area_ws,
                                     normal_ws,
-                                    corner_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
-                                    edge0_ws,
-                                    edge1_ws,
+                                    point_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
+                                    vec0_ws: edge0_ws,
+                                    vec1_ws: edge1_ws,
                                 }));
 
                                 (LightType::Quad, area_ws)
+                            }
+                            Geometry::Disc {
+                                local_from_disc,
+                                radius,
+                            } => {
+                                let world_from_disc = world_from_local * *local_from_disc;
+                                let radius_ws = (world_from_disc.scale * *radius).abs();
+                                let area_ws = PI * radius_ws * radius_ws;
+
+                                let centre_ws = world_from_disc.translation;
+                                let radius0_ws = world_from_disc.transform_vec3(*radius * Vec3::unit_x());
+                                let radius1_ws = world_from_disc.transform_vec3(*radius * Vec3::unit_y());
+                                let normal_ws = world_from_disc.transform_vec3(Vec3::unit_z()).normalized();
+
+                                light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
+                                    emission,
+                                    unit_scale,
+                                    area_pdf: 1.0 / area_ws,
+                                    normal_ws,
+                                    point_ws: centre_ws,
+                                    vec0_ws: radius0_ws,
+                                    vec1_ws: radius1_ws,
+                                }));
+
+                                (LightType::Disc, area_ws)
                             }
                             Geometry::Sphere { centre, radius } => {
                                 let centre_ws = world_from_local * *centre;
@@ -1181,30 +1241,55 @@ impl Renderer {
                             writer.write(shader_group_handle(ShaderGroup::OcclusionHitTriangle));
                             writer.write_zeros(end_offset - writer.written());
                         }
-                        GeometryRecordData::Sphere => {
-                            let geom = match scene.geometry(instance.geometry_ref) {
-                                Geometry::Sphere { centre, radius } => SphereGeomData {
+                        GeometryRecordData::Procedural => match scene.geometry(instance.geometry_ref) {
+                            Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => unreachable!(),
+                            Geometry::Disc {
+                                local_from_disc,
+                                radius,
+                            } => {
+                                let geom = DiscGeomData {
+                                    centre: local_from_disc.translation,
+                                    normal: local_from_disc.transform_vec3(Vec3::unit_z()).normalized(),
+                                    radius: (local_from_disc.scale * radius).abs(),
+                                };
+                                let hit_record = ExtendDiscHitRecord {
+                                    geom,
+                                    unit_scale,
+                                    shader,
+                                };
+
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handle(ShaderGroup::ExtendHitDisc));
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
+
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handle(ShaderGroup::OcclusionHitDisc));
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
+                            }
+                            Geometry::Sphere { centre, radius } => {
+                                let geom = SphereGeomData {
                                     centre: *centre,
                                     radius: radius.abs(),
-                                },
-                                _ => unreachable!(),
-                            };
-                            let hit_record = ExtendSphereHitRecord {
-                                geom,
-                                unit_scale,
-                                shader,
-                            };
+                                };
+                                let hit_record = ExtendSphereHitRecord {
+                                    geom,
+                                    unit_scale,
+                                    shader,
+                                };
 
-                            let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handle(ShaderGroup::ExtendHitSphere));
-                            writer.write(&hit_record);
-                            writer.write_zeros(end_offset - writer.written());
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handle(ShaderGroup::ExtendHitSphere));
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
 
-                            let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handle(ShaderGroup::OcclusionHitSphere));
-                            writer.write(&hit_record);
-                            writer.write_zeros(end_offset - writer.written());
-                        }
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handle(ShaderGroup::OcclusionHitSphere));
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
+                            }
+                        },
                     }
                 }
 
@@ -1432,11 +1517,11 @@ impl Renderer {
             needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.params.accumulate_roughness);
             needs_reset |= ui.checkbox(
                 im_str!("Sample Sphere Light Solid Angle"),
-                &mut self.params.sphere_light_sample_solid_angle,
+                &mut self.params.sphere_lights_sample_solid_angle,
             );
             needs_reset |= ui.checkbox(
-                im_str!("Quad Light Is Two Sided"),
-                &mut self.params.quad_light_is_two_sided,
+                im_str!("Planar Lights Are Two Sided"),
+                &mut self.params.planar_lights_are_two_sided,
             );
         }
 
@@ -1557,11 +1642,11 @@ impl Renderer {
                         if self.params.accumulate_roughness {
                             path_trace_flags |= PathTraceFlags::ACCUMULATE_ROUGHNESS;
                         }
-                        if self.params.sphere_light_sample_solid_angle {
-                            path_trace_flags |= PathTraceFlags::SPHERE_LIGHT_SAMPLE_SOLID_ANGLE;
+                        if self.params.sphere_lights_sample_solid_angle {
+                            path_trace_flags |= PathTraceFlags::SPHERE_LIGHTS_SAMPLE_SOLID_ANGLE;
                         }
-                        if self.params.quad_light_is_two_sided {
-                            path_trace_flags |= PathTraceFlags::QUAD_LIGHT_IS_TWO_SIDED;
+                        if self.params.planar_lights_are_two_sided {
+                            path_trace_flags |= PathTraceFlags::PLANAR_LIGHTS_ARE_TWO_SIDED;
                         }
 
                         let light_info_table_address = unsafe {

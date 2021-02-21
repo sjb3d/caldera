@@ -21,21 +21,22 @@ layout(buffer_reference, scalar) buffer LightInfoTable {
 };
 
 #define LIGHT_TYPE_QUAD         0
-#define LIGHT_TYPE_SPHERE       1
-#define LIGHT_TYPE_DOME         2
-#define LIGHT_TYPE_SOLID_ANGLE  3
+#define LIGHT_TYPE_DISC         1
+#define LIGHT_TYPE_SPHERE       2
+#define LIGHT_TYPE_DOME         3
+#define LIGHT_TYPE_SOLID_ANGLE  4
 
-struct QuadLightParams {
+struct PlanarLightParams {
     vec3 emission;
     float unit_scale;
     float area_pdf;
     vec3 normal_ws;
-    vec3 corner_ws;
-    vec3 edge0_ws;
-    vec3 edge1_ws;
+    vec3 point_ws;
+    vec3 vec0_ws;
+    vec3 vec1_ws;
 };
-layout(buffer_reference, scalar) buffer QuadLightParamsBuffer {
-    QuadLightParams params;
+layout(buffer_reference, scalar) buffer PlanarLightParamsBuffer {
+    PlanarLightParams params;
 };
 
 struct SphereLightParams {

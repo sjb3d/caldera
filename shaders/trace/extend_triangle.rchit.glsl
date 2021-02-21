@@ -55,7 +55,7 @@ void main()
         ;
 
     vec3 shading_normal_vec_ls = geom_normal_vec_ls;
-    if ((g_record.shader.flags & EXTEND_SHADER_FLAGS_HAS_NORMALS_BIT) != 0) {
+    if (has_normals(g_record.shader)) {
         const vec3 n0 = g_record.normal_buffer.normal[tri[0]];
         const vec3 n1 = g_record.normal_buffer.normal[tri[1]];
         const vec3 n2 = g_record.normal_buffer.normal[tri[2]];
@@ -67,11 +67,8 @@ void main()
             ;         
     }
 
-    const uint bsdf_type = (g_record.shader.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
-    const bool is_emissive = ((g_record.shader.flags & EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT) != 0);
-
     vec3 reflectance;
-    if ((g_record.shader.flags & EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT) != 0) {
+    if (has_texture(g_record.shader)) {
         const vec2 uv0 = g_record.uv_buffer.uv[tri[0]];
         const vec2 uv1 = g_record.uv_buffer.uv[tri[1]];
         const vec2 uv2 = g_record.uv_buffer.uv[tri[2]];
@@ -81,7 +78,7 @@ void main()
             + uv2*g_bary_coord.y
             ;
 
-        const uint texture_index = g_record.shader.flags & EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK;
+        const uint texture_index = get_texture_index(g_record.shader);
         reflectance = texture(g_textures[nonuniformEXT(texture_index)], uv).xyz;        
     } else {
         reflectance = g_record.shader.reflectance;
@@ -95,8 +92,8 @@ void main()
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
     g_extend.info = create_hit_info(
-        bsdf_type,
-        is_emissive,
+        get_bsdf_type(g_record.shader),
+        is_emissive(g_record.shader),
         g_record.shader.light_index,
         g_record.unit_scale);
     g_extend.position_or_extdir = hit_pos_ws;

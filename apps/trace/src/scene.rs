@@ -26,6 +26,10 @@ pub enum Geometry {
         local_from_quad: Similarity3,
         size: Vec2,
     },
+    Disc {
+        local_from_disc: Similarity3,
+        radius: f32,
+    },
     Sphere {
         centre: Vec3,
         radius: f32,
@@ -232,6 +236,9 @@ impl Scene {
                     }
                     Geometry::Quad { local_from_quad, .. } => {
                         *local_from_quad = world_from_local * *local_from_quad;
+                    }
+                    Geometry::Disc { local_from_disc, .. } => {
+                        *local_from_disc = world_from_local * *local_from_disc;
                     }
                     Geometry::Sphere { centre, radius } => {
                         *centre = world_from_local * *centre;

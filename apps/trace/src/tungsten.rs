@@ -82,7 +82,7 @@ impl ScalarOrVec3 {
 impl PrimitiveTransform {
     fn decompose(&self) -> (Similarity3, Option<Vec3>) {
         let translation = self.position.map(Vec3::from).unwrap_or_else(Vec3::zero);
-        let rotation = self
+        let mut rotation = self
             .rotation
             .map(|r| {
                 let r = Vec3::from(r) * PI / 180.0;
@@ -94,7 +94,26 @@ impl PrimitiveTransform {
             .as_ref()
             .map(|s| match s {
                 ScalarOrVec3::Scalar(s) => (*s, None),
-                ScalarOrVec3::Vec3(v) => (1.0, Some(v.into())),
+                ScalarOrVec3::Vec3(v) => {
+                    // move pairs of sign flips to 180 degree rotations, make vector scale positive
+                    let sign_bit_set = |x: f32| (x.to_bits() & 0x80_00_00_00) != 0;
+                    let v = Vec3::from(v);
+                    match (sign_bit_set(v.x), sign_bit_set(v.y), sign_bit_set(v.z)) {
+                        (false, false, false) | (true, true, true) => (1.0_f32.copysign(v.x), Some(v.abs())),
+                        (true, false, false) | (false, true, true) => {
+                            rotation = rotation * Rotor3::from_rotation_yz(PI);
+                            (1.0_f32.copysign(v.x), Some(v.abs()))
+                        }
+                        (false, true, false) | (true, false, true) => {
+                            rotation = rotation * Rotor3::from_rotation_xz(PI);
+                            (1.0_f32.copysign(v.y), Some(v.abs()))
+                        }
+                        (false, false, true) | (true, true, false) => {
+                            rotation = rotation * Rotor3::from_rotation_xy(PI);
+                            (1.0_f32.copysign(v.z), Some(v.abs()))
+                        }
+                    }
+                }
             })
             .unwrap_or((1.0, None));
         (Similarity3::new(translation, rotation, scale), vector_scale)
@@ -111,8 +130,7 @@ enum PrimitiveType {
     InfiniteSphere,
     Skydome,
     Curves,
-    #[serde(rename = "disk")]
-    Disc,
+    Disk,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -279,7 +297,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 let size = extra_scale
                     .map(|v| Vec2::new(v.x, v.z))
                     .unwrap_or_else(|| Vec2::broadcast(1.0));
-                let mesh = scene::Geometry::Quad {
+                let geometry = scene::Geometry::Quad {
                     local_from_quad: Similarity3::new(Vec3::zero(), Rotor3::from_rotation_yz(-PI / 2.0), 1.0),
                     size,
                 };
@@ -293,7 +311,31 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                     material.emission = Some(v.into_vec3());
                 }
 
-                let geometry_ref = output.add_geometry(mesh);
+                let geometry_ref = output.add_geometry(geometry);
+                let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
+                let material_ref = output.add_material(material);
+                output.add_instance(scene::Instance::new(transform_ref, geometry_ref, material_ref));
+            }
+            PrimitiveType::Disk => {
+                let (world_from_local, extra_scale) = primitive.transform.decompose();
+
+                assert!(extra_scale.is_none(), "non-uniform sphere not supported");
+                let radius = 1.0;
+                let geometry = scene::Geometry::Disc {
+                    local_from_disc: Similarity3::new(Vec3::zero(), Rotor3::from_rotation_yz(-PI / 2.0), 1.0),
+                    radius,
+                };
+
+                let mut material = load_material(primitive.bsdf.as_ref().unwrap());
+                if let Some(s) = primitive.power.as_ref() {
+                    let area = (PI * radius * radius * world_from_local.scale * world_from_local.scale).abs();
+                    material.emission = Some(s.into_vec3() / (area * PI));
+                }
+                if let Some(TextureOrValue::Value(v)) = &primitive.emission {
+                    material.emission = Some(v.into_vec3());
+                }
+
+                let geometry_ref = output.add_geometry(geometry);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
                 let material_ref = output.add_material(material);
                 output.add_instance(scene::Instance::new(transform_ref, geometry_ref, material_ref));
@@ -366,9 +408,6 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
             }
             PrimitiveType::Curves => {
                 println!("TODO: curves!");
-            }
-            PrimitiveType::Disc => {
-                println!("TODO: disc!");
             }
         }
     }

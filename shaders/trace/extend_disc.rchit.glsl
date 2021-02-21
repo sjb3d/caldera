@@ -5,24 +5,23 @@
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
 #include "extend_common.glsl"
-#include "sphere_common.glsl"
+#include "disc_common.glsl"
 
-layout(shaderRecordEXT, scalar) buffer ExtendSphereHitRecord {
-    SphereGeomData geom;
+layout(shaderRecordEXT, scalar) buffer ExtendDiscHitRecord {
+    DiscGeomData geom;
     float unit_scale;
     ExtendShader shader;
 } g_record;
 
-hitAttributeEXT SphereHitAttribute g_attrib;
+hitAttributeEXT DiscHitAttribute g_attrib;
 
 EXTEND_PAYLOAD_IN(g_extend);
 
 void main()
 {   
-    const vec3 hit_from_centre = g_attrib.hit_from_centre;
-    const vec3 hit_pos_ls = g_record.geom.centre + hit_from_centre;
-    const bool is_front_hit = (gl_HitKindEXT == SPHERE_HIT_FRONT);
-    const vec3 hit_normal_vec_ls = is_front_hit ? hit_from_centre : -hit_from_centre;
+    const vec3 hit_pos_ls = g_record.geom.centre + g_attrib.hit_from_centre;
+    const bool is_front_hit = (gl_HitKindEXT == DISC_HIT_FRONT);
+    const vec3 hit_normal_vec_ls = is_front_hit ? g_record.geom.normal : -g_record.geom.normal;
 
     // transform normal vector to world space
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
