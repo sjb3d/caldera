@@ -18,12 +18,23 @@ The `trace` app is a path tracer that makes use of Vulkan ray tracing extensions
   * Fixed CDF based on light power
   * Quad or sphere shaped emitters
   * Dome or solid angle distant lights
-* Fixed material model
+* Multiple importance sampling between BSDFs and lights
+* Simple fixed material model
   * Reflectance from per-instance constant and/or texture
   * All other parameters are either per-instance or global constants (for now)
-* Multiple importance sampling between BSDFs and lights
 * Wide gamut rendering and fitted ACES tonemapping using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
 * Interactive renderer with moveable camera and debug UI
+
+## Links
+
+The following crates have been super useful in making the app:
+
+* [ultraviolet](https://crates.io/crates/ultraviolet): maths library with nice API, used for vectors and transforms
+* [bytemuck](https://crates.io/crates/bytemuck): safely alias data as bytes, used for copying to GPU buffers
+* [imgui](https://crates.io/crates/imgui)/[imgui-winit-support](https://crates.io/crates/imgui-winit-support): rust API for the fantastic [Dear ImGui](https://github.com/ocornut/imgui), for debug UI
+* [serde](https://crates.io/crates/serde)/[serde_json](https://crates.io/crates/serde_json): amazing lib to generate serialisation for rust data structures, used to load Tungsten format JSON scenes
+* [stb](https://crates.io/crates/stb): rust API for the [stb libraries](https://github.com/nothings/stb), used for image IO and BC compression
+* [winit](https://crates.io/crates/winit): cross platform windowing and events
 
 ## Gallery
 
@@ -65,7 +76,7 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] Volumetrics
 - [ ] Image-based dome light
 - [ ] More flexible materials (graphs?)
-- [ ] Disc primitive
+- [x] Disc primitive
 - [ ] Triangle mesh emitter?
 - [ ] Microfacet multi-scattering?
 - [ ] Path re-use?

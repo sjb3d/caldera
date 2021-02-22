@@ -2,7 +2,9 @@
 
 ## Library Overview
 
-Vulkan and rust experiments, everything is work in progress.  The `caldera` crate covers the following:
+Vulkan and rust experiments. The code is split into a core `caldera` crate and a few different _apps_. Everything is work in progress, but this repository is public in case the code is interesting for others.
+
+The `caldera` crate covers the following:
 
 * Makes use of [spark](https://github.com/sjb3d/spark) to manage Vulkan commands and extensions
 * A procedural macro for descriptor set layouts
@@ -25,6 +27,12 @@ Apps can be run using:
 make && cargo run --bin <app_name>
 ```
 
+Command-line support (via [`structopt`](https://crates.io/crates/structopt/) has recently been added, so apps now show their supported arguments by running:
+
+```
+make && cargo run --bin <app_name> -- --help
+```
+
 ### `compute`
 
 ![compute](docs/compute.jpg)
@@ -35,6 +43,7 @@ A simple path tracer in a compute shader, also for tinkering with:
   * Several sequences are generated at startup, then indexed by hashing the pixel coordinate and ray depth
 * Wide colour gamut in the [ACEScg](https://en.wikipedia.org/wiki/Academy_Color_Encoding_System) colour space, transformed to sRGB/Rec709 using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
   * There is code to re-derive the colour space conversion matrices in [`color_space.rs`](https://github.com/sjb3d/caldera/blob/main/caldera/src/color_space.rs), but the tonemap curve fit is used as-is
+* Used as an initial test for the render graph and descriptor set helpers
 
 ### `mesh`
 
@@ -45,7 +54,7 @@ Initial test project for `VK_KHR_acceleration_structure` and `VK_KHR_ray_tracing
 Has code for:
 * Loading a PLY mesh using [ply-rs](https://github.com/Fluci/ply-rs)
 * Basic rasterisation with instancing and MSAA support
-  * Using Vulkan transient attachments for depth (and pre-resolve colour when using MSAA)
+  * Trying out Vulkan _transient attachments_ for depth (and colour when using MSAA)
 * Acceleration structure creation
   * A single bottom level acceleration structure for the PLY mesh
   * A top level acceleration structure that instances it a few times
@@ -56,7 +65,7 @@ Has code for:
 
 ![trace](docs/trace_living-room-2_ui.jpg)
 
-A path tracer built on Vulkan ray tracing.  **More information about this path tracer and a gallery can be found on [this page](docs/path_tracer.md).**  The scene above is from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
+A path tracer built on Vulkan ray tracing.  **[For more information about this path tracer and a gallery click here.](docs/path_tracer.md).**  The scene above is from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
 
 ## Library Details
 
