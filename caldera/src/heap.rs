@@ -59,7 +59,7 @@ impl HeapAllocator {
                 .alloc_list
                 .iter()
                 .enumerate()
-                .find_map(|(index, block)| if block.begin == alloc { Some(index) } else { None })
+                .find_map(|(index, block)| (block.begin == alloc).then(|| index))
                 .expect("failed to find allocation");
             self.alloc_list.swap_remove(remove_index)
         };

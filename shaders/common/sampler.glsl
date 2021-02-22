@@ -16,9 +16,44 @@ uint hash(uint a)
     return a;
 }
 
+uint xorshift32(uint x)
+{
+    // https://en.wikipedia.org/wiki/Xorshift
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+    return x;
+}
+
 uint get_seq_hash(uvec2 pixel_coord, uint seq_index, uint sample_index)
 {
     return hash((seq_index << 24) ^ (pixel_coord.y << 12) ^ pixel_coord.x);
+}
+
+uint laine_karras_permutation(uint x, uint seed)
+{
+    // reference: http://www.jcgt.org/published/0009/04/01/
+    x += seed;
+    x ^= x * 0x6c50b47cU;
+    x ^= x * 0xb82f1e52U;
+    x ^= x * 0xc7afe638U;
+    x ^= x * 0x8d22f6e6U;
+    return x;
+}
+
+uint nested_uniform_shuffle(uint x, uint seed)
+{
+    // reference: http://www.jcgt.org/published/0009/04/01/
+    x = bitfieldReverse(x);
+    x = laine_karras_permutation(x, seed);
+    x = bitfieldReverse(x);
+    return x;
+}
+
+float unit_float_from_high_bits(uint x)
+{
+    // put the highs bits into the mantissa of 1, then subtract 1
+    return uintBitsToFloat(0x3f800000U | (x >> 9)) - 1.f;
 }
 
 bool split_random_variable(float accept_probability, inout float u01)

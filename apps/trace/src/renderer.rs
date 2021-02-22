@@ -64,6 +64,13 @@ enum LightType {
     SolidAngle,
 }
 
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, Contiguous, PartialEq, Eq, EnumFromStr)]
+pub enum SequenceType {
+    Pmj,
+    Sobol,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct LightInfoEntry {
@@ -154,7 +161,9 @@ struct PathTraceUniforms {
     max_segment_count: u32,
     render_color_space: u32,
     mis_heuristic: u32,
+    sequence_type: u32,
     flags: PathTraceFlags,
+    _pad: u32,
 }
 
 #[repr(C)]
@@ -167,7 +176,8 @@ struct LightAliasEntry {
 descriptor_set_layout!(PathTraceDescriptorSetLayout {
     path_trace_uniforms: UniformData<PathTraceUniforms>,
     accel: AccelerationStructure,
-    samples: StorageImage,
+    pmj_samples: StorageImage,
+    sobol_samples: StorageImage,
     result: [StorageImage; 3],
 });
 
@@ -582,6 +592,9 @@ pub struct RendererParams {
 
     #[structopt(short, long, default_value = "256", global = true)]
     pub sample_count: u32,
+
+    #[structopt(long, default_value = "pmj", global = true)]
+    pub sequence_type: SequenceType,
 }
 
 impl RendererParams {
@@ -594,13 +607,15 @@ impl RendererParams {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct FilterData {
     image_size: UVec2,
+    sequence_type: u32,
     sample_index: u32,
     filter_type: u32,
 }
 
 descriptor_set_layout!(FilterDescriptorSetLayout {
     data: UniformData<FilterData>,
-    samples: StorageImage,
+    pmj_samples: StorageImage,
+    sobol_samples: StorageImage,
     input: [StorageImage; 3],
     result: StorageImage,
 });
@@ -640,14 +655,15 @@ pub struct Renderer {
     geometry_attrib_data: Vec<GeometryAttribData>,
     shader_binding_data: Option<ShaderBindingData>,
 
-    sample_image: StaticImageHandle,
+    pmj_samples_image: StaticImageHandle,
+    sobol_samples_image: StaticImageHandle,
     result_image: ImageHandle,
 
     pub params: RendererParams,
 }
 
 impl Renderer {
-    const SEQUENCE_COUNT: u32 = 1024;
+    const PMJ_SEQUENCE_COUNT: u32 = 1024;
     const MAX_SAMPLES_PER_SEQUENCE: u32 = 1024;
 
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
@@ -876,9 +892,9 @@ impl Renderer {
         let filter_descriptor_set_layout = FilterDescriptorSetLayout::new(descriptor_set_layout_cache);
         let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
 
-        let sample_image = resource_loader.create_image();
+        let pmj_samples_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
-            let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
+            let sequences: Vec<Vec<_>> = (0..Self::PMJ_SEQUENCE_COUNT)
                 .into_par_iter()
                 .map(|i| {
                     let mut rng = SmallRng::seed_from_u64(i as u64);
@@ -887,16 +903,36 @@ impl Renderer {
                 .collect();
 
             let desc = ImageDesc::new_2d(
-                UVec2::new(Self::MAX_SAMPLES_PER_SEQUENCE, Self::SEQUENCE_COUNT),
+                UVec2::new(Self::MAX_SAMPLES_PER_SEQUENCE, Self::PMJ_SEQUENCE_COUNT),
                 vk::Format::R32G32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
             let mut writer = allocator
-                .map_image(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
+                .map_image(pmj_samples_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
                 .unwrap();
 
             for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
                 let pixel: [f32; 2] = [sample.x(), sample.y()];
+                writer.write(&pixel);
+            }
+        });
+
+        let sobol_samples_image = resource_loader.create_image();
+        resource_loader.async_load(move |allocator| {
+            let desc = ImageDesc::new_2d(
+                UVec2::new(Self::MAX_SAMPLES_PER_SEQUENCE, 1),
+                vk::Format::R32G32_UINT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let mut writer = allocator
+                .map_image(sobol_samples_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
+                .unwrap();
+
+            let seq0 = sobol(0);
+            let seq1 = sobol(1);
+
+            for (s0, s1) in seq0.zip(seq1).take(Self::MAX_SAMPLES_PER_SEQUENCE as usize) {
+                let pixel: [u32; 2] = [s0, s1];
                 writer.write(&pixel);
             }
         });
@@ -926,7 +962,8 @@ impl Renderer {
             shader_data,
             geometry_attrib_data,
             shader_binding_data: None,
-            sample_image,
+            pmj_samples_image,
+            sobol_samples_image,
             result_image,
             params,
         }
@@ -1466,6 +1503,10 @@ impl Renderer {
                 RenderColorSpace::AcesCg,
             );
 
+            ui.text("Sequence Type:");
+            needs_reset |= ui.radio_button(im_str!("PMJ"), &mut self.params.sequence_type, SequenceType::Pmj);
+            needs_reset |= ui.radio_button(im_str!("Sobol"), &mut self.params.sequence_type, SequenceType::Sobol);
+
             ui.text("Sampling Technique:");
             needs_reset |= ui.radio_button(
                 im_str!("Lights Only"),
@@ -1600,7 +1641,8 @@ impl Renderer {
         let shader_binding_data = self.shader_binding_data.as_ref()?;
         let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_data.shader_binding_table)?;
         let light_info_table_buffer = resource_loader.get_buffer(shader_binding_data.light_info_table)?;
-        let sample_image_view = resource_loader.get_image_view(self.sample_image)?;
+        let pmj_samples_image_view = resource_loader.get_image_view(self.pmj_samples_image)?;
+        let sobol_samples_image_view = resource_loader.get_image_view(self.sobol_samples_image)?;
 
         // do a pass
         if !progress.done(&self.params) {
@@ -1682,11 +1724,14 @@ impl Renderer {
                                     max_segment_count: self.params.max_bounces + 2,
                                     render_color_space: self.params.render_color_space.into_integer(),
                                     mis_heuristic: self.params.mis_heuristic.into_integer(),
+                                    sequence_type: self.params.sequence_type.into_integer(),
                                     flags: path_trace_flags,
+                                    _pad: 0,
                                 }
                             },
                             top_level_accel,
-                            sample_image_view,
+                            pmj_samples_image_view,
+                            sobol_samples_image_view,
                             &temp_image_views,
                         );
 
@@ -1763,11 +1808,13 @@ impl Renderer {
                             |buf: &mut FilterData| {
                                 *buf = FilterData {
                                     image_size: self.params.size(),
+                                    sequence_type: self.params.sequence_type.into_integer(),
                                     sample_index,
                                     filter_type: self.params.filter_type.into_integer(),
                                 };
                             },
-                            sample_image_view,
+                            pmj_samples_image_view,
+                            sobol_samples_image_view,
                             &temp_image_views,
                             result_image_view,
                         );

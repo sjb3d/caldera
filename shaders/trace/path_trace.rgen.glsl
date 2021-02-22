@@ -50,22 +50,22 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     uint max_segment_count;
     uint render_color_space;
     uint mis_heuristic;
+    uint sequence_type;
     uint flags;
 } g_path_trace;
 
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
-layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_samples;
-layout(set = 0, binding = 3, r32f) uniform restrict writeonly image2D g_result[3];
+layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samples;
+layout(set = 0, binding = 3, rg32ui) uniform restrict readonly uimage2D g_sobol_samples;
+layout(set = 0, binding = 4, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
-#define SEQUENCE_COUNT          1024
+#include "sequence.glsl"
 
 vec2 rand_u01(uint seq_index)
 {
-    const uint sample_index = g_path_trace.sample_index;
-    const uint seq_hash = get_seq_hash(gl_LaunchIDEXT.xy, seq_index, sample_index);
-    return imageLoad(g_samples, ivec2(sample_index, seq_hash % SEQUENCE_COUNT)).xy;
+    return rand_u01(gl_LaunchIDEXT.xy, seq_index, g_path_trace.sample_index, g_path_trace.sequence_type);
 }
 
 uint sample_uniform_discrete(uint count, inout float u01)

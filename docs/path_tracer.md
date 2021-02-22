@@ -9,14 +9,16 @@ The `trace` app is a path tracer that makes use of Vulkan ray tracing extensions
 * A uni-directional path tracer
   * Implemented as a single Vulkan ray tracing pipeline
   * Support for instanced geometry (via instanced bottom-level acceleration structures)
-* Random numbers using [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) implemented in [pmj](https://github.com/sjb3d/pmj)
+* Sampling using either:
+  * [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) implemented in [pmj](https://github.com/sjb3d/pmj)
+  * Sobol sequence (as described in [Practical Hash-based Owen Scrambling](http://www.jcgt.org/published/0009/04/01/))
 * BSDF importance sampling
   * Diffuse and mirror "ideal" surfaces
   * Fresnel dieletrics and conductors
   * Diffuse with dielectric coating
 * Importance sampling of lights
-  * Fixed CDF based on light power
-  * Quad or sphere shaped emitters
+  * Fixed CDF based on light power to select between lights
+  * Quad/disc/sphere shaped emitters
   * Dome or solid angle distant lights
 * Multiple importance sampling between BSDFs and lights
 * Simple fixed material model
@@ -71,7 +73,7 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] Generic clearcoat?
 - [ ] IOR parameters for dielectrics and conductors
 - [ ] Interior media
-- [ ] Sobol sampler
+- [x] Sobol sampler
 - [ ] Thin lens camera
 - [ ] Volumetrics
 - [ ] Image-based dome light

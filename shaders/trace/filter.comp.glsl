@@ -12,21 +12,21 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(set = 0, binding = 0, scalar) uniform FilterData {
     uvec2 image_size;
+    uint sequence_type;
     uint sample_index;
     uint filter_type;
 } g_filter;
 
-layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_samples;
-layout(set = 0, binding = 2, r32f) uniform restrict readonly image2D g_input[3];
-layout(set = 0, binding = 3, rgba32f) uniform restrict image2D g_result;
+layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_pmj_samples;
+layout(set = 0, binding = 2, rg32ui) uniform restrict readonly uimage2D g_sobol_samples;
+layout(set = 0, binding = 3, r32f) uniform restrict readonly image2D g_input[3];
+layout(set = 0, binding = 4, rgba32f) uniform restrict image2D g_result;
 
-#define SEQUENCE_COUNT          1024
+#include "sequence.glsl"
 
 vec2 rand_u01(uvec2 pixel_coord)
 {
-    const uint sample_index = g_filter.sample_index;
-    const uint seq_hash = get_seq_hash(pixel_coord, 0, sample_index);
-    return imageLoad(g_samples, ivec2(sample_index, seq_hash % SEQUENCE_COUNT)).xy;
+    return rand_u01(pixel_coord, 0, g_filter.sample_index, g_filter.sequence_type);
 }
 
 float mitchell(float x)

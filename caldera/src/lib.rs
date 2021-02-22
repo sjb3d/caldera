@@ -43,6 +43,9 @@ pub use crate::render_graph::*;
 
 mod resource;
 
+mod sobol;
+pub use crate::sobol::*;
+
 mod spectrum;
 pub use crate::spectrum::*;
 
