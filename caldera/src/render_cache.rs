@@ -20,6 +20,7 @@ impl FormatExt for vk::Format {
                 32
             }
             vk::Format::R16G16B16A16_SFLOAT | vk::Format::R32G32_SFLOAT | vk::Format::R32G32_UINT => 64,
+            vk::Format::R32G32B32A32_UINT => 128,
             _ => unimplemented!(),
         }
     }

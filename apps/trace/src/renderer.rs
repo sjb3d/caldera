@@ -921,7 +921,7 @@ impl Renderer {
         resource_loader.async_load(move |allocator| {
             let desc = ImageDesc::new_2d(
                 UVec2::new(Self::MAX_SAMPLES_PER_SEQUENCE, 1),
-                vk::Format::R32G32_UINT,
+                vk::Format::R32G32B32A32_UINT,
                 vk::ImageAspectFlags::COLOR,
             );
             let mut writer = allocator
@@ -930,9 +930,11 @@ impl Renderer {
 
             let seq0 = sobol(0);
             let seq1 = sobol(1);
+            let seq2 = sobol(2);
+            let seq3 = sobol(3);
 
-            for (s0, s1) in seq0.zip(seq1).take(Self::MAX_SAMPLES_PER_SEQUENCE as usize) {
-                let pixel: [u32; 2] = [s0, s1];
+            for (((s0, s1), s2), s3) in seq0.zip(seq1).zip(seq2).zip(seq3).take(Self::MAX_SAMPLES_PER_SEQUENCE as usize) {
+                let pixel: [u32; 4] = [s0, s1, s2, s3];
                 writer.write(&pixel);
             }
         });

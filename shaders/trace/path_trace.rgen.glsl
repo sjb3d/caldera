@@ -24,8 +24,8 @@
 #include "mirror_bsdf.glsl"
 #include "smooth_dielectric_bsdf.glsl"
 #include "smooth_plastic_bsdf.glsl"
-#include "rough_plastic_bsdf.glsl"
 #include "rough_conductor_bsdf.glsl"
+#include "rough_plastic_bsdf.glsl"
 
 #define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS                0x01
 #define PATH_TRACE_FLAG_ALLOW_LIGHT_SAMPLING                0x02
@@ -56,14 +56,14 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samples;
-layout(set = 0, binding = 3, rg32ui) uniform restrict readonly uimage2D g_sobol_samples;
+layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
 layout(set = 0, binding = 4, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
 #include "sequence.glsl"
 
-vec2 rand_u01(uint seq_index)
+vec4 rand_u01(uint seq_index)
 {
     return rand_u01(gl_LaunchIDEXT.xy, seq_index, g_path_trace.sample_index, g_path_trace.sequence_type);
 }
@@ -112,13 +112,13 @@ void sample_bsdf(
     uint bsdf_type,
     vec3 out_dir,
     BsdfParams params,
-    vec2 rand_u01,
+    vec3 bsdf_rand_u01,
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-#define CALL(F) F(out_dir, params, rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, path_max_roughness)
+#define CALL(F) F(out_dir, params, bsdf_rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, path_max_roughness)
     switch (bsdf_type) {
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_sample); break;
         case BSDF_TYPE_MIRROR:              CALL(mirror_bsdf_sample); break;
@@ -322,7 +322,7 @@ void main()
 
     // sample the camera
     {
-        const vec2 pixel_rand_u01 = rand_u01(0);
+        const vec2 pixel_rand_u01 = rand_u01(0).xy;
         const vec2 fov_uv = (vec2(gl_LaunchIDEXT.xy) + pixel_rand_u01)/vec2(gl_LaunchSizeEXT);
         const vec3 ray_dir_ls = normalize(vec3(g_path_trace.fov_size_at_unit_z*(.5f - fov_uv), 1.f));
         const vec3 ray_dir = g_path_trace.world_from_camera * vec4(ray_dir_ls, 0.f);
@@ -542,7 +542,7 @@ void main()
 
         // sample BSDF
         {
-            vec2 bsdf_rand_u01 = rand_u01(2*segment_index);
+            vec3 bsdf_rand_u01 = rand_u01(2*segment_index).xyz;
 
             // RR
             if (segment_index > 4) {

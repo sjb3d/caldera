@@ -18,7 +18,7 @@ void diffuse_bsdf_eval(
 void diffuse_bsdf_sample(
     vec3 out_dir,
     BsdfParams params,
-    vec2 rand_u01,
+    vec3 bsdf_rand_u01,
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
@@ -26,7 +26,7 @@ void diffuse_bsdf_sample(
 {
     const vec3 reflectance = get_reflectance(params);
     
-    in_dir = sample_hemisphere_cosine_weighted(rand_u01);
+    in_dir = sample_hemisphere_cosine_weighted(bsdf_rand_u01.xy);
     in_dir.z = max(in_dir.z, MIN_SAMPLED_N_DOT_L);
 
     const float n_dot_l = in_dir.z;

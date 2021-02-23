@@ -3,7 +3,7 @@
 void mirror_bsdf_sample(
     vec3 out_dir,
     BsdfParams params,
-    vec2 rand_u01,
+    vec3 bsdf_rand_u01,
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,

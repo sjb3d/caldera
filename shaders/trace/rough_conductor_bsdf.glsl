@@ -31,7 +31,7 @@ void rough_conductor_bsdf_eval(
 void rough_conductor_bsdf_sample(
     vec3 out_dir,
     BsdfParams params,
-    vec2 rand_u01,
+    vec3 bsdf_rand_u01,
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
@@ -43,7 +43,7 @@ void rough_conductor_bsdf_sample(
 
     const vec3 v = out_dir;
 
-    const vec3 h = sample_vndf(out_dir, alpha, rand_u01);
+    const vec3 h = sample_vndf(out_dir, alpha, bsdf_rand_u01.xy);
     in_dir = reflect(-out_dir, h);
     in_dir.z = max(in_dir.z, MIN_SAMPLED_N_DOT_L);
 

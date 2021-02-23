@@ -18,13 +18,13 @@ layout(set = 0, binding = 0, scalar) uniform FilterData {
 } g_filter;
 
 layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_pmj_samples;
-layout(set = 0, binding = 2, rg32ui) uniform restrict readonly uimage2D g_sobol_samples;
+layout(set = 0, binding = 2, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
 layout(set = 0, binding = 3, r32f) uniform restrict readonly image2D g_input[3];
 layout(set = 0, binding = 4, rgba32f) uniform restrict image2D g_result;
 
 #include "sequence.glsl"
 
-vec2 rand_u01(uvec2 pixel_coord)
+vec4 rand_u01(uvec2 pixel_coord)
 {
     return rand_u01(pixel_coord, 0, g_filter.sample_index, g_filter.sequence_type);
 }
@@ -73,7 +73,8 @@ void main()
                     continue;
                 }
 
-                const vec2 filter_coord = vec2(x, y) + rand_u01(load_coord) - .5f;
+                const vec2 pixel_rand_u01 = rand_u01(load_coord).xy;
+                const vec2 filter_coord = vec2(x, y) + pixel_rand_u01 - .5f;
 
                 const float sigma2 = 2.2f;
                 const float half_extent = 2.f;
@@ -95,7 +96,8 @@ void main()
                     continue;
                 }
 
-                const vec2 filter_coord = vec2(x, y) + rand_u01(load_coord) - .5f;
+                const vec2 pixel_rand_u01 = rand_u01(load_coord).xy;
+                const vec2 filter_coord = vec2(x, y) + pixel_rand_u01 - .5f;
                 const float w = mitchell(filter_coord.x) * mitchell(filter_coord.y);
                 if (w != 0.f) {
                     result.x += w*imageLoad(g_input[0], ivec2(load_coord)).x;

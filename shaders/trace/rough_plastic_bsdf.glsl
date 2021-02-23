@@ -38,7 +38,7 @@ void rough_plastic_bsdf_eval(
 void rough_plastic_bsdf_sample(
     vec3 out_dir,
     BsdfParams params,
-    vec2 rand_u01,
+    vec3 bsdf_rand_u01,
     out vec3 in_dir,
     out vec3 estimator,
     out float solid_angle_pdf_or_negative,
@@ -53,12 +53,12 @@ void rough_plastic_bsdf_sample(
     const float diffuse_strength = remaining_diffuse_strength(n_dot_v, PLASTIC_F0, roughness);
     const float diffuse_probability = max(diffuse_strength, MIN_LAYER_PROBABILITY);
 
-    const bool sample_diffuse = split_random_variable(diffuse_probability, rand_u01.x);
+    const bool sample_diffuse = split_random_variable(diffuse_probability, bsdf_rand_u01.x);
     if (sample_diffuse) {
-        in_dir = sample_hemisphere_cosine_weighted(rand_u01);
+        in_dir = sample_hemisphere_cosine_weighted(bsdf_rand_u01.xy);
         path_max_roughness = 1.f;
     } else {
-        const vec3 h = sample_vndf(out_dir, alpha, rand_u01);
+        const vec3 h = sample_vndf(out_dir, alpha, bsdf_rand_u01.xy);
         in_dir = reflect(-out_dir, h);
     }
     in_dir.z = max(in_dir.z, MIN_SAMPLED_N_DOT_L);
