@@ -14,11 +14,11 @@
 #include "ggx.glsl"
 #include "fresnel.glsl"
 
-#include "quad_light.glsl"
 #include "disc_light.glsl"
-#include "sphere_light.glsl"
 #include "dome_light.glsl"
+#include "quad_light.glsl"
 #include "solid_angle_light.glsl"
+#include "sphere_light.glsl"
 
 #include "diffuse_bsdf.glsl"
 #include "mirror_bsdf.glsl"
@@ -134,7 +134,7 @@ void sample_single_light(
     uint light_index,
     vec3 target_position,
     vec3 target_normal,
-    vec2 rand_u01,
+    vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
     out vec3 light_emission,
@@ -151,7 +151,7 @@ void sample_single_light(
     float solid_angle_pdf_and_ext_bit;
     float unit_scale;
     switch (light_info.light_type) {
-#define PARAMS  target_position, target_normal, rand_u01, light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
+#define PARAMS  target_position, target_normal, light_rand_u01, light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
         case LIGHT_TYPE_QUAD: {
             PlanarLightParamsBuffer buf = PlanarLightParamsBuffer(params_addr);
             const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED) != 0;
@@ -183,7 +183,7 @@ void sample_single_light(
 void sample_all_lights(
     vec3 target_position,
     vec3 target_normal,
-    vec2 rand_u01,
+    vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
     out vec3 light_emission,
@@ -192,10 +192,10 @@ void sample_all_lights(
     out float light_epsilon)
 {
     // pick a light source
-    const uint entry_index = sample_uniform_discrete(g_path_trace.sampled_light_count, rand_u01.x);
+    const uint entry_index = sample_uniform_discrete(g_path_trace.sampled_light_count, light_rand_u01.x);
     const LightAliasEntry entry = g_path_trace.light_alias_table.entries[entry_index];
     uint light_index;
-    if (split_random_variable(entry.split, rand_u01.y)) {
+    if (split_random_variable(entry.split, light_rand_u01.y)) {
         light_index = entry.indices & 0xffffU;
     } else {
         light_index = entry.indices >> 16;
@@ -206,7 +206,7 @@ void sample_all_lights(
         light_index,
         target_position,
         target_normal,
-        rand_u01,
+        light_rand_u01,
         light_position_or_extdir,
         light_normal,
         light_emission,
@@ -452,6 +452,9 @@ void main()
         // sample a light source
         const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(hit.info));
         if (g_path_trace.sampled_light_count != 0 && allow_light_sampling && !hit_is_always_delta) {
+            // sequence for light sampling
+            const vec2 light_rand_u01 = rand_u01(2*segment_index - 1).xy;
+
             // sample from all light sources
             vec3 light_position_or_extdir;
             Normal32 light_normal;
@@ -462,7 +465,7 @@ void main()
             sample_all_lights(
                 hit.position_or_extdir,
                 get_dir(hit.shading_normal),
-                rand_u01(2*segment_index - 1),
+                light_rand_u01,
                 light_position_or_extdir,
                 light_normal,
                 light_emission,

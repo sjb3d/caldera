@@ -5,14 +5,14 @@ void disc_light_sample(
     bool is_two_sided,
     vec3 target_position,
     vec3 target_normal,
-    vec2 rand_u01,
+    vec2 light_rand_u01,
     out vec3 light_position,
     out Normal32 light_normal_packed,
     out vec3 emission,
     out float solid_angle_pdf_and_ext_bit,
     out float unit_scale)
 {
-    const vec2 disc_pos = sample_disc_uniform(rand_u01);
+    const vec2 disc_pos = sample_disc_uniform(light_rand_u01);
     light_position = params.point_ws + disc_pos.x*params.vec0_ws + disc_pos.y*params.vec1_ws;
     
     const vec3 light_normal = params.normal_ws;

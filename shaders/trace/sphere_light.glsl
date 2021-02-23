@@ -41,7 +41,7 @@ void sphere_light_sample(
     bool sample_solid_angle,
     vec3 target_position,
     vec3 target_normal,
-    vec2 rand_u01,
+    vec2 light_rand_u01,
     out vec3 light_position,
     out Normal32 light_normal_packed,
     out vec3 emission,
@@ -62,7 +62,7 @@ void sphere_light_sample(
             solid_angle = 2.f*PI*(1.f - cos_theta);
 
             // sample the visible solid angle
-            const vec3 ray_dir_ls = sample_solid_angle_uniform(cos_theta, rand_u01);
+            const vec3 ray_dir_ls = sample_solid_angle_uniform(cos_theta, light_rand_u01);
             const vec3 ray_dir = basis*ray_dir_ls;
 
             // intersect ray with sphere for sample point
@@ -78,7 +78,7 @@ void sphere_light_sample(
             // approximate with a disc since it is more numerically stable
             solid_angle = PI*sin_theta*sin_theta;
 
-            const vec2 disc_pos = sample_disc_uniform(rand_u01);
+            const vec2 disc_pos = sample_disc_uniform(light_rand_u01);
             const vec3 sample_vec_ls = vec3(disc_pos*sin_theta, -1.f);
 
             sample_dir = normalize(basis*sample_vec_ls);
@@ -95,7 +95,7 @@ void sphere_light_sample(
         solid_angle_pdf_and_ext_bit = 1.f/solid_angle;
         unit_scale = params.unit_scale;
     } else {
-        const vec3 sample_dir = sample_sphere_uniform(rand_u01);
+        const vec3 sample_dir = sample_sphere_uniform(light_rand_u01);
         light_position = params.centre_ws + params.radius_ws*sample_dir;
         const vec3 light_normal = sample_dir;
         light_normal_packed = make_normal32(light_normal);

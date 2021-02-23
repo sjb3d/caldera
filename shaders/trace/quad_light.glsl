@@ -23,14 +23,14 @@ void quad_light_sample(
     bool is_two_sided,
     vec3 target_position,
     vec3 target_normal,
-    vec2 rand_u01,
+    vec2 light_rand_u01,
     out vec3 light_position,
     out Normal32 light_normal_packed,
     out vec3 emission,
     out float solid_angle_pdf_and_ext_bit,
     out float unit_scale)
 {
-    light_position = params.point_ws + rand_u01.x*params.vec0_ws + rand_u01.y*params.vec1_ws;
+    light_position = params.point_ws + light_rand_u01.x*params.vec0_ws + light_rand_u01.y*params.vec1_ws;
     
     const vec3 light_normal = params.normal_ws;
     light_normal_packed = make_normal32(light_normal);

@@ -18,7 +18,7 @@ void solid_angle_light_sample(
     SolidAngleLightParams params,
     vec3 target_position,
     vec3 target_normal,
-    vec2 rand_u01,
+    vec2 light_rand_u01,
     out vec3 light_extdir,
     out Normal32 light_normal_packed,
     out vec3 emission,
@@ -26,7 +26,7 @@ void solid_angle_light_sample(
     out float unit_scale)
 {
     const float cos_theta = 1.f - params.solid_angle/(2.f*PI);
-    const vec3 ray_dir_ls = sample_solid_angle_uniform(cos_theta, rand_u01);
+    const vec3 ray_dir_ls = sample_solid_angle_uniform(cos_theta, light_rand_u01);
 
     const mat3 basis = basis_from_z_axis(normalize(params.direction_ws));
     light_extdir = normalize(basis*ray_dir_ls);
