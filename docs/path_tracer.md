@@ -57,6 +57,8 @@ The next set of images are rendered from these excellent [rendering resources](h
 
 ![living-room-2](trace_living-room-2.jpg)
 
+![staircase2](trace_staircase2.jpg)
+
 ![glass-of-water](trace_glass-of-water.jpg)
 
 There is a barely started exporter for Blender, but support for materials beyond a simple texture map is a bit out of scope for now.  This image uses the "Classroom" [Blender demo file](https://www.blender.org/download/demo-files/), with highly approximated materials and only sunlight:

@@ -110,6 +110,7 @@ IMAGES=\
 	docs/trace_glass-of-water.jpg \
 	docs/trace_staircase.jpg \
 	docs/trace_living-room-2.jpg \
+	docs/trace_staircase2.jpg \
 	docs/trace_cornell-box.jpg \
 	docs/trace_cornell-box_dome-light.jpg \
 	docs/trace_cornell-box_conductor.jpg \
@@ -138,6 +139,9 @@ docs/trace_living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders 
 
 docs/trace_staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
 	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
+
+docs/trace_staircase2.%: ../tungsten_scenes/staircase2/scene.json shaders Makefile
+	$(TRACE) -o $@ -w 1000 -h 1000 -e -0.5 -b 16 --planar-lights-are-two-sided enable $(MANY_SAMPLES) tungsten $<
 
 docs/trace_cornell-box.%: shaders Makefile
 	$(TRACE) -o $@ -w 492 -h 492 -e 0.5 $(MANY_SAMPLES) cornell-box
