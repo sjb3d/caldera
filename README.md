@@ -71,7 +71,7 @@ A path tracer built on Vulkan ray tracing.  **[For more information about this p
 
 ### Procedural Macro for Descriptor Set Layout
 
-The macro `descriptor_set_layout!` is implemented in `caldera-macro`, and used in the test apps.  This allows the layout to be declared using struct-like syntax.  For example, consider the following bindings in GLSL:
+The macro `descriptor_set_layout!` is implemented in `caldera-macro`. This allows the layout to be declared using struct-like syntax.  For example, consider the following bindings in GLSL:
 
 ```glsl
 layout(set = 0, binding = 0, scalar) uniform CopyData {
