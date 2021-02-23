@@ -3,15 +3,13 @@
 
 float ggx_d(vec3 h, vec2 alpha)
 {
-    const vec3 ha = vec3(h.xy/alpha, h.z);
-    const float m = sum_elements(ha*ha);
+    const float m = sum_elements(square(vec3(h.xy/alpha, h.z)));
     return 1.f/(PI*alpha.x*alpha.y*m*m);
 }
 
 float smith_lambda(vec3 v, vec2 alpha)
 {
-    const vec3 va = vec3(v.xy*alpha, v.z);
-    const vec3 va2 = va*va;
+    const vec3 va2 = square(vec3(v.xy*alpha, v.z));
     return .5f*(sqrt(1.f + (va2.x + va2.y)/va2.z) - 1.f);
 }
 

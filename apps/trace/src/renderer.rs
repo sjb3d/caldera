@@ -221,6 +221,7 @@ enum BsdfType {
     Diffuse,
     Mirror,
     SmoothDielectric,
+    RoughDielectric,
     SmoothPlastic,
     RoughPlastic,
     RoughConductor,
@@ -233,6 +234,7 @@ impl From<Surface> for BsdfType {
             Surface::Diffuse => BsdfType::Diffuse,
             Surface::Mirror => BsdfType::Mirror,
             Surface::SmoothDielectric => BsdfType::SmoothDielectric,
+            Surface::RoughDielectric { .. } => BsdfType::RoughDielectric,
             Surface::SmoothPlastic => BsdfType::SmoothPlastic,
             Surface::RoughPlastic { .. } => BsdfType::RoughPlastic,
             Surface::RoughConductor { .. } => BsdfType::RoughConductor,
@@ -251,7 +253,9 @@ impl Roughness for Surface {
         match self {
             Surface::None | Surface::Diffuse => 1.0,
             Surface::Mirror | Surface::SmoothDielectric | Surface::SmoothPlastic => 0.0,
-            Surface::RoughPlastic { roughness } | Surface::RoughConductor { roughness } => roughness.max(MIN_ROUGHNESS),
+            Surface::RoughDielectric { roughness }
+            | Surface::RoughPlastic { roughness }
+            | Surface::RoughConductor { roughness } => roughness.max(MIN_ROUGHNESS),
         }
     }
 }

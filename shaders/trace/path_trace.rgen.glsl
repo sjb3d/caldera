@@ -25,6 +25,7 @@
 #include "smooth_dielectric_bsdf.glsl"
 #include "smooth_plastic_bsdf.glsl"
 #include "rough_conductor_bsdf.glsl"
+#include "rough_dielectric_bsdf.glsl"
 #include "rough_plastic_bsdf.glsl"
 
 #define PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS                0x01
@@ -101,6 +102,7 @@ void evaluate_bsdf(
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_eval); break;
         case BSDF_TYPE_MIRROR:              break;
         case BSDF_TYPE_SMOOTH_DIELECTRIC:   break;
+        case BSDF_TYPE_ROUGH_DIELECTRIC:    CALL(rough_dielectric_bsdf_eval); break;
         case BSDF_TYPE_SMOOTH_PLASTIC:      CALL(smooth_plastic_bsdf_eval); break;
         case BSDF_TYPE_ROUGH_PLASTIC:       CALL(rough_plastic_bsdf_eval); break;
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_eval); break;
@@ -123,6 +125,7 @@ void sample_bsdf(
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_sample); break;
         case BSDF_TYPE_MIRROR:              CALL(mirror_bsdf_sample); break;
         case BSDF_TYPE_SMOOTH_DIELECTRIC:   CALL(smooth_dielectric_bsdf_sample); break;
+        case BSDF_TYPE_ROUGH_DIELECTRIC:    CALL(rough_dielectric_bsdf_sample); break;
         case BSDF_TYPE_SMOOTH_PLASTIC:      CALL(smooth_plastic_bsdf_sample); break;
         case BSDF_TYPE_ROUGH_PLASTIC:       CALL(rough_plastic_bsdf_sample); break;
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_sample); break;
@@ -424,9 +427,9 @@ void main()
                     }
                     break;
                 case BSDF_TYPE_SMOOTH_DIELECTRIC:
-                    // TODO: degrade to rough dielectric
                     if (path_max_roughness != 0.f) {
-                        hit.info = replace_bsdf_type(hit.info, BSDF_TYPE_NONE);
+                        hit.info = replace_bsdf_type(hit.info, BSDF_TYPE_ROUGH_DIELECTRIC);
+                        hit.bsdf_params = replace_roughness(hit.bsdf_params, path_max_roughness);
                     }
                     break;
                 case BSDF_TYPE_DIFFUSE:

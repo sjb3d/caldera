@@ -23,6 +23,7 @@ INC=\
 	trace/occlusion_common.glsl \
 	trace/quad_light.glsl \
 	trace/rough_conductor_bsdf.glsl \
+	trace/rough_dielectric_bsdf.glsl \
 	trace/rough_plastic_bsdf.glsl \
 	trace/sequence.glsl \
 	trace/solid_angle_light.glsl \

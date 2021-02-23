@@ -48,6 +48,7 @@ pub enum Surface {
     Diffuse,
     Mirror,
     SmoothDielectric,
+    RoughDielectric { roughness: f32 },
     SmoothPlastic,
     RoughPlastic { roughness: f32 },
     RoughConductor { roughness: f32 },

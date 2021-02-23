@@ -68,7 +68,7 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] Denoiser?
 - [ ] Adaptive sampling
 - [ ] HDR display output
-- [ ] Rough dielectrics
+- [x] Rough dielectrics
 - [ ] Smooth conductors
 - [ ] Generic clearcoat?
 - [ ] IOR parameters for dielectrics and conductors

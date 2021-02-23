@@ -50,14 +50,11 @@ float remaining_diffuse_strength(float n_dot_v, float f0, float roughness)
     return mix(smooth_remain, rough_remain, roughness);
 }
 
-vec3 refract(vec3 v, float eta)
+vec3 refract_clamp(vec3 v, vec3 n, float eta)
 {
-    // Snell's law: sin_theta_i = sin_theta_t * eta
-    const float cos_theta_i = abs(v.z);
-    const float sin2_theta_i = 1.f - cos_theta_i*cos_theta_i;
-    const float sin2_theta_t = sin2_theta_i/square(eta);
-    const float cos_theta_t = sqrt(max(1.f - sin2_theta_t, 0.f));
-    return normalize(vec3(0.f, 0.f, cos_theta_i/eta - cos_theta_t) - v/eta);
+    const float n_dot_v = abs(dot(n, v));
+    const float k = eta*eta - (1.f - n_dot_v*n_dot_v);
+    return normalize((n_dot_v - sqrt(max(k, 0.f)))*n - v);
 }
 
 #endif
