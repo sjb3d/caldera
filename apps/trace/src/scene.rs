@@ -384,10 +384,8 @@ const CORNELL_BOX_LIGHT_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
     (750.0,  0.0)
 );
 
-fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
-    let measure = |wavelength: f32| match samples
-        .binary_search_by_key(&wavelength.to_bits(), |sample| sample.wavelength.to_bits())
-    {
+fn interpolate_samples(samples: &[SampledSpectrum], wavelength: f32) -> f32 {
+    match samples.binary_search_by_key(&wavelength.to_bits(), |sample| sample.wavelength.to_bits()) {
         Ok(index) => samples[index].value,
         Err(index) if 0 < index && index < samples.len() => {
             let s1 = unsafe { samples.get_unchecked(index) };
@@ -397,8 +395,7 @@ fn xyz_from_samples(samples: &[SampledSpectrum]) -> Vec3 {
             s0.value * (1.0 - t) + s1.value * t
         }
         _ => 0.0,
-    };
-    xyz_from_spectrum(measure) / xyz_from_spectrum(|_| 1.0).y
+    }
 }
 
 #[derive(Debug, EnumFromStr)]
@@ -531,10 +528,22 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             .build(),
     );
 
-    let rgb_from_xyz = xyz_from_rec709_matrix().inversed() * d65_from_e_matrix();
-    let white_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_WHITE_SAMPLES);
-    let red_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_RED_SAMPLES);
-    let green_reflectance = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_GREEN_SAMPLES);
+    let rgb_from_xyz = xyz_from_rec709_matrix().inversed();
+    let white_reflectance = rgb_from_xyz
+        * xyz_from_reflectance_spectrum(
+            |wavelength| interpolate_samples(CORNELL_BOX_WHITE_SAMPLES, wavelength),
+            Illuminant::D65,
+        );
+    let red_reflectance = rgb_from_xyz
+        * xyz_from_reflectance_spectrum(
+            |wavelength| interpolate_samples(CORNELL_BOX_RED_SAMPLES, wavelength),
+            Illuminant::D65,
+        );
+    let green_reflectance = rgb_from_xyz
+        * xyz_from_reflectance_spectrum(
+            |wavelength| interpolate_samples(CORNELL_BOX_GREEN_SAMPLES, wavelength),
+            Illuminant::D65,
+        );
 
     let white_material = scene.add_material(Material {
         reflectance: Reflectance::Constant(white_reflectance),
@@ -572,7 +581,8 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         scene.add_instance(Instance::new(identity, tall_block, tall_block_material));
     }
 
-    let light_emission = rgb_from_xyz * xyz_from_samples(CORNELL_BOX_LIGHT_SAMPLES);
+    let light_emission =
+        rgb_from_xyz * xyz_from_power_spectrum(|wavelength| interpolate_samples(CORNELL_BOX_LIGHT_SAMPLES, wavelength));
     match variant {
         CornellBoxVariant::DomeLight => {
             scene.add_light(Light::Dome {

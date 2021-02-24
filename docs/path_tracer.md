@@ -24,7 +24,8 @@ The `trace` app is a path tracer that makes use of Vulkan ray tracing extensions
 * Simple fixed material model
   * Reflectance from per-instance constant and/or texture
   * All other parameters are either per-instance or global constants (for now)
-* Wide gamut rendering and fitted ACES tonemapping using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
+* ACES tonemapping using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
+  * Render using either Rec709 (sRGB) or AP1 (ACEScg) primaries
 * Interactive renderer with moveable camera and debug UI
 
 ## Links
@@ -84,3 +85,4 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] Triangle mesh emitter?
 - [ ] Microfacet multi-scattering?
 - [ ] Path re-use?
+- [ ] Spectral rendering?

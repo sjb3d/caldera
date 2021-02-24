@@ -1,4 +1,3 @@
-
 // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
 // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
 // see color_space::derive_matrices() for derivation

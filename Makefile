@@ -144,7 +144,7 @@ docs/trace_staircase2.%: ../tungsten_scenes/staircase2/scene.json shaders Makefi
 	$(TRACE) -o $@ -w 1000 -h 1000 -e -0.5 -b 16 --planar-lights-are-two-sided enable $(MANY_SAMPLES) tungsten $<
 
 docs/trace_cornell-box.%: shaders Makefile
-	$(TRACE) -o $@ -w 492 -h 492 -e 0.5 $(MANY_SAMPLES) cornell-box
+	$(TRACE) -o $@ -w 492 -h 492 -e 1.0 $(MANY_SAMPLES) cornell-box
 
 docs/trace_cornell-box_dome-light.%: shaders Makefile
 	$(TRACE) -o $@ -w 492 -h 492 $(MANY_SAMPLES) cornell-box dome-light
