@@ -937,7 +937,12 @@ impl Renderer {
             let seq2 = sobol(2);
             let seq3 = sobol(3);
 
-            for (((s0, s1), s2), s3) in seq0.zip(seq1).zip(seq2).zip(seq3).take(Self::MAX_SAMPLES_PER_SEQUENCE as usize) {
+            for (((s0, s1), s2), s3) in seq0
+                .zip(seq1)
+                .zip(seq2)
+                .zip(seq3)
+                .take(Self::MAX_SAMPLES_PER_SEQUENCE as usize)
+            {
                 let pixel: [u32; 4] = [s0, s1, s2, s3];
                 writer.write(&pixel);
             }
