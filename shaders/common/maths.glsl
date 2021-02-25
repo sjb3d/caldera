@@ -24,6 +24,11 @@ float square(float x)       { return x*x; }
 vec2 square(vec2 x)         { return x*x; }
 vec3 square(vec3 x)         { return x*x; }
 
+float unlerp(float a, float b, float x)
+{
+    return (x - a)/(b - a);
+}
+
 float copysign(float x, float s)
 {
     const uint x_bits = floatBitsToUint(x);

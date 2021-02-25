@@ -61,8 +61,6 @@ layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobo
 layout(set = 0, binding = 4) uniform sampler2D g_smits_table;
 layout(set = 0, binding = 5, r32f) uniform restrict writeonly image2D g_result;
 
-#define LUMINANCE_VEC_HACK      vec3(.2f, .7f, .1f)
-
 #define LOG2_EPSILON_FACTOR     (-18)
 
 #include "sequence.glsl"
@@ -133,7 +131,27 @@ void sample_bsdf(
     estimator = smits_power_from_rec709(wavelength, estimator_tmp, g_smits_table);
 }
 
+float cornell_box_illuminant(float wavelength)
+{
+    float ret;
+    if (wavelength < 400.f) {
+        ret = 0.f;
+    } else if (wavelength < 500.f) {
+        ret = mix(0.f, 8.f, unlerp(400.f, 500.f, wavelength));
+    } else if (wavelength < 600.f) {
+        ret = mix(8.f, 15.6f, unlerp(500.f, 600.f, wavelength));
+    } else if (wavelength < 700.f) {
+        ret = mix(15.6f, 18.4f, unlerp(600.f, 700.f, wavelength));
+    } else if (wavelength < 800.f) {
+        ret = mix(18.4f, 0.f, unlerp(700.f, 800.f, wavelength));
+    } else {
+        ret = 0.f;
+    }
+    return ret;
+}
+
 void sample_single_light(
+    float wavelength,
     uint light_index,
     vec3 target_position,
     vec3 target_normal,
@@ -177,13 +195,14 @@ void sample_single_light(
 #undef PARAMS
     }
 
-    light_emission = dot(emission, LUMINANCE_VEC_HACK);
+    light_emission = cornell_box_illuminant(wavelength);
     light_solid_angle_pdf = abs(solid_angle_pdf_and_ext_bit) * selection_pdf;
     light_is_external = sign_bit_set(solid_angle_pdf_and_ext_bit);
     light_epsilon = ldexp(unit_scale, LOG2_EPSILON_FACTOR);    
 }
 
 void sample_all_lights(
+    float wavelength,
     vec3 target_position,
     vec3 target_normal,
     vec2 light_rand_u01,
@@ -206,6 +225,7 @@ void sample_all_lights(
 
     // sample this light
     sample_single_light(
+        wavelength,
         light_index,
         target_position,
         target_normal,
@@ -219,6 +239,7 @@ void sample_all_lights(
 }
 
 void evaluate_single_light(
+    float wavelength,
     uint light_index,
     vec3 target_position,
     vec3 light_position_or_extdir,
@@ -256,7 +277,7 @@ void evaluate_single_light(
 #undef PARAMS
     }
 
-    light_emission = dot(emission, LUMINANCE_VEC_HACK);
+    light_emission = any(greaterThan(emission, vec3(0.f))) ? cornell_box_illuminant(wavelength) : 0.f;
     light_solid_angle_pdf = solid_angle_pdf * selection_pdf;
 }
 
@@ -393,6 +414,7 @@ void main()
             float light_emission;
             float light_solid_angle_pdf;
             evaluate_single_light(
+                wavelength,
                 light_index,
                 prev_position,
                 light_position_or_extdir,
@@ -470,6 +492,7 @@ void main()
             bool light_is_external;
             float light_epsilon;
             sample_all_lights(
+                wavelength,
                 hit.position_or_extdir,
                 get_dir(hit.shading_normal),
                 light_rand_u01,
