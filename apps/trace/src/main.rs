@@ -537,19 +537,19 @@ impl CommandlineApp {
                                 let capture_buffer = params.get_buffer(capture_buffer);
 
                                 let rec709_from_xyz = rec709_from_xyz_matrix()
-                                * chromatic_adaptation_matrix(
-                                    bradford_lms_from_xyz_matrix(),
-                                    Illuminant::D65,
-                                    Illuminant::E,
-                                );
-                            let acescg_from_xyz = ap1_from_xyz_matrix()
-                                * chromatic_adaptation_matrix(
-                                    bradford_lms_from_xyz_matrix(),
-                                    Illuminant::D60,
-                                    Illuminant::E,
-                                );
-    
-                                    let descriptor_set = capture_descriptor_set_layout.write(
+                                    * chromatic_adaptation_matrix(
+                                        bradford_lms_from_xyz_matrix(),
+                                        Illuminant::D65,
+                                        Illuminant::E,
+                                    );
+                                let acescg_from_xyz = ap1_from_xyz_matrix()
+                                    * chromatic_adaptation_matrix(
+                                        bradford_lms_from_xyz_matrix(),
+                                        Illuminant::D60,
+                                        Illuminant::E,
+                                    );
+
+                                let descriptor_set = capture_descriptor_set_layout.write(
                                     &descriptor_pool,
                                     |buf: &mut CaptureData| {
                                         *buf = CaptureData {

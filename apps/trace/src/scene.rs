@@ -586,7 +586,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let light_emission = rgb_from_xyz
         * chromatic_adaptation_matrix(bradford_lms_from_xyz_matrix(), Illuminant::D65, Illuminant::E)
         * light_emission_xyz;
-        
+
     match variant {
         CornellBoxVariant::DomeLight => {
             scene.add_light(Light::Dome {

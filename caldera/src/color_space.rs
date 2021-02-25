@@ -115,11 +115,7 @@ pub trait ToXYZ {
 impl ToXYZ for Vec2 {
     type Output = Vec3;
     fn to_xyz(&self) -> Self::Output {
-        Vec3::new(
-            self.x / self.y,
-            1.0,
-            (1.0 - self.x - self.y) / self.y,
-        )        
+        Vec3::new(self.x / self.y, 1.0, (1.0 - self.x - self.y) / self.y)
     }
 }
 
