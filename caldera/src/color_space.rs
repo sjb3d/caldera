@@ -44,7 +44,7 @@ impl Luminance for Vec3 {
 }
 
 #[allow(clippy::excessive_precision)]
-pub fn xyz_from_rec709_matrix() -> Mat3 {
+pub const fn xyz_from_rec709_matrix() -> Mat3 {
     // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
     Mat3::new(
         Vec3::new(0.4124564, 0.2126729, 0.0193339),
@@ -52,20 +52,17 @@ pub fn xyz_from_rec709_matrix() -> Mat3 {
         Vec3::new(0.1804375, 0.0721750, 0.9503041),
     )
 }
-
-#[allow(clippy::excessive_precision)]
-pub fn aces_from_d65_matrix() -> Mat3 {
-    // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
+pub const fn rec709_from_xyz_matrix() -> Mat3 {
+    // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
     Mat3::new(
-        Vec3::new(0.987224, -0.00759836, 0.00307257),
-        Vec3::new(-0.00611327, 1.00186, -0.00509595),
-        Vec3::new(0.0159533, 0.00533002, 1.08168),
+        Vec3::new(3.2404542, -0.9692660, 0.0556434),
+        Vec3::new(-1.5371385, 1.8760108, -0.2040259),
+        Vec3::new(-0.4985314, 0.0415560, 1.0572252),
     )
-    .inversed()
 }
 
 #[allow(clippy::excessive_precision)]
-pub fn ap1_from_xyz_matrix() -> Mat3 {
+pub const fn ap1_from_xyz_matrix() -> Mat3 {
     // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
     Mat3::new(
         Vec3::new(1.6410233797, -0.6636628587, 0.0117218943),
@@ -73,11 +70,19 @@ pub fn ap1_from_xyz_matrix() -> Mat3 {
         Vec3::new(-0.2364246952, 0.0167563477, 0.9883948585),
     )
 }
+pub const fn xyz_from_ap1_matrix() -> Mat3 {
+    // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
+    Mat3::new(
+        Vec3::new(0.6624541811, 0.2722287168, -0.0055746495),
+        Vec3::new(0.1340042065, 0.6740817658, 0.0040607335),
+        Vec3::new(0.1561876870, 0.0536895174, 1.0103391003),
+    )
+}
 
 #[allow(clippy::excessive_precision)]
 pub fn derive_aces_fit_matrices() {
     let xyz_from_rec709 = xyz_from_rec709_matrix();
-    let d60_from_d65 = aces_from_d65_matrix();
+    let d60_from_d65 = chromatic_adaptation_matrix(bradford_lms_from_xyz_matrix(), Illuminant::D60, Illuminant::D65);
     let ap1_from_xyz = ap1_from_xyz_matrix();
 
     // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
@@ -100,4 +105,53 @@ pub fn derive_aces_fit_matrices() {
     let rec709_from_fit = rec709_from_acescg * odt_sat;
     println!("fit_from_rec709 = {:#?}", fit_from_rec709);
     println!("rec709_from_fit = {:#?}", rec709_from_fit);
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Illuminant {
+    D60,
+    D65,
+    E,
+    Custom { chroma: Vec2 },
+}
+
+impl Default for Illuminant {
+    fn default() -> Self {
+        Self::D65
+    }
+}
+
+impl Illuminant {
+    fn chroma(&self) -> Vec2 {
+        match self {
+            Illuminant::D60 => Vec2::new(0.32168, 0.33767),
+            Illuminant::D65 => Vec2::new(0.31270, 0.32900),
+            Illuminant::E => Vec2::new(0.3333, 0.3333),
+            Illuminant::Custom { chroma } => *chroma,
+        }
+    }
+
+    fn white(&self) -> Vec3 {
+        let chroma = self.chroma();
+        let power = 1.0;
+        Vec3::new(
+            chroma.x * power / chroma.y,
+            power,
+            (1.0 - chroma.x - chroma.y) * power / chroma.y,
+        )
+    }
+}
+
+pub const fn bradford_lms_from_xyz_matrix() -> Mat3 {
+    Mat3::new(
+        Vec3::new(0.8951000, -0.7502000, 0.0389000),
+        Vec3::new(0.2664000, 1.7135000, -0.0685000),
+        Vec3::new(-0.1614000, 0.0367000, 1.0296000),
+    )
+}
+
+pub fn chromatic_adaptation_matrix(lms_from_xyz: Mat3, dst: Illuminant, src: Illuminant) -> Mat3 {
+    let dst_lms = lms_from_xyz * dst.white();
+    let src_lms = lms_from_xyz * src.white();
+    lms_from_xyz.inversed() * Mat3::from_nonuniform_scale(dst_lms / src_lms) * lms_from_xyz
 }

@@ -497,7 +497,7 @@ const D65_ILLUMINANT: &[f32] = &[
     75.087000, 69.339800, 63.592700, 55.005400, 46.418200, 56.611800, 66.805400, 65.094100, 63.382800,
 ];
 
-fn d65_illuminant(wavelength: f32) -> f32 {
+pub fn d65_illuminant(wavelength: f32) -> f32 {
     let index_flt = (wavelength - D65_WAVELENGTH_BASE) / D65_WAVELENGTH_STEP_SIZE;
     let index_floor = index_flt.floor();
     let index = index_floor as isize;
@@ -513,34 +513,14 @@ fn d65_illuminant(wavelength: f32) -> f32 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Illuminant {
-    D65,
-    E,
-}
-
-pub fn xyz_from_reflectance_spectrum(f: impl Fn(f32) -> f32, illuminant: Illuminant) -> Vec3 {
+pub fn xyz_from_spectrum(illuminant: impl Fn(f32) -> f32, reflectance: impl Fn(f32) -> f32) -> Vec3 {
     let mut f_sum = Vec3::zero();
     let mut y_sum = 0.0;
     for (i, &c) in CIE_SAMPLES.iter().enumerate() {
         let wavelength = CIE_WAVELENGTH_BASE + CIE_WAVELENGTH_STEP_SIZE * (i as f32);
-        let w = match illuminant {
-            Illuminant::D65 => d65_illuminant(wavelength),
-            Illuminant::E => 1.0,
-        } * c;
-        f_sum += w * f(wavelength);
+        let w = illuminant(wavelength) * c;
+        f_sum += w * reflectance(wavelength);
         y_sum += w.y;
-    }
-    f_sum / y_sum
-}
-
-pub fn xyz_from_power_spectrum(f: impl Fn(f32) -> f32) -> Vec3 {
-    let mut f_sum = Vec3::zero();
-    let mut y_sum = 0.0;
-    for (i, &c) in CIE_SAMPLES.iter().enumerate() {
-        let wavelength = CIE_WAVELENGTH_BASE + CIE_WAVELENGTH_STEP_SIZE * (i as f32);
-        f_sum += c * f(wavelength);
-        y_sum += c.y;
     }
     f_sum / y_sum
 }
