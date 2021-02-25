@@ -13,6 +13,7 @@
 #include "light_common.glsl"
 #include "ggx.glsl"
 #include "fresnel.glsl"
+#include "spectrum.glsl"
 
 #include "disc_light.glsl"
 #include "dome_light.glsl"
@@ -57,7 +58,10 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
-layout(set = 0, binding = 4, r32f) uniform restrict writeonly image2D g_result;
+layout(set = 0, binding = 4) uniform sampler2D g_smits_table;
+layout(set = 0, binding = 5, r32f) uniform restrict writeonly image2D g_result;
+
+#define LUMINANCE_VEC_HACK      vec3(.2f, .7f, .1f)
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -80,14 +84,16 @@ EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
 
 void evaluate_bsdf(
+    float wavelength,
     uint bsdf_type,
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out vec3 f,
+    out float f,
     out float solid_angle_pdf)
 {
-#define CALL(F) F(out_dir, in_dir, params, f, solid_angle_pdf)
+    vec3 f_tmp;
+#define CALL(F) F(out_dir, in_dir, params, f_tmp, solid_angle_pdf)
     switch (bsdf_type) {
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_eval); break;
         case BSDF_TYPE_MIRROR:              break;
@@ -98,19 +104,22 @@ void evaluate_bsdf(
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_eval); break;
     }
 #undef CALL
+    f = smits_power_from_rec709(wavelength, f_tmp, g_smits_table);
 }
 
 void sample_bsdf(
+    float wavelength,
     uint bsdf_type,
     vec3 out_dir,
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out vec3 estimator,
+    out float estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-#define CALL(F) F(out_dir, params, bsdf_rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, path_max_roughness)
+    vec3 estimator_tmp;
+#define CALL(F) F(out_dir, params, bsdf_rand_u01, in_dir, estimator_tmp, solid_angle_pdf_or_negative, path_max_roughness)
     switch (bsdf_type) {
         case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_sample); break;
         case BSDF_TYPE_MIRROR:              CALL(mirror_bsdf_sample); break;
@@ -121,6 +130,7 @@ void sample_bsdf(
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_sample); break;
     }
 #undef CALL
+    estimator = smits_power_from_rec709(wavelength, estimator_tmp, g_smits_table);
 }
 
 void sample_single_light(
@@ -130,7 +140,7 @@ void sample_single_light(
     vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
-    out vec3 light_emission,
+    out float light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
     out float light_epsilon)
@@ -167,7 +177,7 @@ void sample_single_light(
 #undef PARAMS
     }
 
-    light_emission = emission;
+    light_emission = dot(emission, LUMINANCE_VEC_HACK);
     light_solid_angle_pdf = abs(solid_angle_pdf_and_ext_bit) * selection_pdf;
     light_is_external = sign_bit_set(solid_angle_pdf_and_ext_bit);
     light_epsilon = ldexp(unit_scale, LOG2_EPSILON_FACTOR);    
@@ -179,7 +189,7 @@ void sample_all_lights(
     vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
-    out vec3 light_emission,
+    out float light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
     out float light_epsilon)
@@ -212,7 +222,7 @@ void evaluate_single_light(
     uint light_index,
     vec3 target_position,
     vec3 light_position_or_extdir,
-    out vec3 light_emission,
+    out float light_emission,
     out float light_solid_angle_pdf)
 {
     LightInfoEntry light_info = g_path_trace.light_info_table.entries[light_index];
@@ -246,7 +256,7 @@ void evaluate_single_light(
 #undef PARAMS
     }
 
-    light_emission = emission;
+    light_emission = dot(emission, LUMINANCE_VEC_HACK);
     light_solid_angle_pdf = solid_angle_pdf * selection_pdf;
 }
 
@@ -305,18 +315,19 @@ void main()
     const bool allow_bsdf_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING) != 0);
     const bool accumulate_roughness = ((g_path_trace.flags & PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS) != 0);
 
+    float wavelength;
     vec3 prev_position;
     Normal32 prev_geom_normal_packed;
     float prev_epsilon;
     vec3 prev_in_dir;
     float prev_in_solid_angle_pdf_or_negative;
-    vec3 prev_sample;
+    float prev_sample;
     float path_max_roughness;
 
     // sample the camera
     {
-        const vec2 pixel_rand_u01 = rand_u01(0).xy;
-        const vec2 fov_uv = (vec2(gl_LaunchIDEXT.xy) + pixel_rand_u01)/vec2(gl_LaunchSizeEXT);
+        const vec4 pixel_rand_u01 = rand_u01(0);
+        const vec2 fov_uv = (vec2(gl_LaunchIDEXT.xy) + pixel_rand_u01.xy)/vec2(gl_LaunchSizeEXT);
         const vec3 ray_dir_ls = normalize(vec3(g_path_trace.fov_size_at_unit_z*(.5f - fov_uv), 1.f));
         const vec3 ray_dir = g_path_trace.world_from_camera * vec4(ray_dir_ls, 0.f);
         
@@ -326,9 +337,10 @@ void main()
         const float cos_theta3 = cos_theta2*cos_theta;
         const float solid_angle_pdf = 1.f/(fov_area_at_unit_z*cos_theta3);
 
-        const vec3 importance = vec3(1.f/fov_area_at_unit_z);
+        const float importance = 1.f/fov_area_at_unit_z;
         const float sensor_area_pdf = 1.f/fov_area_at_unit_z;
 
+        wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
         prev_position = g_path_trace.world_from_camera[3];
         prev_geom_normal_packed = make_normal32(g_path_trace.world_from_camera[2]);
         prev_epsilon = 0.f;
@@ -339,7 +351,7 @@ void main()
     }
 
     // trace a path from the camera
-    vec3 result_sum = vec3(0.f);
+    float result_sum = 0.f;
     uint segment_index = 0;
     for (;;) {
         // extend the path using the sampled (incoming) direction
@@ -376,7 +388,7 @@ void main()
         for (uint light_index = light_index_begin; light_index != light_index_end; ++light_index) {
             // evaluate the light here
             const vec3 light_position_or_extdir = hit.position_or_extdir;
-            vec3 light_emission;
+            float light_emission;
             float light_solid_angle_pdf;
             evaluate_single_light(
                 light_index,
@@ -451,7 +463,7 @@ void main()
             // sample from all light sources
             vec3 light_position_or_extdir;
             Normal32 light_normal;
-            vec3 light_emission;
+            float light_emission;
             float light_solid_angle_pdf;
             bool light_is_external;
             float light_epsilon;
@@ -478,10 +490,11 @@ void main()
             // evaluate the BRDF
             const float in_cos_theta = in_dir_ls.z;
             const uint bsdf_type = get_bsdf_type(hit.info);
-            vec3 hit_f;
+            float hit_f;
             float hit_solid_angle_pdf;
             if (in_cos_theta > 0.f || bsdf_has_transmission(bsdf_type)) {
                 evaluate_bsdf(
+                    wavelength,
                     bsdf_type,
                     out_dir_ls,
                     in_dir_ls,
@@ -489,7 +502,7 @@ void main()
                     hit_f,
                     hit_solid_angle_pdf);
             } else {
-                hit_f = vec3(0.f);
+                hit_f = 0.f;
                 hit_solid_angle_pdf = 0.f;
             }
             
@@ -499,10 +512,10 @@ void main()
             const float mis_weight = 1.f/(1.f + other_ratio);
 
             // compute the sample assuming the ray is not occluded
-            const vec3 result = prev_sample * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
+            const float result = prev_sample * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
 
             // trace an occlusion ray if necessary
-            if (any(greaterThan(result, vec3(0.f)))) {
+            if (result > 0.f) {
                 const vec3 hit_geom_normal = get_dir(hit.geom_normal);
                 const float hit_epsilon = get_epsilon(hit.info, LOG2_EPSILON_FACTOR);
                 const vec3 adjusted_hit_position = hit.position_or_extdir + hit_geom_normal*hit_epsilon;
@@ -548,9 +561,10 @@ void main()
             }
 
             vec3 in_dir_ls;
-            vec3 estimator;
+            float estimator;
             float solid_angle_pdf_or_negative;
             sample_bsdf(
+                wavelength,
                 get_bsdf_type(hit.info),
                 out_dir_ls,
                 hit.bsdf_params,
@@ -572,6 +586,5 @@ void main()
         }
     }
 
-    const float hack = dot(result_sum, vec3(0.2, 0.7, 0.1));
-    imageStore(g_result, ivec2(gl_LaunchIDEXT.xy), vec4(hack, 0, 0, 0));
+    imageStore(g_result, ivec2(gl_LaunchIDEXT.xy), vec4(result_sum, 0, 0, 0));
 }

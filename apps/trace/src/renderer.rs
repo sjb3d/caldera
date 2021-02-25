@@ -176,6 +176,7 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     accel: AccelerationStructure,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
+    smits_table: SampledImage,
     result: StorageImage,
 });
 
@@ -639,7 +640,9 @@ pub struct Renderer {
     path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
 
+    clamp_point_sampler: vk::Sampler,
     clamp_linear_sampler: vk::Sampler,
+
     filter_descriptor_set_layout: FilterDescriptorSetLayout,
     filter_pipeline_layout: vk::PipelineLayout,
 
@@ -650,6 +653,7 @@ pub struct Renderer {
 
     pmj_samples_image: StaticImageHandle,
     sobol_samples_image: StaticImageHandle,
+    smits_table_image: StaticImageHandle,
     xyz_from_wavelength_image: StaticImageHandle,
     result_image: ImageHandle,
 
@@ -836,7 +840,19 @@ impl Renderer {
             }
         }
 
-        let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let clamp_point_sampler = {
+            let create_info = vk::SamplerCreateInfo {
+                mag_filter: vk::Filter::NEAREST,
+                min_filter: vk::Filter::NEAREST,
+                address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                ..Default::default()
+            };
+            unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
+        };
+
+        let path_trace_descriptor_set_layout =
+            PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache, clamp_point_sampler);
         let texture_binding_set = TextureBindingSet::new(context, texture_images);
         let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_multi_layout(&[
             path_trace_descriptor_set_layout.0,
@@ -949,6 +965,39 @@ impl Renderer {
             }
         });
 
+        let smits_table_image = resource_loader.create_image();
+        resource_loader.async_load(move |allocator| {
+            let desc = ImageDesc::new_2d(
+                UVec2::new(2, 10),
+                vk::Format::R32G32B32A32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let mut writer = allocator
+                .map_image(smits_table_image, &desc, ImageUsage::COMPUTE_SAMPLED)
+                .unwrap();
+
+            // c.f. "An RGB to Spectrum Conversion for Reflectances"
+            #[rustfmt::skip]
+            const SMITS_TABLE: &[f32] = &[
+                // whi  cyan    magenta yellow  red     green   blue
+                1.0000, 0.9710, 1.0000, 0.0001, 0.1012, 0.0000, 1.0000,
+                1.0000, 0.9426, 1.0000, 0.0000, 0.0515, 0.0000, 1.0000,
+                0.9999, 1.0007, 0.9685, 0.1088, 0.0000, 0.0273, 0.8916,
+                0.9993, 1.0007, 0.2229, 0.6651, 0.0000, 0.7937, 0.3323,
+                0.9992, 1.0007, 0.0000, 1.0000, 0.0000, 1.0000, 0.0000,
+                0.9998, 1.0007, 0.0458, 1.0000, 0.0000, 0.9418, 0.0000,
+                1.0000, 0.1564, 0.8369, 0.9996, 0.8325, 0.1719, 0.0003,
+                1.0000, 0.0000, 1.0000, 0.9586, 1.0149, 0.0000, 0.0369,
+                1.0000, 0.0000, 1.0000, 0.9685, 1.0149, 0.0000, 0.0483,
+                1.0000, 0.0000, 0.9959, 0.9840, 1.0149, 0.0025, 0.0496,
+            ];
+
+            for row in SMITS_TABLE.chunks(7) {
+                let pixel_row = [row[4], row[5], row[6], row[0], row[1], row[2], row[3], row[0]];
+                writer.write(&pixel_row);
+            }
+        });
+
         const WAVELENGTH_MIN: u32 = 380;
         const WAVELENGTH_MAX: u32 = 720;
 
@@ -989,6 +1038,7 @@ impl Renderer {
             path_trace_descriptor_set_layout,
             path_trace_pipeline_layout,
             path_trace_pipeline,
+            clamp_point_sampler,
             clamp_linear_sampler,
             filter_descriptor_set_layout,
             filter_pipeline_layout,
@@ -998,6 +1048,7 @@ impl Renderer {
             shader_binding_data: None,
             pmj_samples_image,
             sobol_samples_image,
+            smits_table_image,
             xyz_from_wavelength_image,
             result_image,
             params,
@@ -1666,6 +1717,7 @@ impl Renderer {
         let light_info_table_buffer = resource_loader.get_buffer(shader_binding_data.light_info_table)?;
         let pmj_samples_image_view = resource_loader.get_image_view(self.pmj_samples_image)?;
         let sobol_samples_image_view = resource_loader.get_image_view(self.sobol_samples_image)?;
+        let smit_table_image_view = resource_loader.get_image_view(self.smits_table_image)?;
         let xyz_from_wavelength_image_view = resource_loader.get_image_view(self.xyz_from_wavelength_image)?;
 
         // do a pass
@@ -1744,6 +1796,7 @@ impl Renderer {
                             top_level_accel,
                             pmj_samples_image_view,
                             sobol_samples_image_view,
+                            smit_table_image_view,
                             temp_image_view,
                         );
 
@@ -1851,7 +1904,10 @@ impl Drop for Renderer {
         unsafe {
             self.context
                 .device
-                .destroy_sampler(Some(self.clamp_linear_sampler), None)
+                .destroy_sampler(Some(self.clamp_point_sampler), None);
+            self.context
+                .device
+                .destroy_sampler(Some(self.clamp_linear_sampler), None);
         }
     }
 }

@@ -27,6 +27,7 @@ INC=\
 	trace/rough_plastic_bsdf.glsl \
 	trace/sequence.glsl \
 	trace/solid_angle_light.glsl \
+	trace/spectrum.glsl \
 	trace/sphere_common.glsl \
 	trace/sphere_light.glsl \
 	trace/smooth_dielectric_bsdf.glsl \
