@@ -1012,9 +1012,14 @@ impl Renderer {
                 .map_image(xyz_from_wavelength_image, &desc, ImageUsage::COMPUTE_SAMPLED)
                 .unwrap();
 
+            let norm = 1.0
+                / (WAVELENGTH_MIN..WAVELENGTH_MAX)
+                    .map(|wavelength| xyz_from_wavelength(wavelength as f32 + 0.5).y)
+                    .sum::<f32>();
+
             for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
                 let xyz = xyz_from_wavelength(wavelength as f32 + 0.5);
-                let v = xyz.xyzw();
+                let v = (xyz * norm).xyzw();
                 writer.write(&v);
             }
         });

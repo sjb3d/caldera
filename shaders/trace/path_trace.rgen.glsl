@@ -341,12 +341,14 @@ void main()
         const float sensor_area_pdf = 1.f/fov_area_at_unit_z;
 
         wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
+        const float wavelength_pdf = 1.f/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
+
         prev_position = g_path_trace.world_from_camera[3];
         prev_geom_normal_packed = make_normal32(g_path_trace.world_from_camera[2]);
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
         prev_in_solid_angle_pdf_or_negative = solid_angle_pdf;
-        prev_sample = importance/sensor_area_pdf;
+        prev_sample = importance/(sensor_area_pdf*wavelength_pdf);
         path_max_roughness = 0.f;
     }
 
