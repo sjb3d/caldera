@@ -2,7 +2,7 @@ use crate::accel::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
-use imgui::{im_str, CollapsingHeader, Drag, Slider, StyleColor, Ui};
+use imgui::{im_str, CollapsingHeader, Drag, ProgressBar, Slider, StyleColor, Ui};
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use rayon::prelude::*;
@@ -582,8 +582,8 @@ pub struct RendererParams {
     #[structopt(name = "fov", long, global = true)]
     pub fov_y_override: Option<f32>,
 
-    #[structopt(short, long, default_value = "256", global = true)]
-    pub sample_count: u32,
+    #[structopt(name = "sample_count_log2", short, long, default_value = "8", global = true)]
+    pub log2_sample_count: u32,
 
     #[structopt(long, default_value = "pmj", global = true)]
     pub sequence_type: SequenceType,
@@ -592,6 +592,10 @@ pub struct RendererParams {
 impl RendererParams {
     pub fn size(&self) -> UVec2 {
         UVec2::new(self.width, self.height)
+    }
+
+    pub fn sample_count(&self) -> u32 {
+        1 << self.log2_sample_count
     }
 }
 
@@ -626,8 +630,12 @@ impl RenderProgress {
         self.next_sample_index = 0;
     }
 
+    pub fn fraction(&self, params: &RendererParams) -> f32 {
+        (self.next_sample_index as f32) / (params.sample_count() as f32)
+    }
+
     pub fn done(&self, params: &RendererParams) -> bool {
-        self.next_sample_index >= params.sample_count
+        self.next_sample_index >= params.sample_count()
     }
 }
 
@@ -662,7 +670,9 @@ pub struct Renderer {
 
 impl Renderer {
     const PMJ_SEQUENCE_COUNT: u32 = 1024;
-    const MAX_SAMPLES_PER_SEQUENCE: u32 = 1024;
+
+    const LOG2_MAX_SAMPLES_PER_SEQUENCE: u32 = 10;
+    const MAX_SAMPLES_PER_SEQUENCE: u32 = 1 << Self::LOG2_MAX_SAMPLES_PER_SEQUENCE;
 
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
     const MISS_ENTRY_COUNT: u32 = 2;
@@ -680,7 +690,7 @@ impl Renderer {
         let accel = SceneAccel::new(context, scene, resource_loader);
 
         // sanitise parameters
-        params.sample_count = params.sample_count.min(Self::MAX_SAMPLES_PER_SEQUENCE);
+        params.log2_sample_count = params.log2_sample_count.min(Self::LOG2_MAX_SAMPLES_PER_SEQUENCE);
 
         // start loading textures and attributes for all meshes
         let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
@@ -1578,9 +1588,10 @@ impl Renderer {
         }
 
         if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
-            Slider::new(im_str!("Sample Count"))
-                .range(1..=Self::MAX_SAMPLES_PER_SEQUENCE)
-                .build(&ui, &mut self.params.sample_count);
+            ProgressBar::new(progress.fraction(&self.params)).build(&ui);
+            Slider::new(im_str!("Log2 Samples"))
+                .range(0..=Self::LOG2_MAX_SAMPLES_PER_SEQUENCE)
+                .build(&ui, &mut self.params.log2_sample_count);
 
             ui.text("Sequence Type:");
             needs_reset |= ui.radio_button(im_str!("PMJ"), &mut self.params.sequence_type, SequenceType::Pmj);
@@ -1670,7 +1681,7 @@ impl Renderer {
             id.pop(&ui);
         }
 
-        if progress.next_sample_index > self.params.sample_count {
+        if progress.next_sample_index > self.params.sample_count() {
             needs_reset = true;
         }
         if needs_reset {

@@ -123,7 +123,7 @@ clean-images:
 
 images: $(IMAGES)
 
-MANY_SAMPLES=-s 1024
+MANY_SAMPLES=-s 10
 TRACE=cargo run --release --bin trace --
 
 docs/trace_bathroom2.%: ../tungsten_scenes/bathroom2/scene.json shaders Makefile
