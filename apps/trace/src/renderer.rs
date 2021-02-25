@@ -159,11 +159,9 @@ struct PathTraceUniforms {
     fov_size_at_unit_z: Vec2,
     sample_index: u32,
     max_segment_count: u32,
-    render_color_space: u32,
     mis_heuristic: u32,
     sequence_type: u32,
     flags: PathTraceFlags,
-    _pad: u32,
 }
 
 #[repr(C)]
@@ -178,7 +176,7 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     accel: AccelerationStructure,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
-    result: [StorageImage; 3],
+    result: StorageImage,
 });
 
 #[repr(transparent)]
@@ -386,7 +384,7 @@ struct ShaderBindingData {
 
 struct TextureBindingSet {
     context: Arc<Context>,
-    sampler: vk::Sampler,
+    linear_sampler: vk::Sampler,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
@@ -397,7 +395,7 @@ struct TextureBindingSet {
 impl TextureBindingSet {
     fn new(context: &Arc<Context>, images: Vec<StaticImageHandle>) -> Self {
         // create a separate descriptor pool for bindless textures
-        let sampler = {
+        let linear_sampler = {
             let create_info = vk::SamplerCreateInfo {
                 mag_filter: vk::Filter::LINEAR,
                 min_filter: vk::Filter::LINEAR,
@@ -440,7 +438,7 @@ impl TextureBindingSet {
 
         Self {
             context: Arc::clone(context),
-            sampler,
+            linear_sampler,
             descriptor_set_layout,
             descriptor_pool,
             descriptor_set,
@@ -453,7 +451,7 @@ impl TextureBindingSet {
         let mut image_info = Vec::new();
         for image in self.images.iter().cloned() {
             image_info.push(vk::DescriptorImageInfo {
-                sampler: Some(self.sampler),
+                sampler: Some(self.linear_sampler),
                 image_view: Some(resource_loader.get_image_view(image)?),
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             });
@@ -495,16 +493,9 @@ impl Drop for TextureBindingSet {
             self.context
                 .device
                 .destroy_descriptor_set_layout(Some(self.descriptor_set_layout), None);
-            self.context.device.destroy_sampler(Some(self.sampler), None);
+            self.context.device.destroy_sampler(Some(self.linear_sampler), None);
         }
     }
-}
-
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
-pub enum RenderColorSpace {
-    Rec709,
-    AcesCg,
 }
 
 #[repr(u32)]
@@ -567,10 +558,6 @@ pub struct RendererParams {
     #[structopt(short, long, possible_values=MultipleImportanceHeuristic::VARIANTS, default_value = "balance", global=true)]
     pub mis_heuristic: MultipleImportanceHeuristic,
 
-    /// Which primaries to use during rendering
-    #[structopt(short, long, possible_values=RenderColorSpace::VARIANTS, default_value = "aces-cg", global=true)]
-    pub render_color_space: RenderColorSpace,
-
     /// Image reconstruction filter
     #[structopt(short, long, possible_values=FilterType::VARIANTS, default_value = "gaussian", global=true)]
     pub filter_type: FilterType,
@@ -620,7 +607,8 @@ descriptor_set_layout!(FilterDescriptorSetLayout {
     data: UniformData<FilterData>,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
-    input: [StorageImage; 3],
+    xyz_from_wavelength: SampledImage,
+    input: StorageImage,
     result: StorageImage,
 });
 
@@ -651,6 +639,7 @@ pub struct Renderer {
     path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
 
+    clamp_linear_sampler: vk::Sampler,
     filter_descriptor_set_layout: FilterDescriptorSetLayout,
     filter_pipeline_layout: vk::PipelineLayout,
 
@@ -661,6 +650,7 @@ pub struct Renderer {
 
     pmj_samples_image: StaticImageHandle,
     sobol_samples_image: StaticImageHandle,
+    xyz_from_wavelength_image: StaticImageHandle,
     result_image: ImageHandle,
 
     pub params: RendererParams,
@@ -893,7 +883,18 @@ impl Renderer {
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
-        let filter_descriptor_set_layout = FilterDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let clamp_linear_sampler = {
+            let create_info = vk::SamplerCreateInfo {
+                mag_filter: vk::Filter::LINEAR,
+                min_filter: vk::Filter::LINEAR,
+                address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                ..Default::default()
+            };
+            unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
+        };
+        let filter_descriptor_set_layout =
+            FilterDescriptorSetLayout::new(descriptor_set_layout_cache, clamp_linear_sampler);
         let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
 
         let pmj_samples_image = resource_loader.create_image();
@@ -948,6 +949,27 @@ impl Renderer {
             }
         });
 
+        const WAVELENGTH_MIN: u32 = 380;
+        const WAVELENGTH_MAX: u32 = 720;
+
+        let xyz_from_wavelength_image = resource_loader.create_image();
+        resource_loader.async_load(move |allocator| {
+            let desc = ImageDesc::new_2d(
+                UVec2::new(WAVELENGTH_MAX - WAVELENGTH_MIN, 1),
+                vk::Format::R32G32B32A32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let mut writer = allocator
+                .map_image(xyz_from_wavelength_image, &desc, ImageUsage::COMPUTE_SAMPLED)
+                .unwrap();
+
+            for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
+                let xyz = xyz_from_wavelength(wavelength as f32 + 0.5);
+                let v = xyz.xyzw();
+                writer.write(&v);
+            }
+        });
+
         let result_image = {
             let desc = ImageDesc::new_2d(
                 params.size(),
@@ -967,6 +989,7 @@ impl Renderer {
             path_trace_descriptor_set_layout,
             path_trace_pipeline_layout,
             path_trace_pipeline,
+            clamp_linear_sampler,
             filter_descriptor_set_layout,
             filter_pipeline_layout,
             texture_binding_set,
@@ -975,6 +998,7 @@ impl Renderer {
             shader_binding_data: None,
             pmj_samples_image,
             sobol_samples_image,
+            xyz_from_wavelength_image,
             result_image,
             params,
         }
@@ -1502,18 +1526,6 @@ impl Renderer {
                 .range(1..=Self::MAX_SAMPLES_PER_SEQUENCE)
                 .build(&ui, &mut self.params.sample_count);
 
-            ui.text("Color Space:");
-            needs_reset |= ui.radio_button(
-                im_str!("Rec709 (sRGB primaries)"),
-                &mut self.params.render_color_space,
-                RenderColorSpace::Rec709,
-            );
-            needs_reset |= ui.radio_button(
-                im_str!("ACEScg (AP1 primaries)"),
-                &mut self.params.render_color_space,
-                RenderColorSpace::AcesCg,
-            );
-
             ui.text("Sequence Type:");
             needs_reset |= ui.radio_button(im_str!("PMJ"), &mut self.params.sequence_type, SequenceType::Pmj);
             needs_reset |= ui.radio_button(im_str!("Sobol"), &mut self.params.sequence_type, SequenceType::Sobol);
@@ -1654,32 +1666,23 @@ impl Renderer {
         let light_info_table_buffer = resource_loader.get_buffer(shader_binding_data.light_info_table)?;
         let pmj_samples_image_view = resource_loader.get_image_view(self.pmj_samples_image)?;
         let sobol_samples_image_view = resource_loader.get_image_view(self.sobol_samples_image)?;
+        let xyz_from_wavelength_image_view = resource_loader.get_image_view(self.xyz_from_wavelength_image)?;
 
         // do a pass
         if !progress.done(&self.params) {
             let temp_desc = ImageDesc::new_2d(self.params.size(), vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
-            let temp_images = (
-                schedule.describe_image(&temp_desc),
-                schedule.describe_image(&temp_desc),
-                schedule.describe_image(&temp_desc),
-            );
+            let temp_image = schedule.describe_image(&temp_desc);
 
             schedule.add_compute(
                 command_name!("trace"),
                 |params| {
                     self.accel.declare_parameters(params);
-                    params.add_image(temp_images.0, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-                    params.add_image(temp_images.1, ImageUsage::RAY_TRACING_STORAGE_WRITE);
-                    params.add_image(temp_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
                 },
                 {
                     let sample_index = progress.next_sample_index;
                     move |params, cmd| {
-                        let temp_image_views = [
-                            params.get_image_view(temp_images.0),
-                            params.get_image_view(temp_images.1),
-                            params.get_image_view(temp_images.2),
-                        ];
+                        let temp_image_view = params.get_image_view(temp_image);
 
                         let size_flt = self.params.size().as_float();
                         let aspect_ratio = size_flt.x / size_flt.y;
@@ -1733,17 +1736,15 @@ impl Renderer {
                                     fov_size_at_unit_z,
                                     sample_index,
                                     max_segment_count: self.params.max_bounces + 2,
-                                    render_color_space: self.params.render_color_space.into_integer(),
                                     mis_heuristic: self.params.mis_heuristic.into_integer(),
                                     sequence_type: self.params.sequence_type.into_integer(),
                                     flags: path_trace_flags,
-                                    _pad: 0,
                                 }
                             },
                             top_level_accel,
                             pmj_samples_image_view,
                             sobol_samples_image_view,
-                            &temp_image_views,
+                            temp_image_view,
                         );
 
                         let device = &context.device;
@@ -1796,9 +1797,7 @@ impl Renderer {
             schedule.add_compute(
                 command_name!("filter"),
                 |params| {
-                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
-                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
-                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_image, ImageUsage::COMPUTE_STORAGE_READ);
                     params.add_image(
                         self.result_image,
                         ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
@@ -1807,11 +1806,7 @@ impl Renderer {
                 {
                     let sample_index = progress.next_sample_index;
                     move |params, cmd| {
-                        let temp_image_views = [
-                            params.get_image_view(temp_images.0),
-                            params.get_image_view(temp_images.1),
-                            params.get_image_view(temp_images.2),
-                        ];
+                        let temp_image_view = params.get_image_view(temp_image);
                         let result_image_view = params.get_image_view(self.result_image);
 
                         let descriptor_set = self.filter_descriptor_set_layout.write(
@@ -1826,7 +1821,8 @@ impl Renderer {
                             },
                             pmj_samples_image_view,
                             sobol_samples_image_view,
-                            &temp_image_views,
+                            xyz_from_wavelength_image_view,
+                            temp_image_view,
                             result_image_view,
                         );
 
@@ -1847,5 +1843,15 @@ impl Renderer {
         }
 
         Some(self.result_image)
+    }
+}
+
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        unsafe {
+            self.context
+                .device
+                .destroy_sampler(Some(self.clamp_linear_sampler), None)
+        }
     }
 }

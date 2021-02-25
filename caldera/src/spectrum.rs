@@ -513,6 +513,21 @@ pub fn d65_illuminant(wavelength: f32) -> f32 {
     }
 }
 
+pub fn xyz_from_wavelength(wavelength: f32) -> Vec3 {
+    let index_flt = (wavelength - CIE_WAVELENGTH_BASE) / CIE_WAVELENGTH_STEP_SIZE;
+    let index_floor = index_flt.floor();
+    let index = index_floor as isize;
+    if index < 0 {
+        Vec3::zero()
+    } else if index < (CIE_SAMPLES.len() - 1) as isize {
+        let index = index as usize;
+        let t = index_flt - index_floor;
+        (1.0 - t) * CIE_SAMPLES[index] + t * CIE_SAMPLES[index + 1]
+    } else {
+        Vec3::zero()
+    }
+}
+
 pub fn xyz_from_spectrum(illuminant: impl Fn(f32) -> f32, reflectance: impl Fn(f32) -> f32) -> Vec3 {
     let mut f_sum = Vec3::zero();
     let mut y_sum = 0.0;

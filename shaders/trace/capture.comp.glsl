@@ -9,7 +9,8 @@ layout(local_size_x = 16, local_size_y = 16) in;
 layout(set = 0, binding = 0, scalar) uniform CaptureData {
     uvec2 size;
     float exposure_scale;
-    uint render_color_space;
+    mat3 rec709_from_xyz;
+    mat3 acescg_from_xyz;
     uint tone_map_method;
 } g_capture;
 
@@ -36,10 +37,10 @@ void main()
     const vec3 sample2 = p2.xyz*(g_capture.exposure_scale/p2.w);
     const vec3 sample3 = p3.xyz*(g_capture.exposure_scale/p3.w);
 
-    const vec3 col0 = tone_map_sample_to_gamma(sample0, g_capture.render_color_space, g_capture.tone_map_method);
-    const vec3 col1 = tone_map_sample_to_gamma(sample1, g_capture.render_color_space, g_capture.tone_map_method);
-    const vec3 col2 = tone_map_sample_to_gamma(sample2, g_capture.render_color_space, g_capture.tone_map_method);
-    const vec3 col3 = tone_map_sample_to_gamma(sample3, g_capture.render_color_space, g_capture.tone_map_method);
+    const vec3 col0 = tone_map_sample_to_gamma(sample0, g_capture.rec709_from_xyz, g_capture.acescg_from_xyz, g_capture.tone_map_method);
+    const vec3 col1 = tone_map_sample_to_gamma(sample1, g_capture.rec709_from_xyz, g_capture.acescg_from_xyz, g_capture.tone_map_method);
+    const vec3 col2 = tone_map_sample_to_gamma(sample2, g_capture.rec709_from_xyz, g_capture.acescg_from_xyz, g_capture.tone_map_method);
+    const vec3 col3 = tone_map_sample_to_gamma(sample3, g_capture.rec709_from_xyz, g_capture.acescg_from_xyz, g_capture.tone_map_method);
 
     const uint w0 = packUnorm4x8(vec4(col0.xyz, col1.x));
     const uint w1 = packUnorm4x8(vec4(col1.yz, col2.xy));

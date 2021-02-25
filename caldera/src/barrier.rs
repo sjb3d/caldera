@@ -185,11 +185,12 @@ impl ImageUsage {
     pub const FRAGMENT_SAMPLED: ImageUsage = ImageUsage(0x10);
     pub const COMPUTE_STORAGE_READ: ImageUsage = ImageUsage(0x20);
     pub const COMPUTE_STORAGE_WRITE: ImageUsage = ImageUsage(0x40);
-    pub const TRANSIENT_COLOR_ATTACHMENT: ImageUsage = ImageUsage(0x80);
-    pub const TRANSIENT_DEPTH_ATTACHMENT: ImageUsage = ImageUsage(0x100);
-    pub const RAY_TRACING_STORAGE_READ: ImageUsage = ImageUsage(0x200);
-    pub const RAY_TRACING_STORAGE_WRITE: ImageUsage = ImageUsage(0x400);
-    pub const RAY_TRACING_SAMPLED: ImageUsage = ImageUsage(0x800);
+    pub const COMPUTE_SAMPLED: ImageUsage = ImageUsage(0x80);
+    pub const TRANSIENT_COLOR_ATTACHMENT: ImageUsage = ImageUsage(0x100);
+    pub const TRANSIENT_DEPTH_ATTACHMENT: ImageUsage = ImageUsage(0x200);
+    pub const RAY_TRACING_STORAGE_READ: ImageUsage = ImageUsage(0x400);
+    pub const RAY_TRACING_STORAGE_WRITE: ImageUsage = ImageUsage(0x800);
+    pub const RAY_TRACING_SAMPLED: ImageUsage = ImageUsage(0x1000);
 
     pub fn empty() -> Self {
         Self(0)
@@ -224,6 +225,7 @@ impl ImageUsage {
                 Self::FRAGMENT_SAMPLED => vk::ImageUsageFlags::SAMPLED,
                 Self::COMPUTE_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
                 Self::COMPUTE_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
+                Self::COMPUTE_SAMPLED => vk::ImageUsageFlags::SAMPLED,
                 Self::TRANSIENT_COLOR_ATTACHMENT => {
                     vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT
                 }
@@ -248,6 +250,7 @@ impl ImageUsage {
                 Self::FRAGMENT_SAMPLED => vk::PipelineStageFlags::FRAGMENT_SHADER,
                 Self::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
                 Self::COMPUTE_STORAGE_WRITE => vk::PipelineStageFlags::COMPUTE_SHADER,
+                Self::COMPUTE_SAMPLED => vk::PipelineStageFlags::COMPUTE_SHADER,
                 Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::PipelineStageFlags::empty(),
                 Self::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 Self::RAY_TRACING_STORAGE_WRITE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
@@ -267,6 +270,7 @@ impl ImageUsage {
                 Self::FRAGMENT_SAMPLED => vk::AccessFlags::SHADER_READ,
                 Self::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
                 Self::COMPUTE_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
+                Self::COMPUTE_SAMPLED => vk::AccessFlags::SHADER_READ,
                 Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::AccessFlags::empty(),
                 Self::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
                 Self::RAY_TRACING_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
@@ -286,6 +290,7 @@ impl ImageUsage {
                 Self::FRAGMENT_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 Self::COMPUTE_STORAGE_READ => vk::ImageLayout::GENERAL,
                 Self::COMPUTE_STORAGE_WRITE => vk::ImageLayout::GENERAL,
+                Self::COMPUTE_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::ImageLayout::UNDEFINED,
                 Self::RAY_TRACING_STORAGE_READ => vk::ImageLayout::GENERAL,
                 Self::RAY_TRACING_STORAGE_WRITE => vk::ImageLayout::GENERAL,

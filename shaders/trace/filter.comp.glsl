@@ -19,8 +19,9 @@ layout(set = 0, binding = 0, scalar) uniform FilterData {
 
 layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 2, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
-layout(set = 0, binding = 3, r32f) uniform restrict readonly image2D g_input[3];
-layout(set = 0, binding = 4, rgba32f) uniform restrict image2D g_result;
+layout(set = 0, binding = 3) uniform sampler2D g_xyz_from_wavelength;
+layout(set = 0, binding = 4, r32f) uniform restrict readonly image2D g_input;
+layout(set = 0, binding = 5, rgba32f) uniform restrict image2D g_result;
 
 #include "sequence.glsl"
 
@@ -47,6 +48,16 @@ float mitchell(float x)
     return y;
 }
 
+vec3 load_input(uvec2 load_coord, float wavelength_u)
+{
+    const float weight = imageLoad(g_input, ivec2(load_coord)).x;
+    vec3 value = vec3(0.f);
+    if (weight > 0.f) {
+        value = weight*texture(g_xyz_from_wavelength, vec2(wavelength_u, .5f)).xyz;
+    }
+    return value;
+}
+
 void main()
 {
     const uvec2 pixel_coord = gl_GlobalInvocationID.xy;
@@ -59,9 +70,9 @@ void main()
     switch (g_filter.filter_type) {
         default:
         case FILTER_TYPE_BOX: {
-            result.x += imageLoad(g_input[0], ivec2(pixel_coord)).x;
-            result.y += imageLoad(g_input[1], ivec2(pixel_coord)).x;
-            result.z += imageLoad(g_input[2], ivec2(pixel_coord)).x;
+            const vec4 pixel_rand_u01 = rand_u01(pixel_coord);
+
+            result.xyz += load_input(pixel_coord, pixel_rand_u01.z);
             result.w += 1.f;
         } break;
 
@@ -73,16 +84,14 @@ void main()
                     continue;
                 }
 
-                const vec2 pixel_rand_u01 = rand_u01(load_coord).xy;
-                const vec2 filter_coord = vec2(x, y) + pixel_rand_u01 - .5f;
+                const vec4 pixel_rand_u01 = rand_u01(load_coord);
+                const vec2 filter_coord = vec2(x, y) + pixel_rand_u01.xy - .5f;
 
                 const float sigma2 = 2.2f;
                 const float half_extent = 2.f;
                 const float w = exp(-sigma2*dot(filter_coord, filter_coord)) - exp(-sigma2*half_extent*half_extent);
                 if (w > 0.f) {
-                    result.x += w*imageLoad(g_input[0], ivec2(load_coord)).x;
-                    result.y += w*imageLoad(g_input[1], ivec2(load_coord)).x;
-                    result.z += w*imageLoad(g_input[2], ivec2(load_coord)).x;
+                    result.xyz += w*load_input(load_coord, pixel_rand_u01.z);
                     result.w += w;
                 }
             }
@@ -96,13 +105,11 @@ void main()
                     continue;
                 }
 
-                const vec2 pixel_rand_u01 = rand_u01(load_coord).xy;
-                const vec2 filter_coord = vec2(x, y) + pixel_rand_u01 - .5f;
+                const vec4 pixel_rand_u01 = rand_u01(load_coord);
+                const vec2 filter_coord = vec2(x, y) + pixel_rand_u01.xy - .5f;
                 const float w = mitchell(filter_coord.x) * mitchell(filter_coord.y);
                 if (w != 0.f) {
-                    result.x += w*imageLoad(g_input[0], ivec2(load_coord)).x;
-                    result.y += w*imageLoad(g_input[1], ivec2(load_coord)).x;
-                    result.z += w*imageLoad(g_input[2], ivec2(load_coord)).x;
+                    result.xyz += w*load_input(load_coord, pixel_rand_u01.z);
                     result.w += w;
                 }
             }

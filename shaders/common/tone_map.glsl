@@ -54,6 +54,25 @@ vec3 tone_map_sample(vec3 c, uint render_color_space, uint tone_map_method)
         }
     }
 }
+vec3 tone_map_sample(vec3 c, mat3 rec709_from_xyz, mat3 acescg_from_xyz, uint tone_map_method)
+{
+    switch (tone_map_method) {
+        default:
+        case TONE_MAP_METHOD_NONE: {
+            return rec709_from_xyz*c;
+        }
+
+        case TONE_MAP_METHOD_FILMIC_SRGB: {
+            const vec3 src = rec709_from_xyz*c;
+            return linear_from_gamma(filmic_tone_map(src));
+        }
+
+        case TONE_MAP_METHOD_ACES_FIT: {
+            const vec3 src = (acescg_from_xyz*c)*ACES_EXPOSURE_ADJUST_TO_BALANCE;
+            return rec709_from_fit(odt_and_rrt_fit(rrt_sat(src)));
+        }
+    }
+}
 
 vec3 tone_map_sample_to_gamma(vec3 c, uint render_color_space, uint tone_map_method)
 {
@@ -70,6 +89,25 @@ vec3 tone_map_sample_to_gamma(vec3 c, uint render_color_space, uint tone_map_met
 
         case TONE_MAP_METHOD_ACES_FIT: {
             const vec3 src = acescg_from_sample(c, render_color_space)*ACES_EXPOSURE_ADJUST_TO_BALANCE;
+            return gamma_from_linear(rec709_from_fit(odt_and_rrt_fit(rrt_sat(src))));
+        }
+    }
+}
+vec3 tone_map_sample_to_gamma(vec3 c, mat3 rec709_from_xyz, mat3 acescg_from_xyz, uint tone_map_method)
+{
+    switch (tone_map_method) {
+        default:
+        case TONE_MAP_METHOD_NONE: {
+            return gamma_from_linear(rec709_from_xyz*c);
+        }
+
+        case TONE_MAP_METHOD_FILMIC_SRGB: {
+            const vec3 src = rec709_from_xyz*c;
+            return filmic_tone_map(src);
+        }
+
+        case TONE_MAP_METHOD_ACES_FIT: {
+            const vec3 src = (acescg_from_xyz*c)*ACES_EXPOSURE_ADJUST_TO_BALANCE;
             return gamma_from_linear(rec709_from_fit(odt_and_rrt_fit(rrt_sat(src))));
         }
     }

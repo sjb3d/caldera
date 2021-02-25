@@ -29,7 +29,8 @@ use winit::{
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct CopyData {
     exposure_scale: f32,
-    render_color_space: u32,
+    rec709_from_xyz: Mat3,
+    acescg_from_xyz: Mat3,
     tone_map_method: u32,
 }
 
@@ -43,7 +44,8 @@ descriptor_set_layout!(CopyDescriptorSetLayout {
 struct CaptureData {
     size: UVec2,
     exposure_scale: f32,
-    render_color_space: u32,
+    rec709_from_xyz: Mat3,
+    acescg_from_xyz: Mat3,
     tone_map_method: u32,
 }
 
@@ -297,12 +299,26 @@ impl App {
                     if let Some(result_image) = result_image {
                         let result_image_view = params.get_image_view(result_image);
 
+                        let rec709_from_xyz = rec709_from_xyz_matrix()
+                            * chromatic_adaptation_matrix(
+                                bradford_lms_from_xyz_matrix(),
+                                Illuminant::D65,
+                                Illuminant::E,
+                            );
+                        let acescg_from_xyz = ap1_from_xyz_matrix()
+                            * chromatic_adaptation_matrix(
+                                bradford_lms_from_xyz_matrix(),
+                                Illuminant::D60,
+                                Illuminant::E,
+                            );
+
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
                             &descriptor_pool,
                             |buf: &mut CopyData| {
                                 *buf = CopyData {
                                     exposure_scale: renderer_params.log2_exposure_scale.exp2(),
-                                    render_color_space: renderer_params.render_color_space.into_integer(),
+                                    rec709_from_xyz,
+                                    acescg_from_xyz,
                                     tone_map_method: renderer_params.tone_map_method.into_integer(),
                                 }
                             },
@@ -520,13 +536,27 @@ impl CommandlineApp {
                                 let result_image_view = params.get_image_view(result_image);
                                 let capture_buffer = params.get_buffer(capture_buffer);
 
-                                let descriptor_set = capture_descriptor_set_layout.write(
+                                let rec709_from_xyz = rec709_from_xyz_matrix()
+                                * chromatic_adaptation_matrix(
+                                    bradford_lms_from_xyz_matrix(),
+                                    Illuminant::D65,
+                                    Illuminant::E,
+                                );
+                            let acescg_from_xyz = ap1_from_xyz_matrix()
+                                * chromatic_adaptation_matrix(
+                                    bradford_lms_from_xyz_matrix(),
+                                    Illuminant::D60,
+                                    Illuminant::E,
+                                );
+    
+                                    let descriptor_set = capture_descriptor_set_layout.write(
                                     &descriptor_pool,
                                     |buf: &mut CaptureData| {
                                         *buf = CaptureData {
                                             size: renderer_params.size(),
                                             exposure_scale: renderer_params.log2_exposure_scale.exp2(),
-                                            render_color_space: renderer_params.render_color_space.into_integer(),
+                                            rec709_from_xyz,
+                                            acescg_from_xyz,
                                             tone_map_method: renderer_params.tone_map_method.into_integer(),
                                         };
                                     },

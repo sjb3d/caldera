@@ -49,7 +49,6 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     vec2 fov_size_at_unit_z;
     uint sample_index;
     uint max_segment_count;
-    uint render_color_space;
     uint mis_heuristic;
     uint sequence_type;
     uint flags;
@@ -58,7 +57,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
-layout(set = 0, binding = 4, r32f) uniform restrict writeonly image2D g_result[3];
+layout(set = 0, binding = 4, r32f) uniform restrict writeonly image2D g_result;
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -75,15 +74,6 @@ uint sample_uniform_discrete(uint count, inout float u01)
     const uint index = min(uint(index_flt), count - 1);
     u01 = index_flt - float(index);
     return index;
-}
-
-float luminance(vec3 c)
-{
-    switch (g_path_trace.render_color_space) {
-        default:
-        case RENDER_COLOR_SPACE_REC709: return dot(c, vec3(0.2126729f, 0.7151522f, 0.0721750f));
-        case RENDER_COLOR_SPACE_ACESCG: return dot(c, vec3(0.2722287f, 0.6740818f, 0.0536895f));
-    }
 }
 
 EXTEND_PAYLOAD(g_extend);
@@ -177,7 +167,7 @@ void sample_single_light(
 #undef PARAMS
     }
 
-    light_emission = sample_from_rec709(emission, g_path_trace.render_color_space);
+    light_emission = emission;
     light_solid_angle_pdf = abs(solid_angle_pdf_and_ext_bit) * selection_pdf;
     light_is_external = sign_bit_set(solid_angle_pdf_and_ext_bit);
     light_epsilon = ldexp(unit_scale, LOG2_EPSILON_FACTOR);    
@@ -256,7 +246,7 @@ void evaluate_single_light(
 #undef PARAMS
     }
 
-    light_emission = sample_from_rec709(emission, g_path_trace.render_color_space);
+    light_emission = emission;
     light_solid_angle_pdf = solid_angle_pdf * selection_pdf;
 }
 
@@ -361,7 +351,7 @@ void main()
         // adjust BSDF colour space of the hit
         hit.bsdf_params = replace_reflectance(
             hit.bsdf_params,
-            sample_from_rec709(get_reflectance(hit.bsdf_params), g_path_trace.render_color_space));
+            get_reflectance(hit.bsdf_params));
 
         // reject implausible shading normals
         {
@@ -582,7 +572,6 @@ void main()
         }
     }
 
-    imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, 0, 0, 0));
-    imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, 0, 0, 0));
-    imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, 0, 0, 0));
+    const float hack = dot(result_sum, vec3(0.2, 0.7, 0.1));
+    imageStore(g_result, ivec2(gl_LaunchIDEXT.xy), vec4(hack, 0, 0, 0));
 }

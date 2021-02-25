@@ -8,7 +8,8 @@ layout(location = 0) out vec4 o_col;
 
 layout(set = 0, binding = 0, scalar) uniform CopyData {
     float exposure_scale;
-    uint render_color_space;
+    mat3 rec709_from_xyz;
+    mat3 acescg_from_xyz;
     uint tone_map_method;
 } g_copy;
 
@@ -18,6 +19,6 @@ void main()
 {
     vec4 result = imageLoad(g_result, ivec2(gl_FragCoord));
     vec3 col = max(result.xyz*(g_copy.exposure_scale/result.w), vec3(0.f));
-    col = tone_map_sample(col, g_copy.render_color_space, g_copy.tone_map_method);
+    col = tone_map_sample(col, g_copy.rec709_from_xyz, g_copy.acescg_from_xyz, g_copy.tone_map_method);
     o_col = vec4(col, 1.f);
 }
