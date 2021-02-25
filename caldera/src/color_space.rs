@@ -107,6 +107,22 @@ pub fn derive_aces_fit_matrices() {
     println!("rec709_from_fit = {:#?}", rec709_from_fit);
 }
 
+pub trait ToXYZ {
+    type Output;
+    fn to_xyz(&self) -> Self::Output;
+}
+
+impl ToXYZ for Vec2 {
+    type Output = Vec3;
+    fn to_xyz(&self) -> Self::Output {
+        Vec3::new(
+            self.x / self.y,
+            1.0,
+            (1.0 - self.x - self.y) / self.y,
+        )        
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Illuminant {
     D60,
@@ -132,13 +148,7 @@ impl Illuminant {
     }
 
     fn white(&self) -> Vec3 {
-        let chroma = self.chroma();
-        let power = 1.0;
-        Vec3::new(
-            chroma.x * power / chroma.y,
-            power,
-            (1.0 - chroma.x - chroma.y) * power / chroma.y,
-        )
+        self.chroma().to_xyz()
     }
 }
 
