@@ -247,20 +247,26 @@ fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geome
     }
 }
 
-pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
+pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Scene {
     let reader = BufReader::new(File::open(&path).unwrap());
 
     let scene: Scene = serde_json::from_reader(reader).unwrap();
 
     let load_emission = |primitive: &Primitive, area: f32| {
-        let mut emission = None;
+        let mut tint = None;
         if let Some(s) = primitive.power.as_ref() {
-            emission = Some(scene::Emission::Constant(s.into_vec3() / (area * PI)));
+            tint = Some(s.into_vec3() / (area * PI));
         }
         if let Some(TextureOrValue::Value(v)) = &primitive.emission {
-            emission = Some(scene::Emission::Constant(v.into_vec3()));
+            tint = Some(v.into_vec3());
         }
-        emission
+        tint.map(|v| {
+            match illuminant {
+                Illuminant::E => scene::Emission::Constant(v),
+                Illuminant::D65 => scene::Emission::D65(v),
+                _ => panic!("unknown illuminant"),
+            }
+        })
     };
 
     let load_material = |bsdf_ref: &BsdfRef, emission: Option<scene::Emission>| {

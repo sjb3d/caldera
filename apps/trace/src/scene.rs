@@ -58,7 +58,7 @@ pub enum Surface {
 pub enum Emission {
     CornellBox(f32),
     Constant(Vec3), // TODO: add illuminant
-    D65(f32),
+    D65(Vec3),
     // TODO: black body temperature
 }
 

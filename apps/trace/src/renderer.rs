@@ -72,7 +72,7 @@ impl Illuminator for Emission {
         match self {
             Emission::CornellBox(s) => Vec3::broadcast(*s),
             Emission::Constant(v) => *v,
-            Emission::D65(s) => Vec3::broadcast(*s),
+            Emission::D65(v) => *v,
         }
     }
 }
@@ -611,6 +611,9 @@ pub struct RendererParams {
 
     #[structopt(long, default_value = "pmj", global = true)]
     pub sequence_type: SequenceType,
+
+    #[structopt(long, global = true)]
+    pub d65_observer: bool,
 }
 
 impl RendererParams {
@@ -620,6 +623,14 @@ impl RendererParams {
 
     pub fn sample_count(&self) -> u32 {
         1 << self.log2_sample_count
+    }
+    
+    pub fn observer_illuminant(&self) -> Illuminant {
+        if self.d65_observer {
+            Illuminant::D65
+        } else {
+            Illuminant::E
+        }
     }
 }
 

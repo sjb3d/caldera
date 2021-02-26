@@ -303,13 +303,13 @@ impl App {
                             * chromatic_adaptation_matrix(
                                 bradford_lms_from_xyz_matrix(),
                                 Illuminant::D65,
-                                Illuminant::E,
+                                renderer_params.observer_illuminant(),
                             );
                         let acescg_from_xyz = ap1_from_xyz_matrix()
                             * chromatic_adaptation_matrix(
                                 bradford_lms_from_xyz_matrix(),
                                 Illuminant::D60,
-                                Illuminant::E,
+                                renderer_params.observer_illuminant(),
                             );
 
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
@@ -697,7 +697,7 @@ fn main() {
             let contents = std::fs::read_to_string(filename).unwrap();
             import::load_scene(&contents)
         }
-        SceneDesc::Tungsten { filename } => tungsten::load_scene(filename),
+        SceneDesc::Tungsten { filename } => tungsten::load_scene(filename, renderer_params.observer_illuminant()),
     };
 
     if let Some(output) = app_params.output {
