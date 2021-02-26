@@ -151,10 +151,10 @@ docs/trace_cornell-box_dome-light.%: shaders Makefile
 	$(TRACE) -o $@ -w 492 -h 492 $(MANY_SAMPLES) cornell-box dome-light
 
 docs/trace_cornell-box_conductor.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 64 -f box cornell-box conductor
+	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box cornell-box conductor
 
 docs/trace_cornell-box_conductor_surfaces-only.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 64 -f box --sampling-technique surfaces-only cornell-box conductor
+	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique surfaces-only cornell-box conductor
 
 docs/trace_cornell-box_conductor_lights-only.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 64 -f box --sampling-technique lights-only cornell-box conductor
+	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique lights-only cornell-box conductor
