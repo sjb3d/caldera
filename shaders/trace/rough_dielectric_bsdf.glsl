@@ -7,10 +7,10 @@ void rough_dielectric_bsdf_eval(
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out vec3 f,
+    out vec4 f,
     out float solid_angle_pdf)
 {
-    const vec3 reflectance = get_reflectance(params);
+    const vec4 reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = vec2(square(roughness));
 
@@ -44,11 +44,11 @@ void rough_dielectric_bsdf_sample(
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out vec3 estimator,
+    out vec4 estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-    const vec3 reflectance = get_reflectance(params);
+    const vec4 reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = vec2(square(roughness));
 

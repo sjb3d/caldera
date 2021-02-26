@@ -7,11 +7,11 @@ void smooth_dielectric_bsdf_sample(
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out vec3 estimator,
+    out vec4 estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-    const vec3 reflectance = get_reflectance(params);
+    const vec4 reflectance = get_reflectance(params);
 
     const float eta = is_front_hit(params) ? DIELECTRIC_IOR : (1.f/DIELECTRIC_IOR);
     const float reflect_chance = fresnel_dieletric(eta, out_dir.z);

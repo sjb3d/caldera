@@ -100,7 +100,7 @@ void main()
     g_extend.geom_normal = make_normal32(hit_geom_normal_vec_ws);
     g_extend.shading_normal = make_normal32(hit_shading_normal_vec_ws);
     g_extend.bsdf_params = create_bsdf_params(
-        reflectance,
+        vec4(reflectance, 0.f),
         g_record.shader.roughness,
         is_front_hit);
 }

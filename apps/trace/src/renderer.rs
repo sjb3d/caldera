@@ -624,7 +624,7 @@ impl RendererParams {
     pub fn sample_count(&self) -> u32 {
         1 << self.log2_sample_count
     }
-    
+
     pub fn observer_illuminant(&self) -> Illuminant {
         if self.d65_observer {
             Illuminant::D65
@@ -1075,8 +1075,8 @@ impl Renderer {
 
         let xyz_from_wavelength_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
-            let desc = ImageDesc::new_2d(
-                UVec2::new(WAVELENGTH_MAX - WAVELENGTH_MIN, 1),
+            let desc = ImageDesc::new_1d(
+                WAVELENGTH_MAX - WAVELENGTH_MIN,
                 vk::Format::R32G32B32A32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
@@ -1800,7 +1800,11 @@ impl Renderer {
 
         // do a pass
         if !progress.done(&self.params) {
-            let temp_desc = ImageDesc::new_2d(self.params.size(), vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let temp_desc = ImageDesc::new_2d(
+                self.params.size(),
+                vk::Format::R32G32B32A32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            );
             let temp_image = schedule.describe_image(&temp_desc);
 
             schedule.add_compute(

@@ -260,12 +260,10 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
         if let Some(TextureOrValue::Value(v)) = &primitive.emission {
             tint = Some(v.into_vec3());
         }
-        tint.map(|v| {
-            match illuminant {
-                Illuminant::E => scene::Emission::Constant(v),
-                Illuminant::D65 => scene::Emission::D65(v),
-                _ => panic!("unknown illuminant"),
-            }
+        tint.map(|v| match illuminant {
+            Illuminant::E => scene::Emission::Constant(v),
+            Illuminant::D65 => scene::Emission::D65(v),
+            _ => panic!("unknown illuminant"),
         })
     };
 

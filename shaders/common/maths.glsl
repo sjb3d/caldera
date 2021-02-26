@@ -19,15 +19,14 @@ float min_element(vec3 v)   { return min(min(v.x, v.y), v.z); }
 
 float max_element(vec2 v)   { return max(v.x, v.y); }
 float max_element(vec3 v)   { return max(max(v.x, v.y), v.z); }
+float max_element(vec4 v)   { return max(max(v.x, v.y), max(v.z, v.w)); }
 
 float square(float x)       { return x*x; }
 vec2 square(vec2 x)         { return x*x; }
 vec3 square(vec3 x)         { return x*x; }
 
-float unlerp(float a, float b, float x)
-{
-    return (x - a)/(b - a);
-}
+float unlerp(float a, float b, float x) { return (x - a)/(b - a); }
+vec4 unlerp(vec4 a, vec4 b, vec4 x)     { return (x - a)/(b - a); }
 
 float copysign(float x, float s)
 {

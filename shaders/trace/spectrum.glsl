@@ -2,6 +2,15 @@
 #define SMITS_WAVELENGTH_MIN    380.f
 #define SMITS_WAVELENGTH_MAX    720.f
 
+float offset_wavelength(float base, float fraction)
+{
+    float result = base + fraction*(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
+    if (result > SMITS_WAVELENGTH_MAX) {
+        result -= (SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
+    }
+    return result;
+}
+
 float smits_power_from_rec709(float wavelength, vec3 col, sampler2D table)
 {
     const float wavelength_u = unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength);
