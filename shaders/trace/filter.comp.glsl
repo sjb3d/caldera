@@ -21,7 +21,7 @@ layout(set = 0, binding = 0, scalar) uniform FilterData {
 layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 2, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
 layout(set = 0, binding = 3) uniform sampler1D g_xyz_from_wavelength;
-layout(set = 0, binding = 4, rgba32f) uniform restrict readonly image2D g_input;
+layout(set = 0, binding = 4, r32f) uniform restrict readonly image2D g_input[3];
 layout(set = 0, binding = 5, rgba32f) uniform restrict image2D g_result;
 
 #include "sequence.glsl"
@@ -51,17 +51,16 @@ float mitchell(float x)
 
 vec3 load_input(uvec2 load_coord, float hero_wavelength)
 {
-    vec4 wavelengths;
-    wavelengths.x = hero_wavelength;
-    wavelengths.y = offset_wavelength(hero_wavelength, .25f);
-    wavelengths.z = offset_wavelength(hero_wavelength, .5f);
-    wavelengths.w = offset_wavelength(hero_wavelength, .75f);
-    const vec4 samples = imageLoad(g_input, ivec2(load_coord));
+    const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
+    vec3 samples;
+    samples.x = imageLoad(g_input[0], ivec2(load_coord)).x;
+    samples.y = imageLoad(g_input[1], ivec2(load_coord)).x;
+    samples.z = imageLoad(g_input[2], ivec2(load_coord)).x;
     vec3 value
         = samples.x*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).xyz
         + samples.y*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).xyz
         + samples.z*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).xyz
-        + samples.w*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.w)).xyz;    
+        ;
     return value;
 }
 

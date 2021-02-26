@@ -5,7 +5,7 @@ void mirror_bsdf_sample(
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out vec4 estimator,
+    out HERO_VEC estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {

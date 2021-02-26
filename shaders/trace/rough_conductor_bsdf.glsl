@@ -7,10 +7,10 @@ void rough_conductor_bsdf_eval(
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out vec4 f,
+    out HERO_VEC f,
     out float solid_angle_pdf)
 {
-    const vec4 reflectance = get_reflectance(params);
+    const HERO_VEC reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = vec2(square(roughness));
 
@@ -33,11 +33,11 @@ void rough_conductor_bsdf_sample(
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out vec4 estimator,
+    out HERO_VEC estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-    const vec4 reflectance = get_reflectance(params);
+    const HERO_VEC reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = vec2(square(roughness));
 

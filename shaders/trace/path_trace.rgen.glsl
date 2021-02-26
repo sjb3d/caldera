@@ -60,7 +60,7 @@ layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samp
 layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
 layout(set = 0, binding = 4) uniform sampler1DArray g_illuminants;
 layout(set = 0, binding = 5) uniform sampler2D g_smits_table;
-layout(set = 0, binding = 6, rgba32f) uniform restrict writeonly image2D g_result;
+layout(set = 0, binding = 6, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -82,25 +82,19 @@ uint sample_uniform_discrete(uint count, inout float u01)
 EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
 
-vec4 illuminant(float hero_wavelength, uint index, vec3 tint)
+HERO_VEC illuminant(float hero_wavelength, uint index, vec3 tint)
 {
-    vec4 wavelengths;
-    wavelengths.x = hero_wavelength;
-    wavelengths.y = offset_wavelength(hero_wavelength, .25f);
-    wavelengths.z = offset_wavelength(hero_wavelength, .5f);
-    wavelengths.w = offset_wavelength(hero_wavelength, .75f);
-    vec4 power;
+    const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
+    HERO_VEC power;
     power.x = smits_power_from_rec709(wavelengths.x, tint, g_smits_table);
     power.y = smits_power_from_rec709(wavelengths.y, tint, g_smits_table);
     power.z = smits_power_from_rec709(wavelengths.z, tint, g_smits_table);
-    power.w = smits_power_from_rec709(wavelengths.w, tint, g_smits_table);
     if (index != 0) {
         const float layer = float(index - 1);
-        const vec4 coord = unlerp(vec4(SMITS_WAVELENGTH_MIN), vec4(SMITS_WAVELENGTH_MAX), wavelengths);
+        const HERO_VEC coord = unlerp(HERO_VEC(SMITS_WAVELENGTH_MIN), HERO_VEC(SMITS_WAVELENGTH_MAX), wavelengths);
         power.x *= texture(g_illuminants, vec2(coord.x, layer)).x;
         power.y *= texture(g_illuminants, vec2(coord.y, layer)).x;
         power.z *= texture(g_illuminants, vec2(coord.z, layer)).x;
-        power.w *= texture(g_illuminants, vec2(coord.w, layer)).x;
     }
     return power;
 }
@@ -110,7 +104,7 @@ void evaluate_bsdf(
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out vec4 f,
+    out HERO_VEC f,
     out float solid_angle_pdf)
 {
 #define CALL(F) F(out_dir, in_dir, params, f, solid_angle_pdf)
@@ -132,7 +126,7 @@ void sample_bsdf(
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out vec4 estimator,
+    out vec3 estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
@@ -157,7 +151,7 @@ void sample_single_light(
     vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
-    out vec4 light_emission,
+    out HERO_VEC light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
     out float light_epsilon)
@@ -207,7 +201,7 @@ void sample_all_lights(
     vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
-    out vec4 light_emission,
+    out HERO_VEC light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
     out float light_epsilon)
@@ -242,7 +236,7 @@ void evaluate_single_light(
     uint light_index,
     vec3 target_position,
     vec3 light_position_or_extdir,
-    out vec4 light_emission,
+    out HERO_VEC light_emission,
     out float light_solid_angle_pdf)
 {
     LightInfoEntry light_info = g_path_trace.light_info_table.entries[light_index];
@@ -341,7 +335,7 @@ void main()
     float prev_epsilon;
     vec3 prev_in_dir;
     float prev_in_solid_angle_pdf_or_negative;
-    vec4 prev_sample;
+    HERO_VEC prev_sample;
     float path_max_roughness;
 
     // sample the camera
@@ -357,11 +351,11 @@ void main()
         const float cos_theta3 = cos_theta2*cos_theta;
         const float solid_angle_pdf = 1.f/(fov_area_at_unit_z*cos_theta3);
 
-        const vec4 importance = vec4(1.f/fov_area_at_unit_z);
+        const HERO_VEC importance = vec3(1.f/fov_area_at_unit_z);
         const float sensor_area_pdf = 1.f/fov_area_at_unit_z;
 
         hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
-        const float wavelength_pdf = 4.f/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
+        const float wavelength_pdf = WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
 
         prev_position = g_path_trace.world_from_camera[3];
         prev_geom_normal_packed = make_normal32(g_path_trace.world_from_camera[2]);
@@ -373,7 +367,7 @@ void main()
     }
 
     // trace a path from the camera
-    vec4 result_sum = vec4(0.f);
+    HERO_VEC result_sum = HERO_VEC(0.f);
     uint segment_index = 0;
     for (;;) {
         // extend the path using the sampled (incoming) direction
@@ -383,13 +377,15 @@ void main()
         ++segment_index;
 
         // compute reflectance for this wavelength
-        const vec3 tint = get_reflectance(hit.bsdf_params).xyz;
-        vec4 reflectances;
-        reflectances.x = smits_power_from_rec709(hero_wavelength, tint, g_smits_table);
-        reflectances.y = smits_power_from_rec709(offset_wavelength(hero_wavelength, .25f), tint, g_smits_table);
-        reflectances.z = smits_power_from_rec709(offset_wavelength(hero_wavelength, .5f), tint, g_smits_table);
-        reflectances.w = smits_power_from_rec709(offset_wavelength(hero_wavelength, .75f), tint, g_smits_table);
-        hit.bsdf_params = replace_reflectance(hit.bsdf_params, reflectances);
+        {
+            const vec3 tint = get_reflectance(hit.bsdf_params);
+            const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
+            HERO_VEC reflectances;
+            reflectances.x = smits_power_from_rec709(wavelengths.x, tint, g_smits_table);
+            reflectances.y = smits_power_from_rec709(wavelengths.y, tint, g_smits_table);
+            reflectances.z = smits_power_from_rec709(wavelengths.z, tint, g_smits_table);
+            hit.bsdf_params = replace_reflectance(hit.bsdf_params, reflectances);
+        }
 
         // reject implausible shading normals
         {
@@ -414,7 +410,7 @@ void main()
         for (uint light_index = light_index_begin; light_index != light_index_end; ++light_index) {
             // evaluate the light here
             const vec3 light_position_or_extdir = hit.position_or_extdir;
-            vec4 light_emission;
+            HERO_VEC light_emission;
             float light_solid_angle_pdf;
             evaluate_single_light(
                 hero_wavelength,
@@ -490,7 +486,7 @@ void main()
             // sample from all light sources
             vec3 light_position_or_extdir;
             Normal32 light_normal;
-            vec4 light_emission;
+            HERO_VEC light_emission;
             float light_solid_angle_pdf;
             bool light_is_external;
             float light_epsilon;
@@ -518,7 +514,7 @@ void main()
             // evaluate the BRDF
             const float in_cos_theta = in_dir_ls.z;
             const uint bsdf_type = get_bsdf_type(hit.info);
-            vec4 hit_f;
+            HERO_VEC hit_f;
             float hit_solid_angle_pdf;
             if (in_cos_theta > 0.f || bsdf_has_transmission(bsdf_type)) {
                 evaluate_bsdf(
@@ -529,7 +525,7 @@ void main()
                     hit_f,
                     hit_solid_angle_pdf);
             } else {
-                hit_f = vec4(0.f);
+                hit_f = HERO_VEC(0.f);
                 hit_solid_angle_pdf = 0.f;
             }
             
@@ -539,10 +535,10 @@ void main()
             const float mis_weight = 1.f/(1.f + other_ratio);
 
             // compute the sample assuming the ray is not occluded
-            const vec4 result = prev_sample * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
+            const HERO_VEC result = prev_sample * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
 
             // trace an occlusion ray if necessary
-            if (any(greaterThan(result, vec4(0.f)))) {
+            if (any(greaterThan(result, HERO_VEC(0.f)))) {
                 const vec3 hit_geom_normal = get_dir(hit.geom_normal);
                 const float hit_epsilon = get_epsilon(hit.info, LOG2_EPSILON_FACTOR);
                 const vec3 adjusted_hit_position = hit.position_or_extdir + hit_geom_normal*hit_epsilon;
@@ -579,7 +575,7 @@ void main()
 
             // RR
             if (segment_index > 4) {
-                const vec4 reflectance = get_reflectance(hit.bsdf_params);
+                const HERO_VEC reflectance = get_reflectance(hit.bsdf_params);
                 const float survive_prob = clamp(max_element(reflectance), .1f, .95f);
                 if (!split_random_variable(survive_prob, bsdf_rand_u01.y)) {
                     break;
@@ -588,7 +584,7 @@ void main()
             }
 
             vec3 in_dir_ls;
-            vec4 estimator;
+            HERO_VEC estimator;
             float solid_angle_pdf_or_negative;
             sample_bsdf(
                 get_bsdf_type(hit.info),
@@ -612,5 +608,7 @@ void main()
         }
     }
 
-    imageStore(g_result, ivec2(gl_LaunchIDEXT.xy), result_sum);
+    imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, vec3(0.f)));
+    imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, vec3(0.f)));
+    imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, vec3(0.f)));
 }

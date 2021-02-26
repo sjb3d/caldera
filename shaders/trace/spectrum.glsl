@@ -11,6 +11,18 @@ float offset_wavelength(float base, float fraction)
     return result;
 }
 
+vec3 expand_wavelengths(float hero_wavelength)
+{
+    vec3 wavelengths;
+    wavelengths.x = hero_wavelength;
+    wavelengths.y = offset_wavelength(hero_wavelength, .33f);
+    wavelengths.z = offset_wavelength(hero_wavelength, .66f);
+    return wavelengths;
+}
+
+#define WAVELENGTHS_PER_RAY     3
+#define HERO_VEC                vec3
+
 float smits_power_from_rec709(float wavelength, vec3 col, sampler2D table)
 {
     const float wavelength_u = unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength);

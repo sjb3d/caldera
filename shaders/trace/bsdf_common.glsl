@@ -28,51 +28,52 @@
     of BSDF is already known, stored separately).
 */
 struct BsdfParams {
-    uvec3 bits;
+    uvec2 bits;
 };
 
-#define BSDF_PARAMS_Z_FRONT_HIT_BIT     0x80000000U
+#define BSDF_PARAMS_Y_FRONT_HIT_BIT     0x80000000U
 
 BsdfParams create_bsdf_params(
-    vec4 reflectance,
+    vec3 reflectance,
     float roughness,
     bool is_front_hit)
 {
     BsdfParams p;
     p.bits.x = packHalf2x16(reflectance.xy);
-    p.bits.y = packHalf2x16(reflectance.zw);
-    p.bits.z
-        = floatBitsToUint(abs(roughness))
-        | (is_front_hit ? BSDF_PARAMS_Z_FRONT_HIT_BIT : 0)
+    p.bits.y
+        = packHalf2x16(vec2(reflectance.z, abs(roughness)))
+        | (is_front_hit ? BSDF_PARAMS_Y_FRONT_HIT_BIT : 0)
+
         ;
     return p;
 }
 
-vec4 get_reflectance(BsdfParams p)
+vec3 get_reflectance(BsdfParams p)
 {
-    return vec4(
+    return vec3(
         unpackHalf2x16(p.bits.x),
-        unpackHalf2x16(p.bits.y));
+        unpackHalf2x16(p.bits.y).x);
 }
 float get_roughness(BsdfParams p)
 {
-    return abs(uintBitsToFloat(p.bits.z));
+    return abs(unpackHalf2x16(p.bits.y).y);
 }
 bool is_front_hit(BsdfParams p)
 {
-    return (p.bits.z & BSDF_PARAMS_Z_FRONT_HIT_BIT) != 0;
+    return (p.bits.y & BSDF_PARAMS_Y_FRONT_HIT_BIT) != 0;
 }
 
-BsdfParams replace_reflectance(BsdfParams p, vec4 reflectance)
+BsdfParams replace_reflectance(BsdfParams p, vec3 reflectance)
 {
     p.bits.x = packHalf2x16(reflectance.xy);
-    p.bits.y = packHalf2x16(reflectance.zw);
+    p.bits.y &= 0xffff0000;
+    p.bits.y |= packHalf2x16(vec2(reflectance.z, 0.f));
     return p;
 }
 BsdfParams replace_roughness(BsdfParams p, float roughness)
 {
-    p.bits.z &= BSDF_PARAMS_Z_FRONT_HIT_BIT;
-    p.bits.z |= floatBitsToUint(abs(roughness));
+    p.bits.y &= (BSDF_PARAMS_Y_FRONT_HIT_BIT | 0x0000ffff);
+    p.bits.y |= packHalf2x16(vec2(0.f, abs(roughness)));
     return p;
 }
 

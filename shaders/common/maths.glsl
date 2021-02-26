@@ -26,6 +26,7 @@ vec2 square(vec2 x)         { return x*x; }
 vec3 square(vec3 x)         { return x*x; }
 
 float unlerp(float a, float b, float x) { return (x - a)/(b - a); }
+vec3 unlerp(vec3 a, vec3 b, vec3 x)     { return (x - a)/(b - a); }
 vec4 unlerp(vec4 a, vec4 b, vec4 x)     { return (x - a)/(b - a); }
 
 float copysign(float x, float s)

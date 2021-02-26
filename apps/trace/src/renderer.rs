@@ -201,7 +201,7 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     sobol_samples: StorageImage,
     illuminants: SampledImage,
     smits_table: SampledImage,
-    result: StorageImage,
+    result: [StorageImage; 3],
 });
 
 #[repr(transparent)]
@@ -648,7 +648,7 @@ descriptor_set_layout!(FilterDescriptorSetLayout {
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
     xyz_from_wavelength: SampledImage,
-    input: StorageImage,
+    input: [StorageImage; 3],
     result: StorageImage,
 });
 
@@ -1800,23 +1800,29 @@ impl Renderer {
 
         // do a pass
         if !progress.done(&self.params) {
-            let temp_desc = ImageDesc::new_2d(
-                self.params.size(),
-                vk::Format::R32G32B32A32_SFLOAT,
-                vk::ImageAspectFlags::COLOR,
+            let temp_desc = ImageDesc::new_2d(self.params.size(), vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
+            let temp_images = (
+                schedule.describe_image(&temp_desc),
+                schedule.describe_image(&temp_desc),
+                schedule.describe_image(&temp_desc),
             );
-            let temp_image = schedule.describe_image(&temp_desc);
 
             schedule.add_compute(
                 command_name!("trace"),
                 |params| {
                     self.accel.declare_parameters(params);
-                    params.add_image(temp_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_images.0, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_images.1, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                    params.add_image(temp_images.2, ImageUsage::RAY_TRACING_STORAGE_WRITE);
                 },
                 {
                     let sample_index = progress.next_sample_index;
                     move |params, cmd| {
-                        let temp_image_view = params.get_image_view(temp_image);
+                        let temp_image_views = [
+                            params.get_image_view(temp_images.0),
+                            params.get_image_view(temp_images.1),
+                            params.get_image_view(temp_images.2),
+                        ];
 
                         let size_flt = self.params.size().as_float();
                         let aspect_ratio = size_flt.x / size_flt.y;
@@ -1880,7 +1886,7 @@ impl Renderer {
                             sobol_samples_image_view,
                             illuminants_image_view,
                             smits_table_image_view,
-                            temp_image_view,
+                            &temp_image_views,
                         );
 
                         let device = &context.device;
@@ -1933,7 +1939,9 @@ impl Renderer {
             schedule.add_compute(
                 command_name!("filter"),
                 |params| {
-                    params.add_image(temp_image, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_images.0, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_images.1, ImageUsage::COMPUTE_STORAGE_READ);
+                    params.add_image(temp_images.2, ImageUsage::COMPUTE_STORAGE_READ);
                     params.add_image(
                         self.result_image,
                         ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
@@ -1942,7 +1950,11 @@ impl Renderer {
                 {
                     let sample_index = progress.next_sample_index;
                     move |params, cmd| {
-                        let temp_image_view = params.get_image_view(temp_image);
+                        let temp_image_views = [
+                            params.get_image_view(temp_images.0),
+                            params.get_image_view(temp_images.1),
+                            params.get_image_view(temp_images.2),
+                        ];
                         let result_image_view = params.get_image_view(self.result_image);
 
                         let descriptor_set = self.filter_descriptor_set_layout.write(
@@ -1958,7 +1970,7 @@ impl Renderer {
                             pmj_samples_image_view,
                             sobol_samples_image_view,
                             xyz_from_wavelength_image_view,
-                            temp_image_view,
+                            &temp_image_views,
                             result_image_view,
                         );
 
