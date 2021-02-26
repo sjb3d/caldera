@@ -372,7 +372,7 @@ const CORNELL_BOX_RED_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
     (700.0, 0.642)
 );
 #[rustfmt::skip]
-const CORNELL_BOX_LIGHT_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
+pub const CORNELL_BOX_LIGHT_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
     (400.0,  0.0),
     (500.0,  8.0),
     (600.0, 15.6),
@@ -513,28 +513,25 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let rgb_from_xyz = rec709_from_xyz_matrix();
 
     let white_reflectance = rgb_from_xyz
-        * xyz_from_spectrum_sweep(
+        * xyz_from_spectral_reflectance_sweep(
             CORNELL_BOX_WHITE_SAMPLES
                 .iter()
                 .cloned()
-                .into_sweep()
-                .product(d65_illuminant_sweep()),
+                .into_sweep(), d65_illuminant_sweep()
         );
     let red_reflectance = rgb_from_xyz
-        * xyz_from_spectrum_sweep(
+        * xyz_from_spectral_reflectance_sweep(
             CORNELL_BOX_RED_SAMPLES
                 .iter()
                 .cloned()
-                .into_sweep()
-                .product(d65_illuminant_sweep()),
+                .into_sweep(), d65_illuminant_sweep()
         );
     let green_reflectance = rgb_from_xyz
-        * xyz_from_spectrum_sweep(
+        * xyz_from_spectral_reflectance_sweep(
             CORNELL_BOX_GREEN_SAMPLES
                 .iter()
                 .cloned()
-                .into_sweep()
-                .product(d65_illuminant_sweep()),
+                .into_sweep(), d65_illuminant_sweep()
         );
 
     let white_material = scene.add_material(Material {
@@ -573,11 +570,6 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         scene.add_instance(Instance::new(identity, tall_block, tall_block_material));
     }
 
-    let light_emission_xyz = xyz_from_spectrum_sweep(CORNELL_BOX_LIGHT_SAMPLES.iter().cloned().into_sweep());
-    let light_emission = rgb_from_xyz
-        * chromatic_adaptation_matrix(bradford_lms_from_xyz_matrix(), Illuminant::D65, Illuminant::E)
-        * light_emission_xyz;
-
     match variant {
         CornellBoxVariant::DomeLight => {
             scene.add_light(Light::Dome {
@@ -595,7 +587,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             let light_z = 0.1;
             let r_a = 0.05;
             let r_b = 0.0005;
-            let power = 0.005 * light_emission;
+            let power = 0.005;
             for i in 0..4 {
                 let r = r_a + (r_b - r_a) * ((i as f32) / 3.0).powf(0.5);
                 let sphere = scene.add_geometry(Geometry::Sphere {
@@ -605,7 +597,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
                 let material = scene.add_material(Material {
                     reflectance: Reflectance::Constant(Vec3::zero()),
                     surface: Surface::None,
-                    emission: Some(power / (4.0 * PI * r * r)),
+                    emission: Some(Vec3::broadcast(power / (4.0 * PI * r * r))),
                 });
                 scene.add_instance(Instance::new(identity, sphere, material));
             }
@@ -656,7 +648,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             let light_material = scene.add_material(Material {
                 reflectance: Reflectance::Constant(Vec3::broadcast(0.78)),
                 surface: Surface::Diffuse,
-                emission: Some(light_emission),
+                emission: Some(Vec3::one()),
             });
             scene.add_instance(Instance::new(identity, light_geometry, light_material));
         }

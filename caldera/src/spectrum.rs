@@ -659,10 +659,21 @@ pub fn xyz_matching_sweep() -> impl Sweep<Item = Vec3> {
     SampleSweep::new(xyz_matching_sample_iter())
 }
 
-pub fn xyz_from_spectrum_sweep(mut power: impl Sweep<Item = f32>) -> Vec3 {
+pub fn xyz_from_spectral_radiance_sweep(mut power: impl Sweep<Item = f32>) -> Vec3 {
     let mut sum = Vec3::zero();
     for (wavelength, value) in xyz_matching_sample_iter() {
         sum += value * power.next(wavelength);
     }
     sum * CIE_WAVELENGTH_STEP_SIZE
+}
+
+pub fn xyz_from_spectral_reflectance_sweep(mut reflectance: impl Sweep<Item = f32>, mut illuminant: impl Sweep<Item = f32>) -> Vec3 {
+    let mut sum = Vec3::zero();
+    let mut n = 0.0;
+    for (wavelength, value) in xyz_matching_sample_iter() {
+        let illum = illuminant.next(wavelength);
+        sum += value * (illum * reflectance.next(wavelength));
+        n += value.y * illum;
+    }
+    sum * (CIE_WAVELENGTH_STEP_SIZE/n)
 }

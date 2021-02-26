@@ -176,6 +176,7 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     accel: AccelerationStructure,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
+    illuminants: SampledImage,
     smits_table: SampledImage,
     result: StorageImage,
 });
@@ -662,6 +663,7 @@ pub struct Renderer {
     pmj_samples_image: StaticImageHandle,
     sobol_samples_image: StaticImageHandle,
     smits_table_image: StaticImageHandle,
+    illuminants_image: StaticImageHandle,
     xyz_from_wavelength_image: StaticImageHandle,
     result_image: ImageHandle,
 
@@ -860,9 +862,19 @@ impl Renderer {
             };
             unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
         };
+        let clamp_linear_sampler = {
+            let create_info = vk::SamplerCreateInfo {
+                mag_filter: vk::Filter::LINEAR,
+                min_filter: vk::Filter::LINEAR,
+                address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                ..Default::default()
+            };
+            unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
+        };
 
         let path_trace_descriptor_set_layout =
-            PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache, clamp_point_sampler);
+            PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache, clamp_linear_sampler, clamp_point_sampler);
         let texture_binding_set = TextureBindingSet::new(context, texture_images);
         let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_multi_layout(&[
             path_trace_descriptor_set_layout.0,
@@ -909,16 +921,6 @@ impl Renderer {
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
-        let clamp_linear_sampler = {
-            let create_info = vk::SamplerCreateInfo {
-                mag_filter: vk::Filter::LINEAR,
-                min_filter: vk::Filter::LINEAR,
-                address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
-                address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
-                ..Default::default()
-            };
-            unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
-        };
         let filter_descriptor_set_layout =
             FilterDescriptorSetLayout::new(descriptor_set_layout_cache, clamp_linear_sampler);
         let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
@@ -1007,6 +1009,28 @@ impl Renderer {
         const WAVELENGTH_MIN: u32 = 380;
         const WAVELENGTH_MAX: u32 = 720;
 
+        let illuminants_image = resource_loader.create_image();
+        resource_loader.async_load(move |allocator| {
+            let desc = ImageDesc::new_2d(
+                UVec2::new(WAVELENGTH_MAX - WAVELENGTH_MIN, 1),
+                vk::Format::R32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            ).with_layer_count(2);
+            let mut writer = allocator
+                .map_image(illuminants_image, &desc, ImageUsage::COMPUTE_SAMPLED)
+                .unwrap();
+
+            // HACK: add some fixed illuminants for now
+            let mut sweep = d65_illuminant_sweep();
+            for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
+                writer.write(&sweep.next(wavelength as f32 + 0.5));
+            }
+            let mut sweep = CORNELL_BOX_LIGHT_SAMPLES.iter().cloned().into_sweep();
+            for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
+                writer.write(&sweep.next(wavelength as f32 + 0.5));
+            }
+        });
+
         let xyz_from_wavelength_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
             let desc = ImageDesc::new_2d(
@@ -1018,11 +1042,9 @@ impl Renderer {
                 .map_image(xyz_from_wavelength_image, &desc, ImageUsage::COMPUTE_SAMPLED)
                 .unwrap();
 
-            let mut xyz_sweep = xyz_matching_sweep();
+            let mut sweep = xyz_matching_sweep();
             for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
-                let xyz = xyz_sweep.next(wavelength as f32 + 0.5);
-                let v = xyz.xyzw();
-                writer.write(&v);
+                writer.write(&sweep.next(wavelength as f32 + 0.5).xyzw());
             }
         });
 
@@ -1056,6 +1078,7 @@ impl Renderer {
             pmj_samples_image,
             sobol_samples_image,
             smits_table_image,
+            illuminants_image,
             xyz_from_wavelength_image,
             result_image,
             params,
@@ -1725,7 +1748,8 @@ impl Renderer {
         let light_info_table_buffer = resource_loader.get_buffer(shader_binding_data.light_info_table)?;
         let pmj_samples_image_view = resource_loader.get_image_view(self.pmj_samples_image)?;
         let sobol_samples_image_view = resource_loader.get_image_view(self.sobol_samples_image)?;
-        let smit_table_image_view = resource_loader.get_image_view(self.smits_table_image)?;
+        let illuminants_image_view = resource_loader.get_image_view(self.illuminants_image)?;
+        let smits_table_image_view = resource_loader.get_image_view(self.smits_table_image)?;
         let xyz_from_wavelength_image_view = resource_loader.get_image_view(self.xyz_from_wavelength_image)?;
 
         // do a pass
@@ -1804,7 +1828,8 @@ impl Renderer {
                             top_level_accel,
                             pmj_samples_image_view,
                             sobol_samples_image_view,
-                            smit_table_image_view,
+                            illuminants_image_view,
+                            smits_table_image_view,
                             temp_image_view,
                         );
 

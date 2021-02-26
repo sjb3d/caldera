@@ -58,8 +58,9 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
-layout(set = 0, binding = 4) uniform sampler2D g_smits_table;
-layout(set = 0, binding = 5, r32f) uniform restrict writeonly image2D g_result;
+layout(set = 0, binding = 4) uniform sampler2DArray g_illuminants;
+layout(set = 0, binding = 5) uniform sampler2D g_smits_table;
+layout(set = 0, binding = 6, r32f) uniform restrict writeonly image2D g_result;
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -80,6 +81,14 @@ uint sample_uniform_discrete(uint count, inout float u01)
 
 EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
+
+float illuminant(float wavelength, vec3 emission)
+{
+    const float power = smits_power_from_rec709(wavelength, emission, g_smits_table);
+    const float wavelength_u = unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength);
+    const float illum_index = 1.f;
+    return power*texture(g_illuminants, vec3(wavelength_u, .5f, illum_index)).x;
+}
 
 void evaluate_bsdf(
     float wavelength,
@@ -102,7 +111,7 @@ void evaluate_bsdf(
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_eval); break;
     }
 #undef CALL
-    f = smits_power_from_rec709(wavelength, f_tmp, g_smits_table);
+    f = f_tmp.x;
 }
 
 void sample_bsdf(
@@ -128,26 +137,7 @@ void sample_bsdf(
         case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_sample); break;
     }
 #undef CALL
-    estimator = smits_power_from_rec709(wavelength, estimator_tmp, g_smits_table);
-}
-
-float cornell_box_illuminant(float wavelength)
-{
-    float ret;
-    if (wavelength < 400.f) {
-        ret = 0.f;
-    } else if (wavelength < 500.f) {
-        ret = mix(0.f, 8.f, unlerp(400.f, 500.f, wavelength));
-    } else if (wavelength < 600.f) {
-        ret = mix(8.f, 15.6f, unlerp(500.f, 600.f, wavelength));
-    } else if (wavelength < 700.f) {
-        ret = mix(15.6f, 18.4f, unlerp(600.f, 700.f, wavelength));
-    } else if (wavelength < 800.f) {
-        ret = mix(18.4f, 0.f, unlerp(700.f, 800.f, wavelength));
-    } else {
-        ret = 0.f;
-    }
-    return ret;
+    estimator = estimator_tmp.x;
 }
 
 void sample_single_light(
@@ -195,7 +185,7 @@ void sample_single_light(
 #undef PARAMS
     }
 
-    light_emission = cornell_box_illuminant(wavelength);
+    light_emission = illuminant(wavelength, emission);
     light_solid_angle_pdf = abs(solid_angle_pdf_and_ext_bit) * selection_pdf;
     light_is_external = sign_bit_set(solid_angle_pdf_and_ext_bit);
     light_epsilon = ldexp(unit_scale, LOG2_EPSILON_FACTOR);    
@@ -277,7 +267,7 @@ void evaluate_single_light(
 #undef PARAMS
     }
 
-    light_emission = any(greaterThan(emission, vec3(0.f))) ? cornell_box_illuminant(wavelength) : 0.f;
+    light_emission = illuminant(wavelength, emission);
     light_solid_angle_pdf = solid_angle_pdf * selection_pdf;
 }
 
@@ -383,10 +373,12 @@ void main()
             prev_in_dir);
         ++segment_index;
 
-        // adjust BSDF colour space of the hit
-        hit.bsdf_params = replace_reflectance(
-            hit.bsdf_params,
-            get_reflectance(hit.bsdf_params));
+        // compute reflectance for this wavelength
+        const float reflectance_w = smits_power_from_rec709(
+            wavelength,
+            get_reflectance(hit.bsdf_params),
+            g_smits_table);
+        hit.bsdf_params = replace_reflectance(hit.bsdf_params, vec3(reflectance_w, 0.f, 0.f));
 
         // reject implausible shading normals
         {
