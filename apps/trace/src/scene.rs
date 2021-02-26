@@ -309,17 +309,13 @@ impl TriangleMeshBuilder {
     }
 }
 
-struct SampledSpectrum {
-    wavelength: f32,
-    value: f32,
-}
 macro_rules! spectrum_samples {
-    ($(($w:literal, $v:literal)),+) => { [ $( SampledSpectrum { wavelength: $w, value: $v, }, )+ ] }
+    ($(($w:literal, $v:literal)),+) => { [ $( ($w, $v), )+ ] }
 }
 
 // reference: https://www.graphics.cornell.edu/online/box/data.html
 #[rustfmt::skip]
-const CORNELL_BOX_WHITE_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+const CORNELL_BOX_WHITE_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
     (400.0, 0.343),(404.0, 0.445),(408.0, 0.551),(412.0, 0.624),(416.0, 0.665),
     (420.0, 0.687),(424.0, 0.708),(428.0, 0.723),(432.0, 0.715),(436.0, 0.710),
     (440.0, 0.745),(444.0, 0.758),(448.0, 0.739),(452.0, 0.767),(456.0, 0.777),
@@ -338,7 +334,7 @@ const CORNELL_BOX_WHITE_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
     (700.0, 0.737)
 );
 #[rustfmt::skip]
-const CORNELL_BOX_GREEN_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+const CORNELL_BOX_GREEN_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
     (400.0, 0.092),(404.0, 0.096),(408.0, 0.098),(412.0, 0.097),(416.0, 0.098),
     (420.0, 0.095),(424.0, 0.095),(428.0, 0.097),(432.0, 0.095),(436.0, 0.094),
     (440.0, 0.097),(444.0, 0.098),(448.0, 0.096),(452.0, 0.101),(456.0, 0.103),
@@ -357,7 +353,7 @@ const CORNELL_BOX_GREEN_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
     (700.0, 0.159)
 );
 #[rustfmt::skip]
-const CORNELL_BOX_RED_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+const CORNELL_BOX_RED_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
     (400.0, 0.040),(404.0, 0.046),(408.0, 0.048),(412.0, 0.053),(416.0, 0.049),
     (420.0, 0.050),(424.0, 0.053),(428.0, 0.055),(432.0, 0.057),(436.0, 0.056),
     (440.0, 0.059),(444.0, 0.057),(448.0, 0.061),(452.0, 0.061),(456.0, 0.060),
@@ -376,27 +372,13 @@ const CORNELL_BOX_RED_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
     (700.0, 0.642)
 );
 #[rustfmt::skip]
-const CORNELL_BOX_LIGHT_SAMPLES: &[SampledSpectrum] = &spectrum_samples!(
+const CORNELL_BOX_LIGHT_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
     (400.0,  0.0),
     (500.0,  8.0),
     (600.0, 15.6),
     (700.0, 18.4),
-    (750.0,  0.0)
+    (800.0,  0.0)
 );
-
-fn interpolate_samples(samples: &[SampledSpectrum], wavelength: f32) -> f32 {
-    match samples.binary_search_by_key(&wavelength.to_bits(), |sample| sample.wavelength.to_bits()) {
-        Ok(index) => samples[index].value,
-        Err(index) if 0 < index && index < samples.len() => {
-            let s1 = unsafe { samples.get_unchecked(index) };
-            let s0 = unsafe { samples.get_unchecked(index - 1) };
-            assert!(s0.wavelength < wavelength && wavelength < s1.wavelength);
-            let t = (wavelength - s0.wavelength) / (s1.wavelength - s0.wavelength);
-            s0.value * (1.0 - t) + s1.value * t
-        }
-        _ => 0.0,
-    }
-}
 
 #[derive(Debug, EnumFromStr)]
 pub enum CornellBoxVariant {
@@ -531,17 +513,29 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let rgb_from_xyz = rec709_from_xyz_matrix();
 
     let white_reflectance = rgb_from_xyz
-        * xyz_from_spectrum(|wavelength| {
-            interpolate_samples(CORNELL_BOX_WHITE_SAMPLES, wavelength) * d65_illuminant(wavelength)
-        });
+        * xyz_from_spectrum_sweep(
+            CORNELL_BOX_WHITE_SAMPLES
+                .iter()
+                .cloned()
+                .into_sweep()
+                .product(d65_illuminant_sweep()),
+        );
     let red_reflectance = rgb_from_xyz
-        * xyz_from_spectrum(|wavelength| {
-            interpolate_samples(CORNELL_BOX_RED_SAMPLES, wavelength) * d65_illuminant(wavelength)
-        });
+        * xyz_from_spectrum_sweep(
+            CORNELL_BOX_RED_SAMPLES
+                .iter()
+                .cloned()
+                .into_sweep()
+                .product(d65_illuminant_sweep()),
+        );
     let green_reflectance = rgb_from_xyz
-        * xyz_from_spectrum(|wavelength| {
-            interpolate_samples(CORNELL_BOX_GREEN_SAMPLES, wavelength) * d65_illuminant(wavelength)
-        });
+        * xyz_from_spectrum_sweep(
+            CORNELL_BOX_GREEN_SAMPLES
+                .iter()
+                .cloned()
+                .into_sweep()
+                .product(d65_illuminant_sweep()),
+        );
 
     let white_material = scene.add_material(Material {
         reflectance: Reflectance::Constant(white_reflectance),
@@ -579,7 +573,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         scene.add_instance(Instance::new(identity, tall_block, tall_block_material));
     }
 
-    let light_emission_xyz = xyz_from_spectrum(|wavelength| interpolate_samples(CORNELL_BOX_LIGHT_SAMPLES, wavelength));
+    let light_emission_xyz = xyz_from_spectrum_sweep(CORNELL_BOX_LIGHT_SAMPLES.iter().cloned().into_sweep());
     let light_emission = rgb_from_xyz
         * chromatic_adaptation_matrix(bradford_lms_from_xyz_matrix(), Illuminant::D65, Illuminant::E)
         * light_emission_xyz;

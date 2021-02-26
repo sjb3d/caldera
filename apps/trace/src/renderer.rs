@@ -1001,7 +1001,7 @@ impl Renderer {
                 1.0000, 0.0000, 1.0000, 0.9685, 1.0149, 0.0000, 0.0483, 0.0,
                 1.0000, 0.0000, 0.9959, 0.9840, 1.0149, 0.0025, 0.0496, 0.0,
             ];
-            writer.write(SMITS_TABLE);            
+            writer.write(SMITS_TABLE);
         });
 
         const WAVELENGTH_MIN: u32 = 380;
@@ -1018,14 +1018,10 @@ impl Renderer {
                 .map_image(xyz_from_wavelength_image, &desc, ImageUsage::COMPUTE_SAMPLED)
                 .unwrap();
 
-            let norm = 1.0
-                / (WAVELENGTH_MIN..WAVELENGTH_MAX)
-                    .map(|wavelength| xyz_from_wavelength(wavelength as f32 + 0.5).y)
-                    .sum::<f32>();
-
+            let mut xyz_sweep = xyz_matching_sweep();
             for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
-                let xyz = xyz_from_wavelength(wavelength as f32 + 0.5);
-                let v = (xyz * norm).xyzw();
+                let xyz = xyz_sweep.next(wavelength as f32 + 0.5);
+                let v = xyz.xyzw();
                 writer.write(&v);
             }
         });

@@ -1,4 +1,8 @@
 use crate::maths::*;
+use std::{
+    default::Default,
+    ops::{Add, Mul},
+};
 
 // reference: http://cvrl.ioo.ucl.ac.uk/ (CIE 1931 2 degree XYZ CMFs)
 const CIE_WAVELENGTH_BASE: f32 = 360.0;
@@ -480,6 +484,7 @@ const CIE_SAMPLES: &[Vec3] = &cie_samples!(
     (0.000001341977, 0.000000484612, 0.000000000000),
     (0.000001251141, 0.000000451810, 0.000000000000)
 );
+const CIE_SAMPLE_NORM: f32 = 1.0 / 106.856834;
 
 // from https://en.wikipedia.org/wiki/Illuminant_D65
 const D65_WAVELENGTH_BASE: f32 = 300.0;
@@ -491,46 +496,173 @@ const D65_ILLUMINANT: &[f32] = &[
     88.685600, 90.006200, 89.599100, 87.698700, 83.288600, 83.699200, 80.026800, 80.214600, 82.277800, 78.284200,
     69.721300, 71.609100, 74.349000, 61.604000, 69.885600, 75.087000, 63.592700, 46.418200, 66.805400, 63.382800,
 ];
+const D65_SAMPLE_NORM: f32 = 0.01;
 
-pub fn d65_illuminant(wavelength: f32) -> f32 {
-    let index_flt = (wavelength - D65_WAVELENGTH_BASE) / D65_WAVELENGTH_STEP_SIZE;
-    let index_floor = index_flt.floor();
-    let index = index_floor as isize;
-    let power = if index < 0 {
-        *D65_ILLUMINANT.first().unwrap()
-    } else if index < (D65_ILLUMINANT.len() - 1) as isize {
-        // piecewise linear interpolation
-        let index = index as usize;
-        let t = index_flt - index_floor;
-        (1.0 - t) * D65_ILLUMINANT[index] + t * D65_ILLUMINANT[index + 1]
-    } else {
-        *D65_ILLUMINANT.last().unwrap()
-    };
-    power * 0.01
-}
+pub trait Sweep {
+    type Item;
 
-pub fn xyz_from_wavelength(wavelength: f32) -> Vec3 {
-    let index_flt = (wavelength - CIE_WAVELENGTH_BASE) / CIE_WAVELENGTH_STEP_SIZE;
-    let index_floor = index_flt.floor();
-    let index = index_floor as isize;
-    if index < 0 {
-        Vec3::zero()
-    } else if index < (CIE_SAMPLES.len() - 1) as isize {
-        let index = index as usize;
-        let t = index_flt - index_floor;
-        (1.0 - t) * CIE_SAMPLES[index] + t * CIE_SAMPLES[index + 1]
-    } else {
-        Vec3::zero()
+    fn next(&mut self, input: f32) -> Self::Item;
+
+    fn product<U>(self, other: U) -> SweepProduct<Self::Item, Self, U>
+    where
+        Self: Sized,
+        U: Sweep<Item = Self::Item>,
+        Self::Item: Mul<Output = Self::Item>,
+    {
+        SweepProduct::new(self, other)
     }
 }
 
-pub fn xyz_from_spectrum(reflectance: impl Fn(f32) -> f32) -> Vec3 {
-    let mut f_sum = Vec3::zero();
-    let mut y_sum = 0.0;
-    for (i, &c) in CIE_SAMPLES.iter().enumerate() {
-        let wavelength = CIE_WAVELENGTH_BASE + CIE_WAVELENGTH_STEP_SIZE * (i as f32);
-        f_sum += c * reflectance(wavelength);
-        y_sum += c.y;
+impl<F, T> Sweep for F
+where
+    F: Fn(f32) -> T,
+{
+    type Item = T;
+    fn next(&mut self, input: f32) -> Self::Item {
+        self(input)
     }
-    f_sum / y_sum
+}
+
+pub struct SampleSweep<T, I>
+where
+    I: Iterator<Item = (f32, T)>,
+    T: Copy + Add<Output = T> + Mul<f32, Output = T> + Default,
+{
+    iter: I,
+    prev_sample: Option<(f32, T)>,
+    next_sample: Option<(f32, T)>,
+    prev_input: Option<f32>,
+}
+
+impl<T, I> SampleSweep<T, I>
+where
+    I: Iterator<Item = (f32, T)>,
+    T: Copy + Add<Output = T> + Mul<f32, Output = T> + Default,
+{
+    fn new(iter: I) -> Self {
+        Self {
+            iter,
+            prev_sample: None,
+            next_sample: None,
+            prev_input: None,
+        }
+    }
+}
+
+impl<T, I> Sweep for SampleSweep<T, I>
+where
+    I: Iterator<Item = (f32, T)>,
+    T: Copy + Add<Output = T> + Mul<f32, Output = T> + Default,
+{
+    type Item = T;
+
+    fn next(&mut self, input: f32) -> T {
+        if let Some(prev_input) = self.prev_input {
+            assert!(
+                prev_input <= input,
+                "sweep inputs must never decrease between calls to next()"
+            );
+        } else {
+            self.prev_sample = self.iter.next();
+            self.next_sample = self.iter.next();
+        }
+        self.prev_input = Some(input);
+        while let (Some(prev_sample), Some(next_sample)) = (self.prev_sample, self.next_sample) {
+            if input < prev_sample.0 {
+                return T::default();
+            }
+            if input < next_sample.0 {
+                let t = (input - prev_sample.0) / (next_sample.0 - prev_sample.0);
+                return prev_sample.1 * (1.0 - t) + next_sample.1 * t;
+            }
+            self.prev_sample = self.next_sample;
+            self.next_sample = self.iter.next();
+        }
+        return T::default();
+    }
+}
+
+pub struct SweepProduct<T, A, B>
+where
+    A: Sweep<Item = T>,
+    B: Sweep<Item = T>,
+    T: Mul<Output = T>,
+{
+    a: A,
+    b: B,
+}
+
+impl<T, A, B> SweepProduct<T, A, B>
+where
+    A: Sweep<Item = T>,
+    B: Sweep<Item = T>,
+    T: Mul<Output = T>,
+{
+    fn new(a: A, b: B) -> Self {
+        Self { a, b }
+    }
+}
+
+impl<T, A, B> Sweep for SweepProduct<T, A, B>
+where
+    A: Sweep<Item = T>,
+    B: Sweep<Item = T>,
+    T: Mul<Output = T>,
+{
+    type Item = T;
+    fn next(&mut self, input: f32) -> T {
+        self.a.next(input) * self.b.next(input)
+    }
+}
+
+pub trait IntoSweep {
+    type Item;
+    type IntoType: Sweep<Item = Self::Item>;
+    fn into_sweep(self) -> Self::IntoType;
+}
+
+impl<T, I> IntoSweep for I
+where
+    I: Iterator<Item = (f32, T)>,
+    T: Copy + Add<Output = T> + Mul<f32, Output = T> + Default,
+{
+    type Item = T;
+    type IntoType = SampleSweep<T, Self>;
+    fn into_sweep(self) -> Self::IntoType {
+        SampleSweep::new(self)
+    }
+}
+
+fn d65_illuminant_sample_iter() -> impl Iterator<Item = (f32, f32)> {
+    D65_ILLUMINANT.iter().enumerate().map(|(i, v)| {
+        (
+            D65_WAVELENGTH_BASE + D65_WAVELENGTH_STEP_SIZE * (i as f32),
+            *v * D65_SAMPLE_NORM,
+        )
+    })
+}
+
+pub fn d65_illuminant_sweep() -> impl Sweep<Item = f32> {
+    SampleSweep::new(d65_illuminant_sample_iter())
+}
+
+fn xyz_matching_sample_iter() -> impl Iterator<Item = (f32, Vec3)> {
+    CIE_SAMPLES.iter().enumerate().map(|(i, v)| {
+        (
+            CIE_WAVELENGTH_BASE + CIE_WAVELENGTH_STEP_SIZE * (i as f32),
+            *v * CIE_SAMPLE_NORM,
+        )
+    })
+}
+
+pub fn xyz_matching_sweep() -> impl Sweep<Item = Vec3> {
+    SampleSweep::new(xyz_matching_sample_iter())
+}
+
+pub fn xyz_from_spectrum_sweep(mut power: impl Sweep<Item = f32>) -> Vec3 {
+    let mut sum = Vec3::zero();
+    for (wavelength, value) in xyz_matching_sample_iter() {
+        sum += value * power.next(wavelength);
+    }
+    sum * CIE_WAVELENGTH_STEP_SIZE
 }
