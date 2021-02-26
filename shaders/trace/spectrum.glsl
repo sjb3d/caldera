@@ -6,16 +6,16 @@ float smits_power_from_rec709(float wavelength, vec3 col, sampler2D table)
 {
     const float wavelength_u = unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength);
 
-    const vec4 rgbw = texture(table, vec2(.25f, wavelength_u));
-    const vec3 cmy = texture(table, vec2(.75f, wavelength_u)).xyz;
+    const vec4 wcmy = texture(table, vec2(.25f, wavelength_u));
+    const vec4 rgb_ = texture(table, vec2(.75f, wavelength_u));
 
-    const float red = rgbw.x;
-    const float gre = rgbw.y;
-    const float blu = rgbw.z;
-    const float whi = rgbw.w;
-    const float cya = cmy.x;
-    const float mag = cmy.y;
-    const float yel = cmy.z;
+    const float whi = wcmy.x;
+    const float cya = wcmy.y;
+    const float mag = wcmy.z;
+    const float yel = wcmy.w;
+    const float red = rgb_.x;
+    const float gre = rgb_.y;
+    const float blu = rgb_.z;
 
     const float col_min = min_element(col);
     float ret = col_min*whi;

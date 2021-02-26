@@ -531,16 +531,16 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let rgb_from_xyz = rec709_from_xyz_matrix();
 
     let white_reflectance = rgb_from_xyz
-        * xyz_from_spectrum(d65_illuminant, |wavelength| {
-            interpolate_samples(CORNELL_BOX_WHITE_SAMPLES, wavelength)
+        * xyz_from_spectrum(|wavelength| {
+            interpolate_samples(CORNELL_BOX_WHITE_SAMPLES, wavelength) * d65_illuminant(wavelength)
         });
     let red_reflectance = rgb_from_xyz
-        * xyz_from_spectrum(d65_illuminant, |wavelength| {
-            interpolate_samples(CORNELL_BOX_RED_SAMPLES, wavelength)
+        * xyz_from_spectrum(|wavelength| {
+            interpolate_samples(CORNELL_BOX_RED_SAMPLES, wavelength) * d65_illuminant(wavelength)
         });
     let green_reflectance = rgb_from_xyz
-        * xyz_from_spectrum(d65_illuminant, |wavelength| {
-            interpolate_samples(CORNELL_BOX_GREEN_SAMPLES, wavelength)
+        * xyz_from_spectrum(|wavelength| {
+            interpolate_samples(CORNELL_BOX_GREEN_SAMPLES, wavelength) * d65_illuminant(wavelength)
         });
 
     let white_material = scene.add_material(Material {
@@ -579,10 +579,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         scene.add_instance(Instance::new(identity, tall_block, tall_block_material));
     }
 
-    let light_emission_xyz = xyz_from_spectrum(
-        |_| 1.0,
-        |wavelength| interpolate_samples(CORNELL_BOX_LIGHT_SAMPLES, wavelength),
-    );
+    let light_emission_xyz = xyz_from_spectrum(|wavelength| interpolate_samples(CORNELL_BOX_LIGHT_SAMPLES, wavelength));
     let light_emission = rgb_from_xyz
         * chromatic_adaptation_matrix(bradford_lms_from_xyz_matrix(), Illuminant::D65, Illuminant::E)
         * light_emission_xyz;
