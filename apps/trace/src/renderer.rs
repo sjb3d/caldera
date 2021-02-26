@@ -54,6 +54,29 @@ impl LightCanBeSampled for Light {
     }
 }
 
+trait Illuminator {
+    fn illuminant_index(&self) -> u32;
+    fn illuminant_tint(&self) -> Vec3;
+}
+
+impl Illuminator for Emission {
+    fn illuminant_index(&self) -> u32 {
+        match self {
+            Emission::Constant(..) => 0,
+            Emission::CornellBox(..) => 1,
+            Emission::D65(..) => 2,
+        }
+    }
+
+    fn illuminant_tint(&self) -> Vec3 {
+        match self {
+            Emission::CornellBox(s) => Vec3::broadcast(*s),
+            Emission::Constant(v) => *v,
+            Emission::D65(s) => Vec3::broadcast(*s),
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Contiguous, PartialEq, Eq)]
 enum LightType {
@@ -74,7 +97,7 @@ pub enum SequenceType {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct LightInfoEntry {
-    light_type: u32,
+    light_flags: u32,
     probability: f32,
     params_offset: u32,
 }
@@ -82,7 +105,7 @@ struct LightInfoEntry {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct PlanarLightParams {
-    emission: Vec3,
+    illuminant_tint: Vec3,
     unit_scale: f32,
     area_pdf: f32,
     normal_ws: Vec3,
@@ -94,7 +117,7 @@ struct PlanarLightParams {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct SphereLightParams {
-    emission: Vec3,
+    illuminant_tint: Vec3,
     unit_scale: f32,
     centre_ws: Vec3,
     radius_ws: f32,
@@ -103,13 +126,13 @@ struct SphereLightParams {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct DomeLightParams {
-    emission: Vec3,
+    illuminant_tint: Vec3,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct SolidAngleLightParams {
-    emission: Vec3,
+    illuminant_tint: Vec3,
     direction_ws: Vec3,
     solid_angle: f32,
 }
@@ -1009,10 +1032,13 @@ impl Renderer {
         const WAVELENGTH_MIN: u32 = 380;
         const WAVELENGTH_MAX: u32 = 720;
 
+        const ILLUMINANT_RESOLUTION: u32 = 5;
+        const ILLUMINANT_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / ILLUMINANT_RESOLUTION;
+
         let illuminants_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
             let desc = ImageDesc::new_1d(
-                WAVELENGTH_MAX - WAVELENGTH_MIN,
+                ILLUMINANT_PIXEL_COUNT,
                 vk::Format::R32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             )
@@ -1021,14 +1047,18 @@ impl Renderer {
                 .map_image(illuminants_image, &desc, ImageUsage::COMPUTE_SAMPLED)
                 .unwrap();
 
+            let wavelength_from_index = |index| {
+                ((WAVELENGTH_MIN + index * ILLUMINANT_RESOLUTION) as f32) + 0.5 * (ILLUMINANT_RESOLUTION as f32)
+            };
+
             // HACK: add some fixed illuminants for now
-            let mut sweep = d65_illuminant_sweep();
-            for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
-                writer.write(&sweep.next(wavelength as f32 + 0.5));
-            }
             let mut sweep = CORNELL_BOX_LIGHT_SAMPLES.iter().cloned().into_sweep();
-            for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
-                writer.write(&sweep.next(wavelength as f32 + 0.5));
+            for index in 0..ILLUMINANT_PIXEL_COUNT {
+                writer.write(&sweep.next(wavelength_from_index(index)));
+            }
+            let mut sweep = d65_illuminant_sweep();
+            for index in 0..ILLUMINANT_PIXEL_COUNT {
+                writer.write(&sweep.next(wavelength_from_index(index)));
             }
         });
 
@@ -1292,6 +1322,9 @@ impl Renderer {
                         let world_from_local = transform.world_from_local;
                         let unit_scale = geometry.unit_scale(world_from_local);
 
+                        let illuminant_index = emission.illuminant_index();
+                        let illuminant_tint = emission.illuminant_tint();
+
                         let params_offset = light_params_data.len();
                         let (light_type, area_ws) = match geometry {
                             Geometry::TriangleMesh { .. } => unimplemented!(),
@@ -1305,7 +1338,7 @@ impl Renderer {
                                 let area_ws = (world_from_quad.scale * world_from_quad.scale * size.x * size.y).abs();
 
                                 light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
-                                    emission,
+                                    illuminant_tint,
                                     unit_scale,
                                     area_pdf: 1.0 / area_ws,
                                     normal_ws,
@@ -1330,7 +1363,7 @@ impl Renderer {
                                 let normal_ws = world_from_disc.transform_vec3(Vec3::unit_z()).normalized();
 
                                 light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
-                                    emission,
+                                    illuminant_tint,
                                     unit_scale,
                                     area_pdf: 1.0 / area_ws,
                                     normal_ws,
@@ -1347,7 +1380,7 @@ impl Renderer {
                                 let area_ws = 4.0 * PI * radius_ws * radius_ws;
 
                                 light_params_data.extend_from_slice(bytemuck::bytes_of(&SphereLightParams {
-                                    emission,
+                                    illuminant_tint,
                                     unit_scale,
                                     centre_ws,
                                     radius_ws,
@@ -1359,8 +1392,8 @@ impl Renderer {
 
                         align16_vec(&mut light_params_data);
                         light_info.push(LightInfoEntry {
-                            light_type: light_type.into_integer(),
-                            probability: area_ws * emission.luminance() * PI,
+                            light_flags: light_type.into_integer() | (illuminant_index << 8),
+                            probability: area_ws * illuminant_tint.luminance() * PI, // HACK
                             params_offset: params_offset as u32,
                         });
                     }
@@ -1460,12 +1493,13 @@ impl Renderer {
                     .chain(scene.lights.iter().filter(|light| !light.can_be_sampled()))
                 {
                     let params_offset = light_params_data.len();
-                    let (light_type, sampling_power) = match light {
+                    let (light_type, illuminant_index, sampling_power) = match light {
                         Light::Dome { emission } => {
-                            light_params_data
-                                .extend_from_slice(bytemuck::bytes_of(&DomeLightParams { emission: *emission }));
+                            light_params_data.extend_from_slice(bytemuck::bytes_of(&DomeLightParams {
+                                illuminant_tint: emission.illuminant_tint(),
+                            }));
 
-                            (LightType::Dome, 0.0)
+                            (LightType::Dome, emission.illuminant_index(), 0.0)
                         }
                         Light::SolidAngle {
                             emission,
@@ -1476,7 +1510,7 @@ impl Renderer {
                             let solid_angle = solid_angle.abs();
 
                             light_params_data.extend_from_slice(bytemuck::bytes_of(&SolidAngleLightParams {
-                                emission: *emission,
+                                illuminant_tint: emission.illuminant_tint(),
                                 direction_ws,
                                 solid_angle: solid_angle.abs(),
                             }));
@@ -1484,13 +1518,13 @@ impl Renderer {
                             // HACK: use the total local light power to split samples 50/50
                             // TODO: use scene bounds to estimate the light power?
                             let fake_power = local_light_total_power.unwrap_or(1.0);
-                            (LightType::SolidAngle, fake_power)
+                            (LightType::SolidAngle, emission.illuminant_index(), fake_power)
                         }
                     };
 
                     align16_vec(&mut light_params_data);
                     light_info.push(LightInfoEntry {
-                        light_type: light_type.into_integer(),
+                        light_flags: light_type.into_integer() | (illuminant_index << 8),
                         probability: sampling_power,
                         params_offset: params_offset as u32,
                     });

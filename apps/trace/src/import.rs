@@ -256,7 +256,7 @@ pub fn load_scene(i: &str) -> Scene {
                 scene.add_light(Light::SolidAngle {
                     solid_angle,
                     direction_ws: direction,
-                    emission: emission / solid_angle,
+                    emission: Emission::Constant(emission / solid_angle),
                 });
             }
         }

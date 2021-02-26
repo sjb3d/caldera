@@ -54,6 +54,14 @@ pub enum Surface {
     RoughConductor { roughness: f32 },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Emission {
+    CornellBox(f32),
+    Constant(Vec3), // TODO: add illuminant
+    D65(f32),
+    // TODO: black body temperature
+}
+
 /*
     Eventually this would be some kind of graph/script that we can
     runtime compile to a GLSL callable shader.  The graph would read
@@ -76,7 +84,7 @@ pub enum Surface {
 pub struct Material {
     pub reflectance: Reflectance,
     pub surface: Surface,
-    pub emission: Option<Vec3>,
+    pub emission: Option<Emission>,
 }
 
 #[derive(Debug)]
@@ -89,10 +97,10 @@ pub struct Instance {
 #[derive(Debug)]
 pub enum Light {
     Dome {
-        emission: Vec3,
+        emission: Emission,
     },
     SolidAngle {
-        emission: Vec3,
+        emission: Emission,
         direction_ws: Vec3,
         solid_angle: f32,
     },
@@ -567,11 +575,11 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     match variant {
         CornellBoxVariant::DomeLight => {
             scene.add_light(Light::Dome {
-                emission: Vec3::new(0.4, 0.6, 0.8) * 0.8,
+                emission: Emission::Constant(Vec3::new(0.4, 0.6, 0.8) * 0.8),
             });
             let solid_angle = PI / 4096.0;
             scene.add_light(Light::SolidAngle {
-                emission: Vec3::new(1.0, 0.8, 0.6) * 2.0 / solid_angle,
+                emission: Emission::Constant(Vec3::new(1.0, 0.8, 0.6) * 2.0 / solid_angle),
                 direction_ws: Vec3::new(-1.0, 8.0, -5.0).normalized(),
                 solid_angle,
             });
@@ -591,7 +599,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
                 let material = scene.add_material(Material {
                     reflectance: Reflectance::Constant(Vec3::zero()),
                     surface: Surface::None,
-                    emission: Some(Vec3::broadcast(power / (4.0 * PI * r * r))),
+                    emission: Some(Emission::CornellBox(power / (4.0 * PI * r * r))),
                 });
                 scene.add_instance(Instance::new(identity, sphere, material));
             }
@@ -642,7 +650,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             let light_material = scene.add_material(Material {
                 reflectance: Reflectance::Constant(Vec3::broadcast(0.78)),
                 surface: Surface::Diffuse,
-                emission: Some(Vec3::one()),
+                emission: Some(Emission::CornellBox(1.0)),
             });
             scene.add_instance(Instance::new(identity, light_geometry, light_material));
         }

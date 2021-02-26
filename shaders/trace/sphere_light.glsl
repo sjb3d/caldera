@@ -5,14 +5,14 @@ void sphere_light_eval(
     bool sample_solid_angle,
     vec3 target_position,
     vec3 light_position,
-    out vec3 emission,
+    out vec3 illuminant_tint,
     out float solid_angle_pdf)
 {
     const vec3 light_normal = normalize(light_position - params.centre_ws);
     const vec3 target_from_light = target_position - light_position;
     const vec3 connection_dir = normalize(target_from_light);
     const float facing_term = dot(connection_dir, light_normal);
-    emission = (facing_term > 0.f) ? params.emission : vec3(0.f);
+    illuminant_tint = (facing_term > 0.f) ? params.illuminant_tint : vec3(0.f);
 
     if (sample_solid_angle) {
         const vec3 centre_from_target = params.centre_ws - target_position;
@@ -44,7 +44,7 @@ void sphere_light_sample(
     vec2 light_rand_u01,
     out vec3 light_position,
     out Normal32 light_normal_packed,
-    out vec3 emission,
+    out vec3 illuminant_tint,
     out float solid_angle_pdf_and_ext_bit,
     out float unit_scale)
 {
@@ -90,7 +90,7 @@ void sphere_light_sample(
         light_normal_packed = make_normal32(light_normal);
         const vec3 target_from_light = target_position - light_position;
         const float facing_term = dot(target_from_light, light_normal);
-        emission = (facing_term > 0.f) ? params.emission : vec3(0.f);
+        illuminant_tint = (facing_term > 0.f) ? params.illuminant_tint : vec3(0.f);
 
         solid_angle_pdf_and_ext_bit = 1.f/solid_angle;
         unit_scale = params.unit_scale;
@@ -102,7 +102,7 @@ void sphere_light_sample(
         const vec3 target_from_light = target_position - light_position;
         const vec3 connection_dir = normalize(target_from_light);
         const float facing_term = dot(connection_dir, light_normal);
-        emission = (facing_term > 0.f) ? params.emission : vec3(0.f);
+        illuminant_tint = (facing_term > 0.f) ? params.illuminant_tint : vec3(0.f);
 
         const float distance_sq = dot(target_from_light, target_from_light);
         const float area_ws = 4.f * PI * params.radius_ws * params.radius_ws;

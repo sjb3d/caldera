@@ -252,7 +252,18 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
 
     let scene: Scene = serde_json::from_reader(reader).unwrap();
 
-    let load_material = |bsdf_ref: &BsdfRef| {
+    let load_emission = |primitive: &Primitive, area: f32| {
+        let mut emission = None;
+        if let Some(s) = primitive.power.as_ref() {
+            emission = Some(scene::Emission::Constant(s.into_vec3() / (area * PI)));
+        }
+        if let Some(TextureOrValue::Value(v)) = &primitive.emission {
+            emission = Some(scene::Emission::Constant(v.into_vec3()));
+        }
+        emission
+    };
+
+    let load_material = |bsdf_ref: &BsdfRef, emission: Option<scene::Emission>| {
         let bsdf = match bsdf_ref {
             BsdfRef::Inline(bsdf) => bsdf,
             BsdfRef::Named(name) => scene
@@ -286,7 +297,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
         scene::Material {
             reflectance,
             surface,
-            emission: None,
+            emission,
         }
     };
 
@@ -303,15 +314,9 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                     local_from_quad: Similarity3::new(Vec3::zero(), Rotor3::from_rotation_yz(-PI / 2.0), 1.0),
                     size,
                 };
+                let area = (size.x * size.y * world_from_local.scale * world_from_local.scale).abs();
 
-                let mut material = load_material(primitive.bsdf.as_ref().unwrap());
-                if let Some(s) = primitive.power.as_ref() {
-                    let area = (size.x * size.y * world_from_local.scale * world_from_local.scale).abs();
-                    material.emission = Some(s.into_vec3() / (area * PI));
-                }
-                if let Some(TextureOrValue::Value(v)) = &primitive.emission {
-                    material.emission = Some(v.into_vec3());
-                }
+                let material = load_material(primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
 
                 let geometry_ref = output.add_geometry(geometry);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
@@ -327,15 +332,9 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                     local_from_disc: Similarity3::new(Vec3::zero(), Rotor3::from_rotation_yz(-PI / 2.0), 1.0),
                     radius,
                 };
+                let area = (PI * radius * radius * world_from_local.scale * world_from_local.scale).abs();
 
-                let mut material = load_material(primitive.bsdf.as_ref().unwrap());
-                if let Some(s) = primitive.power.as_ref() {
-                    let area = (PI * radius * radius * world_from_local.scale * world_from_local.scale).abs();
-                    material.emission = Some(s.into_vec3() / (area * PI));
-                }
-                if let Some(TextureOrValue::Value(v)) = &primitive.emission {
-                    material.emission = Some(v.into_vec3());
-                }
+                let material = load_material(primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
 
                 let geometry_ref = output.add_geometry(geometry);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
@@ -349,11 +348,11 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                     path.as_ref().with_file_name(primitive.file.as_ref().unwrap()),
                     extra_scale,
                 );
-                let shader = load_material(&primitive.bsdf.as_ref().unwrap());
+                let material = load_material(&primitive.bsdf.as_ref().unwrap(), None);
 
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
-                let material_ref = output.add_material(shader);
+                let material_ref = output.add_material(material);
                 output.add_instance(scene::Instance::new(transform_ref, geometry_ref, material_ref));
             }
             PrimitiveType::Sphere => {
@@ -364,16 +363,13 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
 
                 let centre = world_from_local.translation;
                 let radius = world_from_local.scale.abs();
+                let area = 4.0 * PI * radius * radius;
 
-                let mut shader = load_material(&primitive.bsdf.as_ref().unwrap());
-                if let Some(s) = primitive.power.as_ref() {
-                    let area = 4.0 * PI * radius * radius;
-                    shader.emission = Some(s.into_vec3() / (area * PI));
-                }
+                let material = load_material(&primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
 
                 let geometry_ref = output.add_geometry(scene::Geometry::Sphere { centre, radius });
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
-                let material_ref = output.add_material(shader);
+                let material_ref = output.add_material(material);
                 output.add_instance(scene::Instance::new(transform_ref, geometry_ref, material_ref));
             }
             PrimitiveType::InfiniteSphereCap => {
@@ -387,7 +383,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                 let direction_ws = world_from_local.rotation * Vec3::unit_y();
 
                 output.add_light(scene::Light::SolidAngle {
-                    emission,
+                    emission: scene::Emission::Constant(emission),
                     direction_ws,
                     solid_angle,
                 });
@@ -400,12 +396,14 @@ pub fn load_scene<P: AsRef<Path>>(path: P) -> scene::Scene {
                         Vec3::new(0.2, 0.3, 0.4)
                     }
                 };
-                output.add_light(scene::Light::Dome { emission });
+                output.add_light(scene::Light::Dome {
+                    emission: scene::Emission::Constant(emission),
+                });
             }
             PrimitiveType::Skydome => {
                 println!("TODO: convert Skydome geometry!");
                 output.add_light(scene::Light::Dome {
-                    emission: Vec3::new(0.2, 0.3, 0.4),
+                    emission: scene::Emission::Constant(Vec3::new(0.2, 0.3, 0.4)),
                 });
             }
             PrimitiveType::Curves => {

@@ -8,7 +8,7 @@ void disc_light_sample(
     vec2 light_rand_u01,
     out vec3 light_position,
     out Normal32 light_normal_packed,
-    out vec3 emission,
+    out vec3 illuminant_tint,
     out float solid_angle_pdf_and_ext_bit,
     out float unit_scale)
 {
@@ -21,7 +21,7 @@ void disc_light_sample(
     const vec3 target_from_light = target_position - light_position;
     const vec3 connection_dir = normalize(target_from_light);
     const float facing_term = dot(connection_dir, light_normal);
-    emission = (is_two_sided || facing_term > 0.f) ? params.emission : vec3(0.f);
+    illuminant_tint = (is_two_sided || facing_term > 0.f) ? params.illuminant_tint : vec3(0.f);
 
     const float distance_sq = dot(target_from_light, target_from_light);
     solid_angle_pdf_and_ext_bit = solid_angle_pdf_from_area_pdf(params.area_pdf, facing_term, distance_sq);

@@ -82,12 +82,14 @@ uint sample_uniform_discrete(uint count, inout float u01)
 EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
 
-float illuminant(float wavelength, vec3 emission)
+float illuminant(float wavelength, uint index, vec3 tint)
 {
-    const float power = smits_power_from_rec709(wavelength, emission, g_smits_table);
-    const float wavelength_u = unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength);
-    const float illum_index = 1.f;
-    return power*texture(g_illuminants, vec2(wavelength_u, illum_index)).x;
+    float power = smits_power_from_rec709(wavelength, tint, g_smits_table);
+    if (index != 0) {
+        const float wavelength_u = unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength);
+        power *= texture(g_illuminants, vec2(wavelength_u, float(index - 1))).x;
+    }
+    return power;
 }
 
 void evaluate_bsdf(
@@ -158,11 +160,11 @@ void sample_single_light(
 
     const uint64_t params_addr = g_path_trace.light_params_base + light_info.params_offset;
 
-    vec3 emission;
+    vec3 illuminant_tint;
     float solid_angle_pdf_and_ext_bit;
     float unit_scale;
-    switch (light_info.light_type) {
-#define PARAMS  target_position, target_normal, light_rand_u01, light_position_or_extdir, light_normal, emission, solid_angle_pdf_and_ext_bit, unit_scale
+    switch (get_light_type(light_info.light_flags)) {
+#define PARAMS  target_position, target_normal, light_rand_u01, light_position_or_extdir, light_normal, illuminant_tint, solid_angle_pdf_and_ext_bit, unit_scale
         case LIGHT_TYPE_QUAD: {
             PlanarLightParamsBuffer buf = PlanarLightParamsBuffer(params_addr);
             const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED) != 0;
@@ -185,7 +187,7 @@ void sample_single_light(
 #undef PARAMS
     }
 
-    light_emission = illuminant(wavelength, emission);
+    light_emission = illuminant(wavelength, get_illuminant_index(light_info.light_flags), illuminant_tint);
     light_solid_angle_pdf = abs(solid_angle_pdf_and_ext_bit) * selection_pdf;
     light_is_external = sign_bit_set(solid_angle_pdf_and_ext_bit);
     light_epsilon = ldexp(unit_scale, LOG2_EPSILON_FACTOR);    
@@ -241,10 +243,10 @@ void evaluate_single_light(
 
     const uint64_t params_addr = g_path_trace.light_params_base + light_info.params_offset;
 
-    vec3 emission;
+    vec3 illuminant_tint;
     float solid_angle_pdf;
-    switch (light_info.light_type) {
-#define PARAMS  target_position, light_position_or_extdir, emission, solid_angle_pdf
+    switch (get_light_type(light_info.light_flags)) {
+#define PARAMS  target_position, light_position_or_extdir, illuminant_tint, solid_angle_pdf
         case LIGHT_TYPE_QUAD:
         case LIGHT_TYPE_DISC: {
             PlanarLightParamsBuffer buf = PlanarLightParamsBuffer(params_addr);
@@ -267,7 +269,7 @@ void evaluate_single_light(
 #undef PARAMS
     }
 
-    light_emission = illuminant(wavelength, emission);
+    light_emission = illuminant(wavelength, get_illuminant_index(light_info.light_flags), illuminant_tint);
     light_solid_angle_pdf = solid_angle_pdf * selection_pdf;
 }
 

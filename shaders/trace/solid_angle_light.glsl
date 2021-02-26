@@ -4,13 +4,13 @@ void solid_angle_light_eval(
     SolidAngleLightParams params,
     vec3 target_position,
     vec3 light_extdir,
-    out vec3 emission,
+    out vec3 illuminant_tint,
     out float solid_angle_pdf)
 {
     // check we are within the solid angle of the light
     const float cos_theta = dot(params.direction_ws, light_extdir);
     const float cos_theta_min = 1.f - params.solid_angle/(2.f*PI);
-    emission = (cos_theta > cos_theta_min) ? params.emission : vec3(0.f);
+    illuminant_tint = (cos_theta > cos_theta_min) ? params.illuminant_tint : vec3(0.f);
     solid_angle_pdf = 1.f/params.solid_angle;
 }
 
@@ -21,7 +21,7 @@ void solid_angle_light_sample(
     vec2 light_rand_u01,
     out vec3 light_extdir,
     out Normal32 light_normal_packed,
-    out vec3 emission,
+    out vec3 illuminant_tint,
     out float solid_angle_pdf_and_ext_bit,
     out float unit_scale)
 {
@@ -32,7 +32,7 @@ void solid_angle_light_sample(
     light_extdir = normalize(basis*ray_dir_ls);
     light_normal_packed = make_normal32(-light_extdir);
 
-    emission = params.emission;
+    illuminant_tint = params.illuminant_tint;
     solid_angle_pdf_and_ext_bit = -1.0/params.solid_angle;
 
     unit_scale = 0.f;

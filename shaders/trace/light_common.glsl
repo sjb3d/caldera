@@ -11,8 +11,15 @@ layout(buffer_reference, scalar) buffer LightAliasTable {
     LightAliasEntry entries[];
 };
 
+struct LightFlags {
+    uint bits;
+};
+
+uint get_light_type(LightFlags flags)           { return flags.bits & 0xffU; }
+uint get_illuminant_index(LightFlags flags)     { return flags.bits >> 8; }
+
 struct LightInfoEntry {
-    uint light_type;
+    LightFlags light_flags;
     float probability;
     uint params_offset;
 };
@@ -27,7 +34,7 @@ layout(buffer_reference, scalar) buffer LightInfoTable {
 #define LIGHT_TYPE_SOLID_ANGLE  4
 
 struct PlanarLightParams {
-    vec3 emission;
+    vec3 illuminant_tint;
     float unit_scale;
     float area_pdf;
     vec3 normal_ws;
@@ -40,7 +47,7 @@ layout(buffer_reference, scalar) buffer PlanarLightParamsBuffer {
 };
 
 struct SphereLightParams {
-    vec3 emission;
+    vec3 illuminant_tint;
     float unit_scale;
     vec3 centre_ws;
     float radius_ws;
@@ -50,14 +57,14 @@ layout(buffer_reference, scalar) buffer SphereLightParamsBuffer {
 };
 
 struct DomeLightParams {
-    vec3 emission;
+    vec3 illuminant_tint;
 };
 layout(buffer_reference, scalar) buffer DomeLightParamsBuffer {
     DomeLightParams params;
 };
 
 struct SolidAngleLightParams {
-    vec3 emission;
+    vec3 illuminant_tint;
     vec3 direction_ws;
     float solid_angle;
 };
