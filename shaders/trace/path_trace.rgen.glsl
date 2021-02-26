@@ -58,7 +58,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
 layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
-layout(set = 0, binding = 4) uniform sampler2DArray g_illuminants;
+layout(set = 0, binding = 4) uniform sampler1DArray g_illuminants;
 layout(set = 0, binding = 5) uniform sampler2D g_smits_table;
 layout(set = 0, binding = 6, r32f) uniform restrict writeonly image2D g_result;
 
@@ -87,7 +87,7 @@ float illuminant(float wavelength, vec3 emission)
     const float power = smits_power_from_rec709(wavelength, emission, g_smits_table);
     const float wavelength_u = unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength);
     const float illum_index = 1.f;
-    return power*texture(g_illuminants, vec3(wavelength_u, .5f, illum_index)).x;
+    return power*texture(g_illuminants, vec2(wavelength_u, illum_index)).x;
 }
 
 void evaluate_bsdf(

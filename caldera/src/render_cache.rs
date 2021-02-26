@@ -4,9 +4,7 @@ use crate::maths::*;
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};
-use std::collections::HashMap;
-use std::slice;
-use std::sync::Arc;
+use std::{collections::HashMap, slice, sync::Arc};
 
 pub trait FormatExt {
     fn bits_per_element(&self) -> usize;
@@ -44,18 +42,31 @@ pub struct BufferInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImageDesc {
-    pub size: UVec2,
-    pub layer_count: u32,
+    pub width: u32,
+    pub height_or_zero: u32,
+    pub layer_count_or_zero: u32,
     pub format: vk::Format,
     pub aspect_mask: vk::ImageAspectFlags,
     pub samples: vk::SampleCountFlags,
 }
 
 impl ImageDesc {
+    pub fn new_1d(width: u32, format: vk::Format, aspect_mask: vk::ImageAspectFlags) -> Self {
+        ImageDesc {
+            width,
+            height_or_zero: 0,
+            layer_count_or_zero: 0,
+            format,
+            aspect_mask,
+            samples: vk::SampleCountFlags::N1,
+        }
+    }
+
     pub fn new_2d(size: UVec2, format: vk::Format, aspect_mask: vk::ImageAspectFlags) -> Self {
         ImageDesc {
-            size,
-            layer_count: 1,
+            width: size.x,
+            height_or_zero: size.y,
+            layer_count_or_zero: 0,
             format,
             aspect_mask,
             samples: vk::SampleCountFlags::N1,
@@ -63,7 +74,7 @@ impl ImageDesc {
     }
 
     pub fn with_layer_count(mut self, layer_count: u32) -> Self {
-        self.layer_count = layer_count;
+        self.layer_count_or_zero = layer_count;
         self
     }
 
@@ -72,29 +83,51 @@ impl ImageDesc {
         self
     }
 
+    pub fn size(&self) -> UVec2 {
+        UVec2::new(self.width, self.height_or_zero.max(1))
+    }
+
     pub fn extent_2d(&self) -> vk::Extent2D {
         vk::Extent2D {
-            width: self.size.x,
-            height: self.size.y,
+            width: self.width,
+            height: self.height_or_zero.max(1),
         }
     }
 
     pub fn is_array(&self) -> bool {
-        self.layer_count > 1
+        self.layer_count_or_zero != 1
     }
 
-    pub(crate) fn view_type(&self) -> vk::ImageViewType {
-        if self.layer_count > 1 {
-            vk::ImageViewType::N2D_ARRAY
+    pub(crate) fn image_type(&self) -> vk::ImageType {
+        if self.height_or_zero == 0 {
+            vk::ImageType::N1D
         } else {
-            vk::ImageViewType::N2D
+            vk::ImageType::N2D
+        }
+    }
+
+    pub(crate) fn image_view_type(&self) -> vk::ImageViewType {
+        if self.height_or_zero == 0 {
+            if self.layer_count_or_zero == 0 {
+                vk::ImageViewType::N1D
+            } else {
+                vk::ImageViewType::N1D_ARRAY
+            }
+        } else {
+            if self.layer_count_or_zero == 0 {
+                vk::ImageViewType::N2D
+            } else {
+                vk::ImageViewType::N2D_ARRAY
+            }
         }
     }
 
     pub(crate) fn staging_size(&self) -> usize {
         assert_eq!(self.samples, vk::SampleCountFlags::N1);
-        (self.size.x as usize) * (self.size.y as usize) * (self.layer_count as usize) * self.format.bits_per_element()
-            / 8
+        let width = self.width as usize;
+        let height = self.height_or_zero.max(1) as usize;
+        let layer_count = self.layer_count_or_zero.max(1) as usize;
+        width * height * layer_count * self.format.bits_per_element() / 8
     }
 }
 
@@ -129,15 +162,15 @@ impl DeviceGraphExt for Device {
 
     fn create_image_from_desc(&self, desc: &ImageDesc, usage_flags: vk::ImageUsageFlags) -> spark::Result<vk::Image> {
         let image_create_info = vk::ImageCreateInfo {
-            image_type: vk::ImageType::N2D,
+            image_type: desc.image_type(),
             format: desc.format,
             extent: vk::Extent3D {
-                width: desc.size.x,
-                height: desc.size.y,
+                width: desc.width,
+                height: desc.height_or_zero.max(1),
                 depth: 1,
             },
             mip_levels: 1,
-            array_layers: desc.layer_count,
+            array_layers: desc.layer_count_or_zero.max(1),
             samples: desc.samples,
             tiling: vk::ImageTiling::OPTIMAL,
             usage: usage_flags,
@@ -330,7 +363,7 @@ impl ResourceCache {
         *self.image_view.entry(ImageViewKey { image }).or_insert_with(|| {
             let image_view_create_info = vk::ImageViewCreateInfo {
                 image: Some(image.0),
-                view_type: desc.view_type(),
+                view_type: desc.image_view_type(),
                 format: desc.format,
                 subresource_range: vk::ImageSubresourceRange {
                     aspect_mask: desc.aspect_mask,

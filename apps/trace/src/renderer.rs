@@ -1011,11 +1011,12 @@ impl Renderer {
 
         let illuminants_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
-            let desc = ImageDesc::new_2d(
-                UVec2::new(WAVELENGTH_MAX - WAVELENGTH_MIN, 1),
+            let desc = ImageDesc::new_1d(
+                WAVELENGTH_MAX - WAVELENGTH_MIN,
                 vk::Format::R32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
-            ).with_layer_count(2);
+            )
+            .with_layer_count(2);
             let mut writer = allocator
                 .map_image(illuminants_image, &desc, ImageUsage::COMPUTE_SAMPLED)
                 .unwrap();

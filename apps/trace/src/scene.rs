@@ -514,24 +514,18 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
 
     let white_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
-            CORNELL_BOX_WHITE_SAMPLES
-                .iter()
-                .cloned()
-                .into_sweep(), d65_illuminant_sweep()
+            CORNELL_BOX_WHITE_SAMPLES.iter().cloned().into_sweep(),
+            d65_illuminant_sweep(),
         );
     let red_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
-            CORNELL_BOX_RED_SAMPLES
-                .iter()
-                .cloned()
-                .into_sweep(), d65_illuminant_sweep()
+            CORNELL_BOX_RED_SAMPLES.iter().cloned().into_sweep(),
+            d65_illuminant_sweep(),
         );
     let green_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
-            CORNELL_BOX_GREEN_SAMPLES
-                .iter()
-                .cloned()
-                .into_sweep(), d65_illuminant_sweep()
+            CORNELL_BOX_GREEN_SAMPLES.iter().cloned().into_sweep(),
+            d65_illuminant_sweep(),
         );
 
     let white_material = scene.add_material(Material {

@@ -300,18 +300,18 @@ impl ResourceLoader {
 
                     let region = vk::BufferImageCopy {
                         buffer_offset: staging_offset as vk::DeviceSize,
-                        buffer_row_length: desc.size.x,
-                        buffer_image_height: desc.size.y,
+                        buffer_row_length: desc.width,
+                        buffer_image_height: desc.height_or_zero.max(1),
                         image_subresource: vk::ImageSubresourceLayers {
                             aspect_mask: desc.aspect_mask,
                             mip_level: 0,
                             base_array_layer: 0,
-                            layer_count: desc.layer_count,
+                            layer_count: desc.layer_count_or_zero.max(1),
                         },
                         image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
                         image_extent: vk::Extent3D {
-                            width: desc.size.x,
-                            height: desc.size.y,
+                            width: desc.width,
+                            height: desc.height_or_zero.max(1),
                             depth: 1,
                         },
                     };
