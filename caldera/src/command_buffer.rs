@@ -68,6 +68,22 @@ impl CommandBufferSet {
             semaphores,
         }
     }
+
+    fn wait_for_fence(&self, context: &Context) {
+        let timeout_ns = 1000 * 1000 * 1000;
+        loop {
+            let res = unsafe {
+                context
+                    .device
+                    .wait_for_fences(slice::from_ref(&self.fence), true, timeout_ns)
+            };
+            match res {
+                Ok(_) => break,
+                Err(vk::Result::TIMEOUT) => {}
+                Err(err_code) => panic!("failed to wait for fence {}", err_code),
+            }
+        }
+    }
 }
 
 pub struct CommandBufferPool {
@@ -92,19 +108,7 @@ impl CommandBufferPool {
 
         let set = &self.sets[self.index];
 
-        let timeout_ns = 1000 * 1000 * 1000;
-        loop {
-            let res = unsafe {
-                self.context
-                    .device
-                    .wait_for_fences(slice::from_ref(&set.fence), true, timeout_ns)
-            };
-            match res {
-                Ok(_) => break,
-                Err(vk::Result::TIMEOUT) => {}
-                Err(err_code) => panic!("failed to wait for fence {}", err_code),
-            }
-        }
+        set.wait_for_fence(&self.context);
 
         unsafe { self.context.device.reset_fences(slice::from_ref(&set.fence)) }.unwrap();
 
@@ -168,6 +172,11 @@ impl CommandBufferPool {
         .unwrap();
 
         set.semaphores.as_ref().map(|s| s.rendering_finished)
+    }
+
+    pub fn wait_after_submit(&self) {
+        let set = &self.sets[self.index];
+        set.wait_for_fence(&self.context);
     }
 }
 

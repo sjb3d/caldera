@@ -269,6 +269,7 @@ impl App {
             ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
             swap_vk_image,
             ImageUsage::empty(),
+            ImageUsage::SWAPCHAIN,
         );
 
         let main_sample_count = vk::SampleCountFlags::N1;
@@ -401,6 +402,19 @@ impl CaptureBuffer {
 
         let mapping = unsafe { context.device.map_memory(mem, 0, vk::WHOLE_SIZE, Default::default()) }.unwrap();
 
+        let mapped_memory_range = vk::MappedMemoryRange {
+            memory: Some(mem),
+            offset: 0,
+            size: vk::WHOLE_SIZE,
+            ..Default::default()
+        };
+        unsafe {
+            context
+                .device
+                .flush_mapped_memory_ranges(slice::from_ref(&mapped_memory_range))
+        }
+        .unwrap();
+
         Self {
             context: Arc::clone(&context),
             size,
@@ -411,6 +425,19 @@ impl CaptureBuffer {
     }
 
     fn mapping(&self) -> &[u8] {
+        let mapped_memory_range = vk::MappedMemoryRange {
+            memory: Some(self.mem),
+            offset: 0,
+            size: vk::WHOLE_SIZE,
+            ..Default::default()
+        };
+        unsafe {
+            self.context
+                .device
+                .invalidate_mapped_memory_ranges(slice::from_ref(&mapped_memory_range))
+        }
+        .unwrap();
+
         unsafe { slice::from_raw_parts(self.mapping, self.size as usize) }
     }
 }
@@ -514,9 +541,10 @@ impl CommandlineApp {
                     let capture_desc = BufferDesc::new(self.capture_buffer.size as usize);
                     let capture_buffer = schedule.import_buffer(
                         &capture_desc,
-                        BufferUsage::COMPUTE_STORAGE_WRITE,
+                        BufferUsage::COMPUTE_STORAGE_WRITE | BufferUsage::HOST_READ,
                         self.capture_buffer.buffer,
                         BufferUsage::empty(),
+                        BufferUsage::HOST_READ,
                     );
 
                     schedule.add_compute(
@@ -599,8 +627,8 @@ impl CommandlineApp {
             }
         }
 
-        println!("waiting for idle");
-        unsafe { self.context.device.device_wait_idle() }.unwrap();
+        println!("waiting for fence");
+        self.systems.command_buffer_pool.wait_after_submit();
 
         println!("saving image to {:?}", filename);
         match filename.extension().unwrap().to_str().unwrap() {

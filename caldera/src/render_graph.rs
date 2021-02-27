@@ -7,9 +7,7 @@ use crate::resource::*;
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};
-use std::ffi::CStr;
-use std::mem;
-use std::sync::Arc;
+use std::{ffi::CStr, mem, sync::Arc};
 
 /*
     The goal is to manage:
@@ -96,7 +94,7 @@ impl BufferResource {
                 if !all_usage_check.contains(new_usage) {
                     panic!("cannot set usage that buffer was not allocated with");
                 }
-                if *current_usage != new_usage {
+                if *current_usage != new_usage || !new_usage.as_access_category().supports_overlap() {
                     emit_buffer_barrier(*current_usage, new_usage, buffer.0, device, cmd);
                     *current_usage = new_usage;
                 }
@@ -160,7 +158,7 @@ impl ImageResource {
                 if !all_usage_check.contains(new_usage) {
                     panic!("cannot set usage that image was not allocated with");
                 }
-                if *current_usage != new_usage {
+                if *current_usage != new_usage || !new_usage.as_access_category().supports_overlap() {
                     emit_image_barrier(*current_usage, new_usage, image.0, desc.aspect_mask, device, cmd);
                     *current_usage = new_usage;
                 }
@@ -536,10 +534,16 @@ enum TemporaryHandle {
     Image(ImageHandle),
 }
 
+enum FinalUsage {
+    Buffer { handle: BufferHandle, usage: BufferUsage },
+    Image { handle: ImageHandle, usage: ImageUsage },
+}
+
 pub struct RenderSchedule<'a> {
     render_graph: &'a mut RenderGraph,
     temporaries: Vec<TemporaryHandle>,
     commands: Vec<Command<'a>>,
+    final_usage: Vec<FinalUsage>,
 }
 
 impl<'a> RenderSchedule<'a> {
@@ -549,6 +553,7 @@ impl<'a> RenderSchedule<'a> {
             render_graph,
             temporaries: Vec::new(),
             commands: Vec::new(),
+            final_usage: Vec::new(),
         }
     }
 
@@ -575,11 +580,16 @@ impl<'a> RenderSchedule<'a> {
         all_usage: BufferUsage,
         buffer: UniqueBuffer,
         current_usage: BufferUsage,
+        final_usage: BufferUsage,
     ) -> BufferHandle {
         let handle = self
             .render_graph
             .create_ready_buffer(desc, all_usage, buffer, current_usage);
         self.render_graph.import_set.buffers.push(handle);
+        self.final_usage.push(FinalUsage::Buffer {
+            handle,
+            usage: final_usage,
+        });
         handle
     }
 
@@ -598,11 +608,16 @@ impl<'a> RenderSchedule<'a> {
         all_usage: ImageUsage,
         image: UniqueImage,
         current_usage: ImageUsage,
+        final_usage: ImageUsage,
     ) -> ImageHandle {
         let handle = self
             .render_graph
             .create_ready_image(desc, all_usage, image, current_usage);
         self.render_graph.import_set.images.push(handle);
+        self.final_usage.push(FinalUsage::Image {
+            handle,
+            usage: final_usage,
+        });
         handle
     }
 
@@ -859,17 +874,25 @@ impl<'a> RenderSchedule<'a> {
         }
 
         // free temporaries
-        for handle in &self.temporaries {
+        for handle in self.temporaries.drain(..) {
             match handle {
-                TemporaryHandle::Buffer(handle) => self.render_graph.free_buffer(*handle),
-                TemporaryHandle::Image(handle) => self.render_graph.free_image(*handle),
+                TemporaryHandle::Buffer(handle) => self.render_graph.free_buffer(handle),
+                TemporaryHandle::Image(handle) => self.render_graph.free_image(handle),
             }
         }
 
-        // transition the swap chain image
-        if let Some(swap_image) = swap_image {
-            self.render_graph
-                .transition_image_usage(swap_image, ImageUsage::SWAPCHAIN, context, &mut cmd, query_pool);
+        // emit any last barriers (usually at least the swap chain image)
+        for final_usage in self.final_usage.drain(..) {
+            match final_usage {
+                FinalUsage::Buffer { handle, usage } => {
+                    self.render_graph
+                        .transition_buffer_usage(handle, usage, context, cmd.current);
+                }
+                FinalUsage::Image { handle, usage } => {
+                    self.render_graph
+                        .transition_image_usage(handle, usage, context, &mut cmd, query_pool);
+                }
+            }
         }
     }
 }

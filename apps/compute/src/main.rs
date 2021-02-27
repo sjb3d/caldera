@@ -292,6 +292,7 @@ impl App {
             ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
             swap_vk_image,
             ImageUsage::empty(),
+            ImageUsage::SWAPCHAIN,
         );
 
         let main_sample_count = vk::SampleCountFlags::N1;

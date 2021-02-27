@@ -138,6 +138,7 @@ impl App {
             ImageUsage::COLOR_ATTACHMENT_WRITE | ImageUsage::SWAPCHAIN,
             swap_vk_image,
             ImageUsage::empty(),
+            ImageUsage::SWAPCHAIN,
         );
 
         let main_sample_count = if matches!(self.render_mode, RenderMode::RasterMultisampled) {

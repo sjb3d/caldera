@@ -20,6 +20,36 @@ impl Iterator for SetBitIterator {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessCategory(u32);
+
+impl AccessCategory {
+    pub const READ: AccessCategory = AccessCategory(0x1);
+    pub const WRITE: AccessCategory = AccessCategory(0x2);
+    // TODO: atomic
+
+    pub fn empty() -> Self {
+        Self(0)
+    }
+
+    pub fn supports_overlap(&self) -> bool {
+        self.0.count_ones() < 2
+    }
+}
+
+impl BitOr for AccessCategory {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl BitOrAssign for AccessCategory {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BufferUsage(u32);
 
 impl BufferUsage {
@@ -35,6 +65,7 @@ impl BufferUsage {
     pub const RAY_TRACING_ACCELERATION_STRUCTURE: BufferUsage = BufferUsage(0x200);
     pub const RAY_TRACING_SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x400);
     pub const RAY_TRACING_STORAGE_READ: BufferUsage = BufferUsage(0x800);
+    pub const HOST_READ: BufferUsage = BufferUsage(0x1000);
 
     pub fn empty() -> Self {
         Self(0)
@@ -86,6 +117,7 @@ impl BufferUsage {
                 Self::RAY_TRACING_STORAGE_READ => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::STORAGE_BUFFER
                 }
+                Self::HOST_READ => vk::BufferUsageFlags::empty(),
                 _ => unimplemented!(),
             })
             .fold(vk::BufferUsageFlags::empty(), |m, u| m | u)
@@ -106,6 +138,7 @@ impl BufferUsage {
                 Self::RAY_TRACING_ACCELERATION_STRUCTURE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 Self::RAY_TRACING_SHADER_BINDING_TABLE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
                 Self::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                Self::HOST_READ => vk::PipelineStageFlags::HOST,
                 _ => unimplemented!(),
             })
             .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
@@ -128,9 +161,31 @@ impl BufferUsage {
                 Self::RAY_TRACING_ACCELERATION_STRUCTURE => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
                 Self::RAY_TRACING_SHADER_BINDING_TABLE => vk::AccessFlags::SHADER_READ,
                 Self::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                Self::HOST_READ => vk::AccessFlags::HOST_READ,
                 _ => unimplemented!(),
             })
             .fold(vk::AccessFlags::empty(), |m, u| m | u)
+    }
+
+    pub fn as_access_category(self) -> AccessCategory {
+        SetBitIterator(self.0)
+            .map(|bit| match Self(bit) {
+                Self::TRANSFER_WRITE => AccessCategory::WRITE,
+                Self::COMPUTE_STORAGE_READ => AccessCategory::READ,
+                Self::COMPUTE_STORAGE_WRITE => AccessCategory::WRITE,
+                Self::VERTEX_BUFFER => AccessCategory::READ,
+                Self::INDEX_BUFFER => AccessCategory::READ,
+                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => AccessCategory::READ,
+                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => AccessCategory::READ | AccessCategory::WRITE,
+                Self::ACCELERATION_STRUCTURE_READ => AccessCategory::READ,
+                Self::ACCELERATION_STRUCTURE_WRITE => AccessCategory::WRITE,
+                Self::RAY_TRACING_ACCELERATION_STRUCTURE => AccessCategory::READ,
+                Self::RAY_TRACING_SHADER_BINDING_TABLE => AccessCategory::READ,
+                Self::RAY_TRACING_STORAGE_READ => AccessCategory::READ,
+                Self::HOST_READ => AccessCategory::READ,
+                _ => unimplemented!(),
+            })
+            .fold(AccessCategory::empty(), |m, u| m | u)
     }
 }
 
@@ -157,12 +212,12 @@ pub fn emit_buffer_barrier(
         device.cmd_pipeline_barrier(
             cmd,
             if old_stage_mask.is_empty() {
-                vk::PipelineStageFlags::TOP_OF_PIPE
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE
             } else {
                 old_stage_mask
             },
             if new_stage_mask.is_empty() {
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE
+                vk::PipelineStageFlags::TOP_OF_PIPE
             } else {
                 new_stage_mask
             },
@@ -307,6 +362,28 @@ impl ImageUsage {
                 }
             })
     }
+
+    pub fn as_access_category(self) -> AccessCategory {
+        SetBitIterator(self.0)
+            .map(|bit| match Self(bit) {
+                Self::TRANSFER_WRITE => AccessCategory::WRITE,
+                Self::SWAPCHAIN => AccessCategory::READ,
+                Self::COLOR_ATTACHMENT_WRITE => AccessCategory::WRITE,
+                Self::FRAGMENT_STORAGE_READ => AccessCategory::READ,
+                Self::FRAGMENT_SAMPLED => AccessCategory::READ,
+                Self::COMPUTE_STORAGE_READ => AccessCategory::READ,
+                Self::COMPUTE_STORAGE_WRITE => AccessCategory::WRITE,
+                Self::COMPUTE_SAMPLED => AccessCategory::READ,
+                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => {
+                    AccessCategory::READ | AccessCategory::WRITE
+                }
+                Self::RAY_TRACING_STORAGE_READ => AccessCategory::READ,
+                Self::RAY_TRACING_STORAGE_WRITE => AccessCategory::WRITE,
+                Self::RAY_TRACING_SAMPLED => AccessCategory::READ,
+                _ => unimplemented!(),
+            })
+            .fold(AccessCategory::empty(), |m, u| m | u)
+    }
 }
 
 pub fn emit_image_barrier(
@@ -340,12 +417,12 @@ pub fn emit_image_barrier(
         device.cmd_pipeline_barrier(
             cmd,
             if old_stage_mask.is_empty() {
-                vk::PipelineStageFlags::TOP_OF_PIPE
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE
             } else {
                 old_stage_mask
             },
             if new_stage_mask.is_empty() {
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE
+                vk::PipelineStageFlags::TOP_OF_PIPE
             } else {
                 new_stage_mask
             },
