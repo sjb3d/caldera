@@ -5,7 +5,11 @@
 #include "sampler.glsl"
 #include "spectrum.glsl"
 
-layout(local_size_x = 16, local_size_y = 16) in;
+#define GROUP_X             8
+#define GROUP_Y             8
+#define GROUP_THREAD_COUNT  (GROUP_X*GROUP_Y)
+
+layout(local_size_x = GROUP_X, local_size_y = GROUP_Y) in;
 
 #define FILTER_TYPE_BOX         0x0
 #define FILTER_TYPE_GAUSSIAN    0x1
@@ -49,23 +53,55 @@ float mitchell(float x)
     return y;
 }
 
-vec3 load_input(uvec2 load_coord, float hero_wavelength)
+#define TILE_X              (GROUP_X + 4)
+#define TILE_Y              (GROUP_Y + 4)
+#define TILE_PIXEL_COUNT    (TILE_X*TILE_Y)
+
+shared float s_tile_r[TILE_PIXEL_COUNT];
+shared float s_tile_g[TILE_PIXEL_COUNT];
+shared float s_tile_b[TILE_PIXEL_COUNT];
+
+vec3 load_input(uvec2 tile_coord_base, uvec2 load_coord, float hero_wavelength)
 {
-    const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
-    vec3 samples;
-    samples.x = imageLoad(g_input[0], ivec2(load_coord)).x;
-    samples.y = imageLoad(g_input[1], ivec2(load_coord)).x;
-    samples.z = imageLoad(g_input[2], ivec2(load_coord)).x;
-    vec3 value
-        = samples.x*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).xyz
-        + samples.y*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).xyz
-        + samples.z*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).xyz
-        ;
+    const uint shared_index = (load_coord.y - tile_coord_base.y)*TILE_X + (load_coord.x - tile_coord_base.x);
+    vec3 value;
+    value.x = s_tile_r[shared_index];
+    value.y = s_tile_g[shared_index];
+    value.z = s_tile_b[shared_index];
     return value;
 }
 
 void main()
 {
+    // all threads help to load a tile first
+    const uvec2 tile_coord_base = gl_WorkGroupID.xy*uvec2(GROUP_X, GROUP_Y) - 2; 
+    for (uint raster_index = gl_LocalInvocationIndex; raster_index < TILE_PIXEL_COUNT; raster_index += GROUP_THREAD_COUNT) {
+        const uint local_y = raster_index/TILE_X;
+        const uint local_x = raster_index - TILE_X*local_y;
+        const uvec2 load_coord = tile_coord_base + uvec2(local_x, local_y);
+        vec3 value = vec3(0.f);
+        if (all(lessThan(load_coord, g_filter.image_size))) {
+            vec3 samples;
+            samples.x = imageLoad(g_input[0], ivec2(load_coord)).x;
+            samples.y = imageLoad(g_input[1], ivec2(load_coord)).x;
+            samples.z = imageLoad(g_input[2], ivec2(load_coord)).x;
+
+            const vec4 pixel_rand_u01 = rand_u01(load_coord);
+            const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
+            const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
+            value
+                = samples.x*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).xyz
+                + samples.y*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).xyz
+                + samples.z*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).xyz
+                ;
+        }
+        s_tile_r[raster_index] = value.x;
+        s_tile_g[raster_index] = value.y;
+        s_tile_b[raster_index] = value.z;
+    }
+    barrier();
+    
+    // now threads are allowed to exit
     const uvec2 pixel_coord = gl_GlobalInvocationID.xy;
     if (any(greaterThanEqual(pixel_coord, g_filter.image_size))) {
         return;
@@ -79,7 +115,7 @@ void main()
             const vec4 pixel_rand_u01 = rand_u01(pixel_coord);
             const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
 
-            result.xyz += load_input(pixel_coord, hero_wavelength);
+            result.xyz += load_input(tile_coord_base, pixel_coord, hero_wavelength);
             result.w += 1.f;
         } break;
 
@@ -99,7 +135,7 @@ void main()
                 const float half_extent = 2.f;
                 const float w = exp(-sigma2*dot(filter_coord, filter_coord)) - exp(-sigma2*half_extent*half_extent);
                 if (w > 0.f) {
-                    result.xyz += w*load_input(load_coord, hero_wavelength);
+                    result.xyz += w*load_input(tile_coord_base, load_coord, hero_wavelength);
                     result.w += w;
                 }
             }
@@ -119,7 +155,7 @@ void main()
 
                 const float w = mitchell(filter_coord.x) * mitchell(filter_coord.y);
                 if (w != 0.f) {
-                    result.xyz += w*load_input(load_coord, hero_wavelength);
+                    result.xyz += w*load_input(tile_coord_base, load_coord, hero_wavelength);
                     result.w += w;
                 }
             }
