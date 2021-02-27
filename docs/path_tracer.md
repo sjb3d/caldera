@@ -2,7 +2,7 @@
 
 This page has more information about the `trace` app that is part of the [caldera](https://github.com/sjb3d/caldera) project of Vulkan and rust experiments.
 
-The `trace` app is a path tracer that makes use of Vulkan ray tracing extensions.
+The `trace` app is a spectral path tracer that makes use of Vulkan ray tracing extensions.
 
 ## Features
 
@@ -24,7 +24,7 @@ The `trace` app is a path tracer that makes use of Vulkan ray tracing extensions
 * Simple fixed material model
   * Reflectance from per-instance constant and/or texture
   * All other parameters are either per-instance or global constants (for now)
-* Uses spectral rendering using 3 wavelengths per ray
+* Spectral rendering with 3 wavelengths per ray
   * ACES tonemap using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
 * Interactive renderer with moveable camera and debug UI
 
