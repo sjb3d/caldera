@@ -50,7 +50,7 @@ Here is a variation on the classic Veach multiple importance sampling scene, sho
 ![cornell-box_conductor_surfaces-only](trace_cornell-box_conductor_surfaces-only.jpg) ![cornell-box_conductor_lights-only](trace_cornell-box_conductor_lights-only.jpg)
  ![cornell-box_conductor](trace_cornell-box_conductor.jpg)
 
-The next set of images are rendered from these excellent [rendering resources](https://benedikt-bitterli.me/resources/) by Benedikt Bitterli and various artists at [blendswap.com](https://blendswap.com/).
+The next set of images are rendered from these excellent [rendering resources](https://benedikt-bitterli.me/resources/) by Benedikt Bitterli and [blendswap.com](https://blendswap.com/) artists nacimus, Wig42, cekuhnen, Jay-Artist, NewSee2l035 and aXel.
 
 ![bathroom2](trace_bathroom2.jpg)
 
