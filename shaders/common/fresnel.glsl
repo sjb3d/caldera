@@ -16,6 +16,18 @@ float fresnel_conductor(float eta, float k, float cos_theta)
 
     return .5f*(Rp + Rs);
 }
+vec3 fresnel_conductor(vec3 eta, vec3 k, float cos_theta)
+{
+    const float cos_theta2 = cos_theta*cos_theta;
+    const vec3 two_eta_cos_theta = 2.f*eta*cos_theta;
+
+    const vec3 t0 = eta*eta + k*k;
+    const vec3 t1 = t0 * cos_theta2;
+    const vec3 Rs = (t0 - two_eta_cos_theta + cos_theta2)/(t0 + two_eta_cos_theta + cos_theta2);
+    const vec3 Rp = (t1 - two_eta_cos_theta + 1.f)/(t1 + two_eta_cos_theta + 1.f);
+
+    return .5f*(Rp + Rs);
+}
 
 // reference: https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/
 float fresnel_dieletric(float eta, float cos_theta)

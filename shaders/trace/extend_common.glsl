@@ -87,7 +87,7 @@ struct ExtendShader {
     uint light_index;
 };
 
-#define HIT_SHADER_COUNT_PER_INSTANCE       2
+#define HIT_SHADER_COUNT_PER_INSTANCE   2
 
 #define EXTEND_HIT_SHADER_OFFSET        0
 #define EXTEND_MISS_SHADER_OFFSET       0
@@ -96,15 +96,23 @@ struct ExtendShader {
 #define EXTEND_PAYLOAD_IN(NAME)         layout(location = 0) rayPayloadInEXT ExtendPayload NAME
 
 #define EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK  0x0000ffff
-#define EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT     16
 #define EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK      0x000f0000
-#define EXTEND_SHADER_FLAGS_HAS_NORMALS_BIT     0x00100000
-#define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x00200000
-#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x00400000
+#define EXTEND_SHADER_FLAGS_MATERIAL_INDEX_MASK 0x00f00000
+#define EXTEND_SHADER_FLAGS_HAS_NORMALS_BIT     0x01000000
+#define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x02000000
+#define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x04000000
 
+uint get_texture_index(ExtendShader s)
+{
+    return s.flags & EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK;
+}
 uint get_bsdf_type(ExtendShader s)
 {
-    return (s.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> EXTEND_SHADER_FLAGS_BSDF_TYPE_SHIFT;
+    return (s.flags & EXTEND_SHADER_FLAGS_BSDF_TYPE_MASK) >> 16;
+}
+uint get_material_index(ExtendShader s)
+{
+    return (s.flags & EXTEND_SHADER_FLAGS_MATERIAL_INDEX_MASK) >> 20;
 }
 bool is_emissive(ExtendShader s)
 {
@@ -117,10 +125,6 @@ bool has_normals(ExtendShader s)
 bool has_texture(ExtendShader s)
 {
     return (s.flags & EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT) != 0;
-}
-uint get_texture_index(ExtendShader s)
-{
-    return s.flags & EXTEND_SHADER_FLAGS_TEXTURE_INDEX_MASK;
 }
 
 #endif

@@ -133,7 +133,7 @@ docs/trace_coffee.%: ../tungsten_scenes/coffee/scene.json shaders Makefile
 	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
 
 docs/trace_glass-of-water.%: ../tungsten_scenes/glass-of-water/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 -b 24 $(MANY_SAMPLES) tungsten $<
+	$(TRACE) -o $@ -w 1000 -h 560 -b 24 $(MANY_SAMPLES) tungsten $<
 
 docs/trace_living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders Makefile
 	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 1.03 $(MANY_SAMPLES) tungsten $<

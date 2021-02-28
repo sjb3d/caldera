@@ -59,8 +59,9 @@ layout(set = 0, binding = 1) uniform accelerationStructureEXT g_accel;
 layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
 layout(set = 0, binding = 4) uniform sampler1DArray g_illuminants;
-layout(set = 0, binding = 5) uniform sampler2D g_smits_table;
-layout(set = 0, binding = 6, r32f) uniform restrict writeonly image2D g_result[3];
+layout(set = 0, binding = 5) uniform sampler1DArray g_conductors;
+layout(set = 0, binding = 6) uniform sampler2D g_smits_table;
+layout(set = 0, binding = 7, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -100,6 +101,7 @@ HERO_VEC illuminant(float hero_wavelength, uint index, vec3 tint)
 }
 
 void evaluate_bsdf(
+    float hero_wavelength,
     uint bsdf_type,
     vec3 out_dir,
     vec3 in_dir,
@@ -107,20 +109,21 @@ void evaluate_bsdf(
     out HERO_VEC f,
     out float solid_angle_pdf)
 {
-#define CALL(F) F(out_dir, in_dir, params, f, solid_angle_pdf)
+#define PARAMS out_dir, in_dir, params, f, solid_angle_pdf
     switch (bsdf_type) {
-        case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_eval); break;
+        case BSDF_TYPE_DIFFUSE:             diffuse_bsdf_eval(PARAMS); break;
         case BSDF_TYPE_MIRROR:              break;
         case BSDF_TYPE_SMOOTH_DIELECTRIC:   break;
-        case BSDF_TYPE_ROUGH_DIELECTRIC:    CALL(rough_dielectric_bsdf_eval); break;
-        case BSDF_TYPE_SMOOTH_PLASTIC:      CALL(smooth_plastic_bsdf_eval); break;
-        case BSDF_TYPE_ROUGH_PLASTIC:       CALL(rough_plastic_bsdf_eval); break;
-        case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_eval); break;
+        case BSDF_TYPE_ROUGH_DIELECTRIC:    rough_dielectric_bsdf_eval(PARAMS); break;
+        case BSDF_TYPE_SMOOTH_PLASTIC:      smooth_plastic_bsdf_eval(PARAMS); break;
+        case BSDF_TYPE_ROUGH_PLASTIC:       rough_plastic_bsdf_eval(PARAMS); break;
+        case BSDF_TYPE_ROUGH_CONDUCTOR:     rough_conductor_bsdf_eval(g_conductors, hero_wavelength, PARAMS); break;
     }
-#undef CALL
+#undef PARAMS
 }
 
 void sample_bsdf(
+    float hero_wavelength,
     uint bsdf_type,
     vec3 out_dir,
     BsdfParams params,
@@ -130,17 +133,17 @@ void sample_bsdf(
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-#define CALL(F) F(out_dir, params, bsdf_rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, path_max_roughness)
+#define PARAMS out_dir, params, bsdf_rand_u01, in_dir, estimator, solid_angle_pdf_or_negative, path_max_roughness
     switch (bsdf_type) {
-        case BSDF_TYPE_DIFFUSE:             CALL(diffuse_bsdf_sample); break;
-        case BSDF_TYPE_MIRROR:              CALL(mirror_bsdf_sample); break;
-        case BSDF_TYPE_SMOOTH_DIELECTRIC:   CALL(smooth_dielectric_bsdf_sample); break;
-        case BSDF_TYPE_ROUGH_DIELECTRIC:    CALL(rough_dielectric_bsdf_sample); break;
-        case BSDF_TYPE_SMOOTH_PLASTIC:      CALL(smooth_plastic_bsdf_sample); break;
-        case BSDF_TYPE_ROUGH_PLASTIC:       CALL(rough_plastic_bsdf_sample); break;
-        case BSDF_TYPE_ROUGH_CONDUCTOR:     CALL(rough_conductor_bsdf_sample); break;
+        case BSDF_TYPE_DIFFUSE:             diffuse_bsdf_sample(PARAMS); break;
+        case BSDF_TYPE_MIRROR:              mirror_bsdf_sample(PARAMS); break;
+        case BSDF_TYPE_SMOOTH_DIELECTRIC:   smooth_dielectric_bsdf_sample(PARAMS); break;
+        case BSDF_TYPE_ROUGH_DIELECTRIC:    rough_dielectric_bsdf_sample(PARAMS); break;
+        case BSDF_TYPE_SMOOTH_PLASTIC:      smooth_plastic_bsdf_sample(PARAMS); break;
+        case BSDF_TYPE_ROUGH_PLASTIC:       rough_plastic_bsdf_sample(PARAMS); break;
+        case BSDF_TYPE_ROUGH_CONDUCTOR:     rough_conductor_bsdf_sample(g_conductors, hero_wavelength, PARAMS); break;
     }
-#undef CALL
+#undef PARAMS
 }
 
 void sample_single_light(
@@ -518,6 +521,7 @@ void main()
             float hit_solid_angle_pdf;
             if (in_cos_theta > 0.f || bsdf_has_transmission(bsdf_type)) {
                 evaluate_bsdf(
+                    hero_wavelength,
                     bsdf_type,
                     out_dir_ls,
                     in_dir_ls,
@@ -587,6 +591,7 @@ void main()
             HERO_VEC estimator;
             float solid_angle_pdf_or_negative;
             sample_bsdf(
+                hero_wavelength,
                 get_bsdf_type(hit.info),
                 out_dir_ls,
                 hit.bsdf_params,

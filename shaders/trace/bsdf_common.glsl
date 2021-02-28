@@ -12,11 +12,6 @@
 // TODO: choose from palette of dieletric materials
 #define DIELECTRIC_IOR          1.333f
 
-// vaguely Aluminium, need to convert some spectral data
-// TODO: choose from palette of conductor materials
-#define CONDUCTOR_ETA           1.09f
-#define CONDUCTOR_K             6.79f
-
 // limit on multi-layer BRDFs to avoid divide by zero
 #define MIN_LAYER_PROBABILITY   .01f
 
@@ -26,24 +21,35 @@
 /*
     Parameters for a BSDF implementation (assumes that the type
     of BSDF is already known, stored separately).
+
+    x:  reflectance.xy (2xf16)
+    y:  [31] = is_front_hit
+        [30:24] = material_index
+        [23:16] = roughness (u8)
+        [15:0] = reflectance.z (f16)
 */
 struct BsdfParams {
     uvec2 bits;
 };
 
-#define BSDF_PARAMS_Y_FRONT_HIT_BIT     0x80000000U
+#define BSDF_PARAMS_Y_FRONT_HIT_BIT         0x80000000U
+#define BSDF_PARAMS_Y_MATERIAL_INDEX_MASK   0x0f000000U
+#define BSDF_PARAMS_Y_ROUGHNESS_MASK        0x00ff0000U
+#define BSDF_PARAMS_Y_REFLECTANCE_Z_MASK    0x0000ffffU
 
 BsdfParams create_bsdf_params(
     vec3 reflectance,
     float roughness,
+    uint material_index,
     bool is_front_hit)
 {
     BsdfParams p;
     p.bits.x = packHalf2x16(reflectance.xy);
     p.bits.y
-        = packHalf2x16(vec2(reflectance.z, abs(roughness)))
+        = packHalf2x16(vec2(reflectance.z, 0.f))
+        | packUnorm4x8(vec4(0.f, 0.f, roughness, 0.f))
+        | ((material_index << 24) & BSDF_PARAMS_Y_MATERIAL_INDEX_MASK)
         | (is_front_hit ? BSDF_PARAMS_Y_FRONT_HIT_BIT : 0)
-
         ;
     return p;
 }
@@ -56,7 +62,11 @@ vec3 get_reflectance(BsdfParams p)
 }
 float get_roughness(BsdfParams p)
 {
-    return abs(unpackHalf2x16(p.bits.y).y);
+    return unpackUnorm4x8(p.bits.y).z;
+}
+uint get_material_index(BsdfParams p)
+{
+    return (p.bits.y & BSDF_PARAMS_Y_MATERIAL_INDEX_MASK) >> 24;
 }
 bool is_front_hit(BsdfParams p)
 {
@@ -66,14 +76,14 @@ bool is_front_hit(BsdfParams p)
 BsdfParams replace_reflectance(BsdfParams p, vec3 reflectance)
 {
     p.bits.x = packHalf2x16(reflectance.xy);
-    p.bits.y &= 0xffff0000;
+    p.bits.y &= ~BSDF_PARAMS_Y_REFLECTANCE_Z_MASK;
     p.bits.y |= packHalf2x16(vec2(reflectance.z, 0.f));
     return p;
 }
 BsdfParams replace_roughness(BsdfParams p, float roughness)
 {
-    p.bits.y &= (BSDF_PARAMS_Y_FRONT_HIT_BIT | 0x0000ffff);
-    p.bits.y |= packHalf2x16(vec2(0.f, abs(roughness)));
+    p.bits.y &= ~BSDF_PARAMS_Y_ROUGHNESS_MASK;
+    p.bits.y |= packUnorm4x8(vec4(0.f, 0.f, roughness, 0.f));
     return p;
 }
 
@@ -93,6 +103,11 @@ bool bsdf_is_always_delta(uint bsdf_type)
 bool bsdf_has_transmission(uint bsdf_type)
 {
     return (bsdf_type == BSDF_TYPE_SMOOTH_DIELECTRIC) || (bsdf_type == BSDF_TYPE_ROUGH_DIELECTRIC);
+}
+
+vec2 ggx_alpha_from_roughness(float roughness)
+{
+    return vec2(square(roughness));
 }
 
 #endif

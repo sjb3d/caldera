@@ -12,7 +12,7 @@ void rough_plastic_bsdf_eval(
 {
     const HERO_VEC reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
-    const vec2 alpha = vec2(square(roughness));
+    const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
     const vec3 v = out_dir;
     const vec3 l = in_dir;
@@ -46,7 +46,7 @@ void rough_plastic_bsdf_sample(
 {
     const HERO_VEC reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
-    const vec2 alpha = vec2(square(roughness));
+    const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
     const vec3 v = out_dir;
     const float n_dot_v = out_dir.z;

@@ -200,6 +200,7 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
     illuminants: SampledImage,
+    conductors: SampledImage,
     smits_table: SampledImage,
     result: [StorageImage; 3],
 });
@@ -250,9 +251,17 @@ enum BsdfType {
     RoughConductor,
 }
 
-impl From<Surface> for BsdfType {
-    fn from(surface: Surface) -> Self {
-        match surface {
+const MIN_ROUGHNESS: f32 = 0.03;
+
+trait IntoExtendShader {
+    fn bsdf_type(&self) -> BsdfType;
+    fn material_index(&self) -> u32;
+    fn roughness(&self) -> f32;
+}
+
+impl IntoExtendShader for Surface {
+    fn bsdf_type(&self) -> BsdfType {
+        match self {
             Surface::None => BsdfType::None,
             Surface::Diffuse => BsdfType::Diffuse,
             Surface::Mirror => BsdfType::Mirror,
@@ -263,22 +272,27 @@ impl From<Surface> for BsdfType {
             Surface::RoughConductor { .. } => BsdfType::RoughConductor,
         }
     }
-}
 
-const MIN_ROUGHNESS: f32 = 0.03;
+    fn material_index(&self) -> u32 {
+        match self {
+            Surface::None
+            | Surface::Diffuse
+            | Surface::Mirror
+            | Surface::SmoothDielectric
+            | Surface::SmoothPlastic
+            | Surface::RoughDielectric { .. }
+            | Surface::RoughPlastic { .. } => 0,
+            Surface::RoughConductor { conductor, .. } => conductor.into_integer(),
+        }
+    }
 
-trait Roughness {
-    fn roughness(&self) -> f32;
-}
-
-impl Roughness for Surface {
     fn roughness(&self) -> f32 {
         match self {
             Surface::None | Surface::Diffuse => 1.0,
             Surface::Mirror | Surface::SmoothDielectric | Surface::SmoothPlastic => 0.0,
             Surface::RoughDielectric { roughness }
             | Surface::RoughPlastic { roughness }
-            | Surface::RoughConductor { roughness } => roughness.max(MIN_ROUGHNESS),
+            | Surface::RoughConductor { roughness, .. } => roughness.max(MIN_ROUGHNESS),
         }
     }
 }
@@ -288,12 +302,12 @@ impl Roughness for Surface {
 struct ExtendShaderFlags(u32);
 
 impl ExtendShaderFlags {
-    const HAS_NORMALS: ExtendShaderFlags = ExtendShaderFlags(0x0010_0000);
-    const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0020_0000);
-    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0040_0000);
+    const HAS_NORMALS: ExtendShaderFlags = ExtendShaderFlags(0x0100_0000);
+    const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0200_0000);
+    const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0400_0000);
 
-    fn new(bsdf_type: BsdfType, texture_index: Option<TextureIndex>) -> Self {
-        let mut flags = Self(bsdf_type.into_integer() << 16);
+    fn new(bsdf_type: BsdfType, material_index: u32, texture_index: Option<TextureIndex>) -> Self {
+        let mut flags = Self((material_index << 20) | (bsdf_type.into_integer() << 16));
         if let Some(texture_index) = texture_index {
             flags |= Self(texture_index.0 as u32) | Self::HAS_TEXTURE;
         }
@@ -698,6 +712,7 @@ pub struct Renderer {
     sobol_samples_image: StaticImageHandle,
     smits_table_image: StaticImageHandle,
     illuminants_image: StaticImageHandle,
+    conductors_image: StaticImageHandle,
     xyz_from_wavelength_image: StaticImageHandle,
     result_image: ImageHandle,
 
@@ -907,8 +922,12 @@ impl Renderer {
             unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
         };
 
-        let path_trace_descriptor_set_layout =
-            PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache, clamp_linear_sampler, clamp_point_sampler);
+        let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(
+            descriptor_set_layout_cache,
+            clamp_linear_sampler,
+            clamp_linear_sampler,
+            clamp_point_sampler,
+        );
         let texture_binding_set = TextureBindingSet::new(context, texture_images);
         let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_multi_layout(&[
             path_trace_descriptor_set_layout.0,
@@ -1045,7 +1064,6 @@ impl Renderer {
 
         const ILLUMINANT_RESOLUTION: u32 = 5;
         const ILLUMINANT_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / ILLUMINANT_RESOLUTION;
-
         let illuminants_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
             let desc = ImageDesc::new_1d(
@@ -1064,12 +1082,66 @@ impl Renderer {
 
             // HACK: add some fixed illuminants for now
             let mut sweep = CORNELL_BOX_LIGHT_SAMPLES.iter().cloned().into_sweep();
-            for index in 0..ILLUMINANT_PIXEL_COUNT {
-                writer.write(&sweep.next(wavelength_from_index(index)));
+            for wavelength in (0..ILLUMINANT_PIXEL_COUNT).map(wavelength_from_index) {
+                writer.write(&sweep.next(wavelength));
             }
             let mut sweep = d65_illuminant_sweep();
-            for index in 0..ILLUMINANT_PIXEL_COUNT {
-                writer.write(&sweep.next(wavelength_from_index(index)));
+            for wavelength in (0..ILLUMINANT_PIXEL_COUNT).map(wavelength_from_index) {
+                writer.write(&sweep.next(wavelength));
+            }
+        });
+
+        const CONDUCTOR_RESOLUTION: u32 = 10;
+        const CONDUCTOR_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / CONDUCTOR_RESOLUTION;
+        let conductors_image = resource_loader.create_image();
+        resource_loader.async_load(move |allocator| {
+            let desc = ImageDesc::new_1d(
+                CONDUCTOR_PIXEL_COUNT,
+                vk::Format::R32G32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            )
+            .with_layer_count(1 + Conductor::MAX_VALUE - Conductor::MIN_VALUE);
+
+            let mut writer = allocator
+                .map_image(conductors_image, &desc, ImageUsage::COMPUTE_SAMPLED)
+                .unwrap();
+
+            let wavelength_from_index =
+                |index| ((WAVELENGTH_MIN + index * CONDUCTOR_RESOLUTION) as f32) + 0.5 * (CONDUCTOR_RESOLUTION as f32);
+
+            for conductor in (Conductor::MIN_VALUE..=Conductor::MAX_VALUE).map(|i| Conductor::from_integer(i).unwrap())
+            {
+                let samples = match conductor {
+                    Conductor::Aluminium => ALUMINIUM_SAMPLES,
+                    Conductor::AluminiumAntimonide => ALUMINIUM_ANTIMONIDE_SAMPLES,
+                    Conductor::Chromium => CHROMIUM_SAMPLES,
+                    Conductor::Iron => IRON_SAMPLES,
+                    Conductor::Lithium => LITHIUM_SAMPLES,
+                    Conductor::Gold => GOLD_SAMPLES,
+                    Conductor::Silver => SILVER_SAMPLES,
+                    Conductor::TitaniumNitride => TITANIUM_NITRIDE_SAMPLES,
+                    Conductor::Tungsten => TUNGSTEN_SAMPLES,
+                    Conductor::Vanadium => VANADIUM_SAMPLES,
+                    Conductor::VanadiumNitride => VANADIUM_NITRIDE_SAMPLES,
+                    Conductor::Custom => &[
+                        SampledRefractiveIndex {
+                            wavelength: WAVELENGTH_MIN as f32,
+                            eta: 2.0,
+                            k: 0.0,
+                        },
+                        SampledRefractiveIndex {
+                            wavelength: WAVELENGTH_MAX as f32,
+                            eta: 2.0,
+                            k: 0.0,
+                        },
+                    ],
+                };
+                let mut eta_sweep = SampleSweep::new(samples.iter().map(|s| (s.wavelength, s.eta)));
+                let mut k_sweep = SampleSweep::new(samples.iter().map(|s| (s.wavelength, s.k)));
+                for wavelength in (0..CONDUCTOR_PIXEL_COUNT).map(wavelength_from_index) {
+                    writer.write(&eta_sweep.next(wavelength));
+                    writer.write(&k_sweep.next(wavelength));
+                }
             }
         });
 
@@ -1121,6 +1193,7 @@ impl Renderer {
             sobol_samples_image,
             smits_table_image,
             illuminants_image,
+            conductors_image,
             xyz_from_wavelength_image,
             result_image,
             params,
@@ -1321,7 +1394,11 @@ impl Renderer {
                     .clamped(Vec3::zero(), Vec3::one());
 
                     let mut shader = ExtendShader {
-                        flags: ExtendShaderFlags::new(material.surface.into(), reflectance_texture),
+                        flags: ExtendShaderFlags::new(
+                            material.surface.bsdf_type(),
+                            material.surface.material_index(),
+                            reflectance_texture,
+                        ),
                         reflectance,
                         roughness: material.surface.roughness(),
                         light_index: 0,
@@ -1795,6 +1872,7 @@ impl Renderer {
         let pmj_samples_image_view = resource_loader.get_image_view(self.pmj_samples_image)?;
         let sobol_samples_image_view = resource_loader.get_image_view(self.sobol_samples_image)?;
         let illuminants_image_view = resource_loader.get_image_view(self.illuminants_image)?;
+        let conductors_image_view = resource_loader.get_image_view(self.conductors_image)?;
         let smits_table_image_view = resource_loader.get_image_view(self.smits_table_image)?;
         let xyz_from_wavelength_image_view = resource_loader.get_image_view(self.xyz_from_wavelength_image)?;
 
@@ -1885,6 +1963,7 @@ impl Renderer {
                             pmj_samples_image_view,
                             sobol_samples_image_view,
                             illuminants_image_view,
+                            conductors_image_view,
                             smits_table_image_view,
                             &temp_image_views,
                         );

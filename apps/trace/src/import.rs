@@ -131,7 +131,10 @@ fn surface(i: &str) -> IResult<&str, Surface> {
         map(tag("mirror"), |_| Surface::Mirror),
         map(
             preceded(tuple((tag("rough_conductor"), multispace1)), float),
-            |roughness| Surface::RoughConductor { roughness },
+            |roughness| Surface::RoughConductor {
+                conductor: Conductor::Aluminium,
+                roughness,
+            },
         ),
         map(
             preceded(tuple((tag("rough_plastic"), multispace1)), float),

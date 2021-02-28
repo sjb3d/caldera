@@ -12,7 +12,7 @@ void rough_dielectric_bsdf_eval(
 {
     const HERO_VEC reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
-    const vec2 alpha = vec2(square(roughness));
+    const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
     const vec3 v = out_dir;
     const vec3 l = in_dir;
@@ -50,7 +50,7 @@ void rough_dielectric_bsdf_sample(
 {
     const HERO_VEC reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
-    const vec2 alpha = vec2(square(roughness));
+    const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
     const vec3 v = out_dir;
     const vec3 h = sample_vndf(out_dir, alpha, bsdf_rand_u01.xy);

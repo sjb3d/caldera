@@ -38,5 +38,6 @@ void main()
     g_extend.bsdf_params = create_bsdf_params(
         g_record.shader.reflectance,
         g_record.shader.roughness,
+        get_material_index(g_record.shader),
         is_front_hit);
 }

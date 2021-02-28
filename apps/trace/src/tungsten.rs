@@ -47,6 +47,21 @@ enum Distribution {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+enum Material {
+    Ag,
+    Al,
+    AlSb,
+    Au,
+    Cr,
+    Fe,
+    Li,
+    TiN,
+    V,
+    VN,
+    W,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct Bsdf {
     name: Option<String>,
     #[serde(rename = "type")]
@@ -54,6 +69,9 @@ struct Bsdf {
     albedo: TextureOrValue,
     distribution: Option<Distribution>,
     roughness: Option<f32>,
+    material: Option<Material>,
+    eta: Option<f32>,
+    k: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -263,7 +281,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
         tint.map(|v| match illuminant {
             Illuminant::E => scene::Emission::Constant(v),
             Illuminant::D65 => scene::Emission::D65(v),
-            _ => panic!("unknown illuminant"),
+            _ => panic!("TODO: unknown illuminant"),
         })
     };
 
@@ -280,6 +298,34 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
             TextureOrValue::Value(value) => scene::Reflectance::Constant(value.ungamma_colour().into_vec3()),
             TextureOrValue::Texture(filename) => scene::Reflectance::Texture(path.as_ref().with_file_name(filename)),
         };
+        let conductor = || {
+            bsdf.material
+                .as_ref()
+                .map(|material| match material {
+                    Material::Ag => scene::Conductor::Silver,
+                    Material::Al => scene::Conductor::Aluminium,
+                    Material::AlSb => scene::Conductor::AluminiumAntimonide,
+                    Material::Au => scene::Conductor::Gold,
+                    Material::Cr => scene::Conductor::Chromium,
+                    Material::Fe => scene::Conductor::Iron,
+                    Material::Li => scene::Conductor::Lithium,
+                    Material::TiN => scene::Conductor::TitaniumNitride,
+                    Material::V => scene::Conductor::Vanadium,
+                    Material::VN => scene::Conductor::VanadiumNitride,
+                    Material::W => scene::Conductor::Tungsten,
+                })
+                .or_else(|| {
+                    bsdf.eta.zip(bsdf.k).and_then(|(eta, k)| {
+                        if eta == 2.0 && k == 0.0 {
+                            Some(scene::Conductor::Custom)
+                        } else {
+                            println!("TODO: unknown conductor eta={}, k={}", eta, k);
+                            None
+                        }
+                    })
+                })
+                .unwrap_or(scene::Conductor::Aluminium)
+        };
         let surface = match bsdf.bsdf_type {
             BsdfType::Null => scene::Surface::None,
             BsdfType::Lambert => scene::Surface::Diffuse,
@@ -288,8 +334,12 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
             BsdfType::RoughDielectric => scene::Surface::RoughDielectric {
                 roughness: bsdf.roughness.unwrap().sqrt(),
             },
-            BsdfType::Conductor => scene::Surface::RoughConductor { roughness: 0.0 },
+            BsdfType::Conductor => scene::Surface::RoughConductor {
+                conductor: conductor(),
+                roughness: 0.0,
+            },
             BsdfType::RoughConductor => scene::Surface::RoughConductor {
+                conductor: conductor(),
                 roughness: bsdf.roughness.unwrap().sqrt(),
             },
             BsdfType::Plastic => scene::Surface::SmoothPlastic,

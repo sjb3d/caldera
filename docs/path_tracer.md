@@ -87,7 +87,8 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [x] Rough dielectrics
 - [ ] Smooth conductors
 - [ ] Generic clearcoat?
-- [ ] IOR parameters for dielectrics and conductors
+- [x] IOR parameters for conductors
+- [ ] IOR parameters for dielectrics
 - [ ] Interior media
 - [x] Sobol sampler
 - [ ] Thin lens camera

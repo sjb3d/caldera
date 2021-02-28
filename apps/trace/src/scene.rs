@@ -1,3 +1,4 @@
+use bytemuck::Contiguous;
 use caldera::*;
 use std::path::PathBuf;
 
@@ -42,6 +43,23 @@ pub enum Reflectance {
     Texture(PathBuf),
 }
 
+#[derive(Debug, Clone, Copy, Contiguous, Eq, PartialEq)]
+#[repr(u32)]
+pub enum Conductor {
+    Aluminium,
+    AluminiumAntimonide,
+    Chromium,
+    Iron,
+    Lithium,
+    Gold,
+    Silver,
+    TitaniumNitride,
+    Tungsten,
+    Vanadium,
+    VanadiumNitride,
+    Custom, // eta=2, k=0, TODO: proper custom spectra
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Surface {
     None,
@@ -51,7 +69,7 @@ pub enum Surface {
     RoughDielectric { roughness: f32 },
     SmoothPlastic,
     RoughPlastic { roughness: f32 },
-    RoughConductor { roughness: f32 },
+    RoughConductor { conductor: Conductor, roughness: f32 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -627,7 +645,10 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
                 });
                 let material = scene.add_material(Material {
                     reflectance: Reflectance::Constant(Vec3::broadcast(0.8)),
-                    surface: Surface::RoughConductor { roughness },
+                    surface: Surface::RoughConductor {
+                        conductor: Conductor::Aluminium,
+                        roughness,
+                    },
                     emission: None,
                 });
                 scene.add_instance(Instance::new(identity, quad, material));
