@@ -6,29 +6,41 @@ The `trace` app is a spectral path tracer that makes use of Vulkan ray tracing e
 
 ## Features
 
-* A uni-directional path tracer
+* A uni-directional spectral path tracer
+  * Currently samples 3 wavelengths per ray
   * Implemented as a single Vulkan ray tracing pipeline
   * Support for instanced geometry (via instanced bottom-level acceleration structures)
-* Sampling using either:
-  * [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) implemented in [pmj](https://github.com/sjb3d/pmj)
-  * Sobol sequence (as described in [Practical Hash-based Owen Scrambling](http://www.jcgt.org/published/0009/04/01/))
+* Sampling using either pmj02 or sobol sequences (see links below)
 * BSDF importance sampling
   * Diffuse and mirror "ideal" surfaces
-  * Fresnel dieletrics and conductors
+  * Smooth or rough fresnel dieletrics and conductors
   * Diffuse with dielectric coating
 * Importance sampling of lights
-  * Fixed CDF based on light power to select between lights
   * Quad/disc/sphere shaped emitters
   * Dome or solid angle distant lights
 * Multiple importance sampling between BSDFs and lights
 * Simple fixed material model
   * Reflectance from per-instance constant and/or texture
   * All other parameters are either per-instance or global constants (for now)
-* Spectral rendering with 3 wavelengths per ray
-  * ACES tonemap using the approach in [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
 * Interactive renderer with moveable camera and debug UI
 
 ## Links
+
+Here are some of the references used when creating the renderer:
+
+* [Hero Wavelength Spectral Sampling](https://cgg.mff.cuni.cz/~wilkie/Website/EGSR_14_files/WNDWH14HWSS.pdf) to associate more than one wavelength with each ray (where possible) for reduced colour noise
+* [CIE 1931 Colour Matching Functions](http://cvrl.ioo.ucl.ac.uk/) to convert spectral samples to the XYZ colour space
+* [RefractiveIndex.info](https://refractiveindex.info/) for measured material properties for dielectrics and conductors
+* [Chromatic Adaptation](http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html) description by Bruce Lindbloom to adjust the white point of XYZ samples
+* [Filmic Tonemap Operators](http://filmicworlds.com/blog/filmic-tonemapping-operators/) for a Rec709/sRGB tonemap by Hejl and Burgess-Dawson
+* [BakingLab](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl) for a fit of the [ACES](https://github.com/ampas/aces-dev) tonemap
+* [Progressive Multi-Jittered Sample Sequences](https://graphics.pixar.com/library/ProgressiveMultiJitteredSampling/) for random sequences, implemented in the [pmj](https://github.com/sjb3d/pmj) crate
+* [Practical Hash-based Owen Scrambling](http://www.jcgt.org/published/0009/04/01/) to shuffle/scramble sequences that use the [Sobol direction numbers by Joe/Kuo](https://web.maths.unsw.edu.au/~fkuo/sobol/)
+* [Survey of Efficient Representations for Independent Unit Vectors](http://jcgt.org/published/0003/02/01/) covers many options for efficient encoding of unit vectors, the renderer uses octohedral encoding in 32 bits
+* [Sampling the GGX Distribution of Visible Normals](http://jcgt.org/published/0007/04/01/) to sample rough surfaces (all rough surfaces in the renderer have GGX-distributed microfacets)
+* [Memo On Fresnel Equations](https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/) for the equations of fresnel dielectrics and conductors
+* [Misunderstanding Layering](http://c0de517e.blogspot.com/2019/08/misunderstanding-multilayering-diffuse.html) approximation for energy conservation in layered diffuse and specular materials
+* The [Physically Based Rendering From Theory To Implementation](https://www.pbrt.org/) (PBRT) book, I have the second edition but the 3rd edition is available for free [online](http://www.pbr-book.org/)!
 
 The following crates have been super useful in making the app:
 
