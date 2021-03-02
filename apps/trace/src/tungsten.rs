@@ -486,10 +486,9 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
                 1.0,
             )
         };
-        let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
         let aspect_ratio = camera.resolution.aspect_ratio();
-        output.add_camera(scene::Camera {
-            transform_ref,
+        output.add_camera(scene::Camera::Pinhole {
+            world_from_camera: world_from_local,
             fov_y: camera.fov * (PI / 180.0) / aspect_ratio,
         });
     }

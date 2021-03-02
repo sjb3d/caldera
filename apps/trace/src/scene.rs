@@ -1,7 +1,11 @@
 use bytemuck::Contiguous;
 use caldera::*;
-use std::{path::{Path, PathBuf}, io::BufReader, fs::File};
 use ply_rs::{parser, ply};
+use std::{
+    fs::File,
+    io::BufReader,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Default)]
 pub struct Transform {
@@ -127,10 +131,18 @@ pub enum Light {
     },
 }
 
-#[derive(Debug)]
-pub struct Camera {
-    pub transform_ref: TransformRef,
-    pub fov_y: f32,
+#[derive(Debug, Clone, Copy)]
+pub enum Camera {
+    Pinhole {
+        world_from_camera: Similarity3,
+        fov_y: f32,
+    },
+    ThinLens {
+        world_from_camera: Similarity3,
+        fov_y: f32,
+        aperture_radius: f32,
+        focus_distance: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -680,19 +692,13 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
         }
     }
 
-    let camera_transform = scene.add_transform(Transform::new(Similarity3::new(
-        Vec3::new(0.278, 0.273, -0.8),
-        Rotor3::identity(),
-        0.25,
-    )));
-    scene.add_camera(Camera {
-        transform_ref: camera_transform,
+    scene.add_camera(Camera::Pinhole {
+        world_from_camera: Similarity3::new(Vec3::new(0.278, 0.273, -0.8), Rotor3::identity(), 0.25),
         fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
     });
 
     scene
 }
-
 
 #[derive(Clone, Copy)]
 struct PlyVertex {
@@ -756,7 +762,7 @@ pub fn load_ply(filename: &Path) -> Geometry {
             }
             _ => panic!("unexpected element {:?}", element),
         }
-    }    
+    }
 
     let mut min = Vec3::broadcast(f32::INFINITY);
     let mut max = Vec3::broadcast(-f32::INFINITY);
@@ -784,7 +790,7 @@ pub fn load_ply(filename: &Path) -> Geometry {
             *n = u;
         }
     }
-let uvs = vec![Vec2::zero(); normals.len()];
+    let uvs = vec![Vec2::zero(); normals.len()];
 
     Geometry::TriangleMesh {
         positions: vertices.drain(..).map(|v| v.pos).collect(),
@@ -796,53 +802,53 @@ let uvs = vec![Vec2::zero(); normals.len()];
     }
 }
 
-
 pub fn create_material_test_scene(ply_filename: &Path) -> Scene {
     let mut scene = Scene::default();
 
     let eps = 0.001;
     let wall_distance = 4.0 - eps;
     let floor_size = 8.0 - eps;
-    let floor_geometry = scene.add_geometry(TriangleMeshBuilder::new()
-        .with_quad(
-            Vec3::new(-floor_size, eps, wall_distance),
-            Vec3::new( floor_size, eps, wall_distance),
-            Vec3::new(floor_size, eps, -floor_size),
-            Vec3::new(-floor_size, eps, -floor_size))
-        .with_quad(
-            Vec3::new(-floor_size, eps, wall_distance),
-            Vec3::new( floor_size, eps, wall_distance),
-            Vec3::new(floor_size, floor_size, wall_distance),
-            Vec3::new(-floor_size, floor_size, wall_distance))
-        .build());
+    let floor_geometry = scene.add_geometry(
+        TriangleMeshBuilder::new()
+            .with_quad(
+                Vec3::new(-floor_size, eps, wall_distance),
+                Vec3::new(floor_size, eps, wall_distance),
+                Vec3::new(floor_size, eps, -floor_size),
+                Vec3::new(-floor_size, eps, -floor_size),
+            )
+            .with_quad(
+                Vec3::new(-floor_size, eps, wall_distance),
+                Vec3::new(floor_size, eps, wall_distance),
+                Vec3::new(floor_size, floor_size, wall_distance),
+                Vec3::new(-floor_size, floor_size, wall_distance),
+            )
+            .build(),
+    );
     let floor_material = scene.add_material(Material {
         reflectance: Reflectance::Checkerboard(Vec3::broadcast(0.8)),
         surface: Surface::Diffuse,
-        emission: None
+        emission: None,
     });
     let identity = scene.add_transform(Transform::default());
     scene.add_instance(Instance::new(identity, floor_geometry, floor_material));
 
     let object_mesh = load_ply(ply_filename);
     let (centre, half_extent) = match object_mesh {
-        Geometry::TriangleMesh { min, max, .. } => {
-            (0.5*(max + min),
-            0.5*(max - min))
-        },
+        Geometry::TriangleMesh { min, max, .. } => (0.5 * (max + min), 0.5 * (max - min)),
         _ => panic!("expected a triangle mesh"),
     };
 
     let object_geometry = scene.add_geometry(object_mesh);
     let max_half_extent = half_extent.component_max();
-    let y_offset = half_extent.y/max_half_extent;
+    let y_offset = half_extent.y / max_half_extent;
     let spacing = 1.5;
     for i in 0..3 {
         let object_transform = scene.add_transform(Transform {
             world_from_local: Similarity3::new(
-                Vec3::new(((i as f32) - 1.0)*spacing, y_offset - centre.y/max_half_extent, 0.0),
-                Rotor3::from_rotation_xz(0.75*PI),
-                1.0/max_half_extent
-            )
+                Vec3::new(((i as f32) - 1.0) * spacing, y_offset - centre.y / max_half_extent, 0.0),
+                Rotor3::from_rotation_xz(0.75 * PI),
+                1.0 / max_half_extent,
+            ),
         });
         let object_material = scene.add_material(Material {
             reflectance: Reflectance::Constant(Vec3::one()),
@@ -855,56 +861,43 @@ pub fn create_material_test_scene(ply_filename: &Path) -> Scene {
                 },
                 roughness: 0.2,
             },
-            emission: None
+            emission: None,
         });
         scene.add_instance(Instance::new(object_transform, object_geometry, object_material));
     }
 
     let light1_geometry = scene.add_geometry(Geometry::Quad {
-        local_from_quad: Similarity3::new(
-            Vec3::new(0.0, 6.0, 0.0),
-            Rotor3::from_rotation_yz(0.5*PI),
-            1.0
-        ),
-        size: Vec2::new(5.0, 5.0)
+        local_from_quad: Similarity3::new(Vec3::new(0.0, 6.0, 0.0), Rotor3::from_rotation_yz(0.5 * PI), 1.0),
+        size: Vec2::new(5.0, 5.0),
     });
     let light2_geometry = scene.add_geometry(Geometry::Quad {
-        local_from_quad: Similarity3::new(
-            Vec3::new(-6.0, 3.0, 0.0),
-            Rotor3::from_rotation_xz(-0.5*PI),
-            1.0
-        ),
-        size: Vec2::new(5.0, 5.0)
+        local_from_quad: Similarity3::new(Vec3::new(-6.0, 3.0, 0.0), Rotor3::from_rotation_xz(-0.5 * PI), 1.0),
+        size: Vec2::new(5.0, 5.0),
     });
     let light3_geometry = scene.add_geometry(Geometry::Quad {
-        local_from_quad: Similarity3::new(
-            Vec3::new(4.5, 3.0, -4.5),
-            Rotor3::from_rotation_xz(0.25*PI),
-            1.0
-        ),
-        size: Vec2::new(5.0, 5.0)
+        local_from_quad: Similarity3::new(Vec3::new(4.5, 3.0, -4.5), Rotor3::from_rotation_xz(0.25 * PI), 1.0),
+        size: Vec2::new(5.0, 5.0),
     });
     let light_material = scene.add_material(Material {
         reflectance: Reflectance::Constant(Vec3::zero()),
         surface: Surface::None,
-        emission: Some(Emission::Constant(Vec3::broadcast(1.0)))
+        emission: Some(Emission::Constant(Vec3::broadcast(1.0))),
     });
     scene.add_instance(Instance::new(identity, light1_geometry, light_material));
     scene.add_instance(Instance::new(identity, light2_geometry, light_material));
     scene.add_instance(Instance::new(identity, light3_geometry, light_material));
-    scene.add_light(Light::Dome { emission: Emission::Constant(Vec3::broadcast(0.05)) });
+    scene.add_light(Light::Dome {
+        emission: Emission::Constant(Vec3::broadcast(0.05)),
+    });
 
-    let camera_orientation = Rotor3::from_rotation_xz(-PI/16.0)*Rotor3::from_rotation_yz(PI/8.0);
-    let camera_transform = scene.add_transform(Transform {
-        world_from_local: Similarity3::new(
+    let camera_orientation = Rotor3::from_rotation_xz(-PI / 16.0) * Rotor3::from_rotation_yz(PI / 8.0);
+    scene.add_camera(Camera::Pinhole {
+        world_from_camera: Similarity3::new(
             Vec3::new(0.0, y_offset, 0.0) + camera_orientation * Vec3::new(0.0, 0.0, -7.5),
             camera_orientation,
-            1.0
-        )
-    });
-    scene.add_camera(Camera {
-        transform_ref: camera_transform,
-        fov_y: PI/8.0
+            1.0,
+        ),
+        fov_y: PI / 8.0,
     });
 
     scene

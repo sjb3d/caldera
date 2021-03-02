@@ -39,6 +39,13 @@
 #define MIS_HEURISTIC_BALANCE   1
 #define MIS_HEURISTIC_POWER2    2
 
+struct CameraParams {
+    mat4x3 world_from_local;
+    vec2 fov_size_at_unit_z;
+    float aperture_radius_ls;
+    float focus_distance_ls;
+};
+
 layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     LightInfoTable light_info_table;
     LightAliasTable light_alias_table;
@@ -46,8 +53,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     uint sampled_light_count;
     uint external_light_begin;
     uint external_light_end;
-    mat4x3 world_from_camera;
-    vec2 fov_size_at_unit_z;
+    CameraParams camera;
     uint sample_index;
     uint max_segment_count;
     uint mis_heuristic;
@@ -332,7 +338,6 @@ void main()
     const bool allow_bsdf_sampling = ((g_path_trace.flags & PATH_TRACE_FLAG_ALLOW_BSDF_SAMPLING) != 0);
     const bool accumulate_roughness = ((g_path_trace.flags & PATH_TRACE_FLAG_ACCUMULATE_ROUGHNESS) != 0);
 
-    float hero_wavelength;
     vec3 prev_position;
     Normal32 prev_geom_normal_packed;
     float prev_epsilon;
@@ -341,31 +346,35 @@ void main()
     HERO_VEC prev_sample;
     float path_max_roughness;
 
+    // pick a wavelength
+    float hero_wavelength;
+    float wavelength_pdf;
+    {
+        const vec4 wavelength_rand_u01 = rand_u01(0);
+        hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength_rand_u01.x);
+        wavelength_pdf = WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
+    }
+
     // sample the camera
     {
-        const vec4 pixel_rand_u01 = rand_u01(0);
+        const CameraParams camera = g_path_trace.camera;
+
+        const vec4 pixel_rand_u01 = rand_u01(1);
         const vec2 fov_uv = (vec2(gl_LaunchIDEXT.xy) + pixel_rand_u01.xy)/vec2(gl_LaunchSizeEXT);
-        const vec3 ray_dir_ls = normalize(vec3(g_path_trace.fov_size_at_unit_z*(.5f - fov_uv), 1.f));
-        const vec3 ray_dir = g_path_trace.world_from_camera * vec4(ray_dir_ls, 0.f);
         
-        const float fov_area_at_unit_z = mul_elements(g_path_trace.fov_size_at_unit_z);
-        const float cos_theta = ray_dir_ls.z;
-        const float cos_theta2 = cos_theta*cos_theta;
-        const float cos_theta3 = cos_theta2*cos_theta;
-        const float solid_angle_pdf = 1.f/(fov_area_at_unit_z*cos_theta3);
+        const vec3 focus_pos_ls = camera.focus_distance_ls * vec3(camera.fov_size_at_unit_z*(.5f - fov_uv), 1.f);
+        const vec3 aperture_pos_ls = camera.aperture_radius_ls * vec3(sample_disc_uniform(pixel_rand_u01.zw), 0.f);
+        const vec3 ray_vec_ls = focus_pos_ls - aperture_pos_ls;
 
-        const HERO_VEC importance = vec3(1.f/fov_area_at_unit_z);
-        const float sensor_area_pdf = 1.f/fov_area_at_unit_z;
+        const vec3 ray_pos = camera.world_from_local * vec4(aperture_pos_ls, 1.f);
+        const vec3 ray_dir = normalize(camera.world_from_local * vec4(ray_vec_ls, 0.f));
 
-        hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
-        const float wavelength_pdf = WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
-
-        prev_position = g_path_trace.world_from_camera[3];
-        prev_geom_normal_packed = make_normal32(g_path_trace.world_from_camera[2]);
+        prev_position = ray_pos;
+        prev_geom_normal_packed = make_normal32(camera.world_from_local[2]);
         prev_epsilon = 0.f;
         prev_in_dir = ray_dir;
-        prev_in_solid_angle_pdf_or_negative = solid_angle_pdf;
-        prev_sample = importance/(sensor_area_pdf*wavelength_pdf);
+        prev_in_solid_angle_pdf_or_negative = -1.f;
+        prev_sample = HERO_VEC(1.f/wavelength_pdf);
         path_max_roughness = 0.f;
     }
 
@@ -484,7 +493,7 @@ void main()
         const bool hit_is_always_delta = bsdf_is_always_delta(get_bsdf_type(hit.info));
         if (g_path_trace.sampled_light_count != 0 && allow_light_sampling && !hit_is_always_delta) {
             // sequence for light sampling
-            const vec2 light_rand_u01 = rand_u01(2*segment_index - 1).xy;
+            const vec2 light_rand_u01 = rand_u01(2*segment_index).xy;
 
             // sample from all light sources
             vec3 light_position_or_extdir;
@@ -575,7 +584,7 @@ void main()
 
         // sample BSDF
         {
-            vec3 bsdf_rand_u01 = rand_u01(2*segment_index).xyz;
+            vec3 bsdf_rand_u01 = rand_u01(2*segment_index + 1).xyz;
 
             // RR
             if (segment_index > 4) {

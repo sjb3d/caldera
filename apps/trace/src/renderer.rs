@@ -171,6 +171,15 @@ pub enum MultipleImportanceHeuristic {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+struct CameraParams {
+    world_from_local: Transform3,
+    fov_size_at_unit_z: Vec2,
+    aperture_radius_ls: f32,
+    focus_distance_ls: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct PathTraceUniforms {
     light_info_table_address: u64,
     light_alias_table_address: u64,
@@ -178,8 +187,7 @@ struct PathTraceUniforms {
     sampled_light_count: u32,
     external_light_begin: u32,
     external_light_end: u32,
-    world_from_camera: Transform3,
-    fov_size_at_unit_z: Vec2,
+    camera: CameraParams,
     sample_index: u32,
     max_segment_count: u32,
     mis_heuristic: u32,
@@ -339,16 +347,12 @@ struct ExtendShader {
 
 impl ExtendShader {
     fn new(reflectance: &Reflectance, surface: &Surface, texture_index: Option<TextureIndex>) -> Self {
-        let mut flags = ExtendShaderFlags::new(
-            surface.bsdf_type(),
-            surface.material_index(),
-            texture_index,
-        );
+        let mut flags = ExtendShaderFlags::new(surface.bsdf_type(), surface.material_index(), texture_index);
         let reflectance = match reflectance {
             Reflectance::Checkerboard(c) => {
                 flags |= ExtendShaderFlags::IS_CHECKERBOARD;
                 *c
-            },
+            }
             Reflectance::Constant(c) => *c,
             Reflectance::Texture(_) => Vec3::zero(),
         }
@@ -1413,12 +1417,8 @@ impl Renderer {
                     let transform = scene.transform(instance.transform_ref);
                     let material = scene.material(instance.material_ref);
 
-
                     let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture;
-                    let mut shader = ExtendShader::new(
-                        &material.reflectance,
-                        &material.surface,
-                        reflectance_texture);
+                    let mut shader = ExtendShader::new(&material.reflectance, &material.surface, reflectance_texture);
                     if let Some(emission) = material.emission {
                         shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
                         shader.light_index = light_info.len() as u32;
@@ -1876,8 +1876,7 @@ impl Renderer {
         pipeline_cache: &'a PipelineCache,
         descriptor_pool: &'a DescriptorPool,
         resource_loader: &'a ResourceLoader,
-        world_from_camera: Similarity3,
-        fov_y: f32,
+        camera: &Camera,
     ) -> Option<ImageHandle> {
         // check readiness
         let top_level_accel = self.accel.top_level_accel()?;
@@ -1911,6 +1910,7 @@ impl Renderer {
                 },
                 {
                     let sample_index = progress.next_sample_index;
+                    let camera = *camera;
                     move |params, cmd| {
                         let temp_image_views = [
                             params.get_image_view(temp_images.0),
@@ -1920,6 +1920,19 @@ impl Renderer {
 
                         let size_flt = self.params.size().as_float();
                         let aspect_ratio = size_flt.x / size_flt.y;
+
+                        let (world_from_camera, fov_y, aperture_radius, focus_distance) = match camera {
+                            Camera::Pinhole {
+                                world_from_camera,
+                                fov_y,
+                            } => (world_from_camera, fov_y, 0.0, 2.0),
+                            Camera::ThinLens {
+                                world_from_camera,
+                                fov_y,
+                                aperture_radius,
+                                focus_distance,
+                            } => (world_from_camera, fov_y, aperture_radius, focus_distance),
+                        };
                         let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
 
                         let mut path_trace_flags = match self.params.sampling_technique {
@@ -1966,8 +1979,12 @@ impl Renderer {
                                     sampled_light_count: shader_binding_data.sampled_light_count,
                                     external_light_begin: shader_binding_data.external_light_begin,
                                     external_light_end: shader_binding_data.external_light_end,
-                                    world_from_camera: world_from_camera.into_homogeneous_matrix().into_transform(),
-                                    fov_size_at_unit_z,
+                                    camera: CameraParams {
+                                        world_from_local: world_from_camera.into_homogeneous_matrix().into_transform(),
+                                        fov_size_at_unit_z,
+                                        aperture_radius_ls: aperture_radius,
+                                        focus_distance_ls: focus_distance,
+                                    },
                                     sample_index,
                                     max_segment_count: self.params.max_bounces + 2,
                                     mis_heuristic: self.params.mis_heuristic.into_integer(),

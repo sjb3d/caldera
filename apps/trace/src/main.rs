@@ -8,7 +8,7 @@ use crate::renderer::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::*;
-use imgui::{im_str, CollapsingHeader, Drag, Key, MouseButton};
+use imgui::{im_str, CollapsingHeader, Drag, Key, MouseButton, Slider};
 use spark::vk;
 use std::{
     ffi::CString,
@@ -60,19 +60,38 @@ struct ViewAdjust {
     rotation: Rotor3,
     log2_scale: f32,
     drag_start: Option<(Vec2, Rotor3, Vec3)>,
+    fov_y: f32,
+    aperture_radius: f32,
+    focus_distance: f32,
 }
 
 impl ViewAdjust {
-    fn new(world_from_camera: Similarity3) -> Self {
+    fn new(camera: &Camera, fov_y_override: Option<f32>) -> Self {
+        let (world_from_camera, fov_y, aperture_radius, focus_distance) = match *camera {
+            Camera::Pinhole {
+                world_from_camera,
+                fov_y,
+            } => (world_from_camera, fov_y, 0.0, 2.0),
+            Camera::ThinLens {
+                world_from_camera,
+                fov_y,
+                aperture_radius,
+                focus_distance,
+            } => (world_from_camera, fov_y, aperture_radius, focus_distance),
+        };
+
         Self {
             translation: world_from_camera.translation,
             rotation: world_from_camera.rotation,
             log2_scale: world_from_camera.scale.abs().log2(),
             drag_start: None,
+            fov_y: fov_y_override.unwrap_or(fov_y),
+            aperture_radius,
+            focus_distance,
         }
     }
 
-    fn update(&mut self, io: &imgui::Io, fov_y: f32) -> bool {
+    fn update(&mut self, io: &imgui::Io) -> bool {
         let mut was_updated = false;
         if io.want_capture_mouse {
             self.drag_start = None;
@@ -80,7 +99,7 @@ impl ViewAdjust {
             let display_size: Vec2 = io.display_size.into();
             let aspect_ratio = (display_size.x as f32) / (display_size.y as f32);
 
-            let xy_from_st = Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * fov_y).tan(), Vec2::zero());
+            let xy_from_st = Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * self.fov_y).tan(), Vec2::zero());
             let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, -2.0), Vec2::new(1.0, 1.0));
             let coord_from_uv = Scale2Offset2::new(display_size, Vec2::zero());
             let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
@@ -131,8 +150,13 @@ impl ViewAdjust {
         was_updated
     }
 
-    fn world_from_camera(&self) -> Similarity3 {
-        Similarity3::new(self.translation, self.rotation, self.log2_scale.exp2())
+    fn to_camera(&self) -> Camera {
+        Camera::ThinLens {
+            world_from_camera: Similarity3::new(self.translation, self.rotation, 1.0),
+            fov_y: self.fov_y,
+            aperture_radius: self.aperture_radius,
+            focus_distance: self.focus_distance,
+        }
     }
 }
 
@@ -148,7 +172,6 @@ struct App {
 
     show_debug_ui: bool,
     view_adjust: ViewAdjust,
-    fov_y: f32,
 }
 
 impl App {
@@ -172,10 +195,7 @@ impl App {
         );
         let progress = RenderProgress::new();
 
-        let camera = scene.cameras.first().unwrap();
-        let world_from_camera = scene.transform(camera.transform_ref).world_from_local;
-        let fov_y = renderer.params.fov_y_override.unwrap_or(camera.fov_y);
-
+        let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), renderer.params.fov_y_override);
         Self {
             context: Arc::clone(&context),
             copy_descriptor_set_layout,
@@ -184,8 +204,7 @@ impl App {
             renderer,
             progress,
             show_debug_ui: true,
-            view_adjust: ViewAdjust::new(world_from_camera),
-            fov_y,
+            view_adjust,
         }
     }
 
@@ -210,19 +229,23 @@ impl App {
                         ui.text("Cameras:");
                         for camera_ref in scene.camera_ref_iter() {
                             if ui.small_button(&im_str!("Camera {}", camera_ref.0)) {
-                                let camera = scene.camera(camera_ref);
-                                let world_from_camera = scene.transform(camera.transform_ref).world_from_local;
-                                self.view_adjust = ViewAdjust::new(world_from_camera);
-                                self.fov_y = camera.fov_y;
+                                self.view_adjust =
+                                    ViewAdjust::new(scene.camera(camera_ref), self.renderer.params.fov_y_override);
                                 needs_reset = true;
                             }
                         }
-                        needs_reset |= Drag::new(im_str!("Camera FOV"))
-                            .speed(0.005)
-                            .build(&ui, &mut self.fov_y);
                         Drag::new(im_str!("Camera Scale Bias"))
                             .speed(0.05)
                             .build(&ui, &mut self.view_adjust.log2_scale);
+                        needs_reset |= Drag::new(im_str!("Camera FOV"))
+                            .speed(0.005)
+                            .build(&ui, &mut self.view_adjust.fov_y);
+                        needs_reset |= Slider::new(im_str!("Aperture Radius"))
+                            .range(0.0..=0.1)
+                            .build(&ui, &mut self.view_adjust.aperture_radius);
+                        needs_reset |= Slider::new(im_str!("Focus Distance"))
+                            .range(0.0..=10.0)
+                            .build(&ui, &mut self.view_adjust.focus_distance);
                     }
                     if needs_reset {
                         self.progress.reset();
@@ -230,10 +253,9 @@ impl App {
                 }
             });
 
-        if self.view_adjust.update(ui.io(), self.fov_y) {
+        if self.view_adjust.update(ui.io()) {
             self.progress.reset();
         }
-        let world_from_camera = self.view_adjust.world_from_camera();
 
         // start render
         let cbar = base.systems.acquire_command_buffer();
@@ -257,8 +279,7 @@ impl App {
             &base.systems.pipeline_cache,
             &base.systems.descriptor_pool,
             &base.systems.resource_loader,
-            world_from_camera,
-            self.fov_y,
+            &self.view_adjust.to_camera(),
         );
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
@@ -504,9 +525,13 @@ impl CommandlineApp {
     }
 
     fn run(&mut self, filename: &Path) {
-        let camera = self.scene.cameras.first().unwrap();
-        let world_from_camera = self.scene.transform(camera.transform_ref).world_from_local;
-        let fov_y = self.renderer.params.fov_y_override.unwrap_or(camera.fov_y);
+        let mut camera = *self.scene.cameras.first().unwrap();
+        if let Some(fov_y_override) = self.renderer.params.fov_y_override {
+            *match &mut camera {
+                Camera::Pinhole { fov_y, .. } => fov_y,
+                Camera::ThinLens { fov_y, .. } => fov_y,
+            } = fov_y_override;
+        }
 
         let mut render_started = false;
         loop {
@@ -529,8 +554,7 @@ impl CommandlineApp {
                 &self.systems.pipeline_cache,
                 &self.systems.descriptor_pool,
                 &self.systems.resource_loader,
-                world_from_camera,
-                fov_y,
+                &camera,
             ) {
                 if !render_started {
                     println!("starting render");

@@ -30,9 +30,9 @@ layout(set = 0, binding = 5, rgba32f) uniform restrict image2D g_result;
 
 #include "sequence.glsl"
 
-vec4 rand_u01(uvec2 pixel_coord)
+vec4 rand_u01(uvec2 pixel_coord, uint seq_index)
 {
-    return rand_u01(pixel_coord, 0, g_filter.sample_index, g_filter.sequence_type);
+    return rand_u01(pixel_coord, seq_index, g_filter.sample_index, g_filter.sequence_type);
 }
 
 float mitchell(float x)
@@ -61,7 +61,7 @@ shared float s_tile_r[TILE_PIXEL_COUNT];
 shared float s_tile_g[TILE_PIXEL_COUNT];
 shared float s_tile_b[TILE_PIXEL_COUNT];
 
-vec3 load_input(uvec2 tile_coord_base, uvec2 load_coord, float hero_wavelength)
+vec3 load_input(uvec2 tile_coord_base, uvec2 load_coord)
 {
     const uint shared_index = (load_coord.y - tile_coord_base.y)*TILE_X + (load_coord.x - tile_coord_base.x);
     vec3 value;
@@ -86,8 +86,8 @@ void main()
             samples.y = imageLoad(g_input[1], ivec2(load_coord)).x;
             samples.z = imageLoad(g_input[2], ivec2(load_coord)).x;
 
-            const vec4 pixel_rand_u01 = rand_u01(load_coord);
-            const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
+            const vec4 pixel_rand_u01 = rand_u01(load_coord, 0);
+            const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.x);
             const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
             value
                 = samples.x*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).xyz
@@ -112,10 +112,7 @@ void main()
     switch (g_filter.filter_type) {
         default:
         case FILTER_TYPE_BOX: {
-            const vec4 pixel_rand_u01 = rand_u01(pixel_coord);
-            const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
-
-            result.xyz += load_input(tile_coord_base, pixel_coord, hero_wavelength);
+            result.xyz += load_input(tile_coord_base, pixel_coord);
             result.w += 1.f;
         } break;
 
@@ -127,15 +124,14 @@ void main()
                     continue;
                 }
 
-                const vec4 pixel_rand_u01 = rand_u01(load_coord);
+                const vec4 pixel_rand_u01 = rand_u01(load_coord, 1);
                 const vec2 filter_coord = vec2(x, y) + pixel_rand_u01.xy - .5f;
-                const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
 
                 const float sigma2 = 2.2f;
                 const float half_extent = 2.f;
                 const float w = exp(-sigma2*dot(filter_coord, filter_coord)) - exp(-sigma2*half_extent*half_extent);
                 if (w > 0.f) {
-                    result.xyz += w*load_input(tile_coord_base, load_coord, hero_wavelength);
+                    result.xyz += w*load_input(tile_coord_base, load_coord);
                     result.w += w;
                 }
             }
@@ -149,13 +145,12 @@ void main()
                     continue;
                 }
 
-                const vec4 pixel_rand_u01 = rand_u01(load_coord);
+                const vec4 pixel_rand_u01 = rand_u01(load_coord, 1);
                 const vec2 filter_coord = vec2(x, y) + pixel_rand_u01.xy - .5f;
-                const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.z);
 
                 const float w = mitchell(filter_coord.x) * mitchell(filter_coord.y);
                 if (w != 0.f) {
-                    result.xyz += w*load_input(tile_coord_base, load_coord, hero_wavelength);
+                    result.xyz += w*load_input(tile_coord_base, load_coord);
                     result.w += w;
                 }
             }

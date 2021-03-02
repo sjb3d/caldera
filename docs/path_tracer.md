@@ -95,7 +95,7 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] IOR parameters for dielectrics
 - [ ] Interior media
 - [x] Sobol sampler
-- [ ] Thin lens camera
+- [x] Thin lens camera
 - [ ] Volumetrics
 - [ ] Image-based dome light
 - [ ] More flexible materials (graphs?)

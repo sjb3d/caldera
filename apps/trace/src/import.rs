@@ -245,8 +245,9 @@ pub fn load_scene(i: &str) -> Scene {
                 ));
             }
             Element::Camera { transform_ref, fov_y } => {
-                scene.add_camera(Camera {
-                    transform_ref: *transform_refs.get(transform_ref).unwrap(),
+                let transform_ref = *transform_refs.get(transform_ref).unwrap();
+                scene.add_camera(Camera::Pinhole {
+                    world_from_camera: scene.transform(transform_ref).world_from_local,
                     fov_y,
                 });
             }
