@@ -539,7 +539,7 @@ where
     I: Iterator<Item = (f32, T)>,
     T: Copy + Add<Output = T> + Mul<f32, Output = T> + Default,
 {
-    pub fn new(iter: I) -> Self {
+    fn new(iter: I) -> Self {
         Self {
             iter,
             prev_sample: None,
@@ -643,7 +643,7 @@ fn d65_illuminant_sample_iter() -> impl Iterator<Item = (f32, f32)> {
 }
 
 pub fn d65_illuminant_sweep() -> impl Sweep<Item = f32> {
-    SampleSweep::new(d65_illuminant_sample_iter())
+    d65_illuminant_sample_iter().into_sweep()
 }
 
 fn xyz_matching_sample_iter() -> impl Iterator<Item = (f32, Vec3)> {
@@ -656,7 +656,7 @@ fn xyz_matching_sample_iter() -> impl Iterator<Item = (f32, Vec3)> {
 }
 
 pub fn xyz_matching_sweep() -> impl Sweep<Item = Vec3> {
-    SampleSweep::new(xyz_matching_sample_iter())
+    xyz_matching_sample_iter().into_sweep()
 }
 
 pub fn xyz_from_spectral_radiance_sweep(mut power: impl Sweep<Item = f32>) -> Vec3 {

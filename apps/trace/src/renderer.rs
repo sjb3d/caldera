@@ -1163,8 +1163,8 @@ impl Renderer {
                         },
                     ],
                 };
-                let mut eta_sweep = SampleSweep::new(samples.iter().map(|s| (s.wavelength, s.eta)));
-                let mut k_sweep = SampleSweep::new(samples.iter().map(|s| (s.wavelength, s.k)));
+                let mut eta_sweep = samples.iter().map(|s| (s.wavelength, s.eta)).into_sweep();
+                let mut k_sweep = samples.iter().map(|s| (s.wavelength, s.k)).into_sweep();
                 for wavelength in (0..CONDUCTOR_PIXEL_COUNT).map(wavelength_from_index) {
                     writer.write(&eta_sweep.next(wavelength));
                     writer.write(&k_sweep.next(wavelength));
