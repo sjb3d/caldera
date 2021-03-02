@@ -1,6 +1,7 @@
 use bytemuck::Contiguous;
 use caldera::*;
-use std::path::PathBuf;
+use std::{path::{Path, PathBuf}, io::BufReader, fs::File};
+use ply_rs::{parser, ply};
 
 #[derive(Debug, Default)]
 pub struct Transform {
@@ -39,6 +40,7 @@ pub enum Geometry {
 
 #[derive(Debug)]
 pub enum Reflectance {
+    Checkerboard(Vec3), // HACK! TODO: proper shaders
     Constant(Vec3),
     Texture(PathBuf),
 }
@@ -49,6 +51,7 @@ pub enum Conductor {
     Aluminium,
     AluminiumAntimonide,
     Chromium,
+    Copper,
     Iron,
     Lithium,
     Gold,
@@ -297,8 +300,8 @@ impl TriangleMeshBuilder {
 
     pub fn with_quad(mut self, v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3) -> Self {
         let base = UVec3::broadcast(self.positions.len() as u32);
-        let normal0 = (v1 - v0).cross(v2 - v0);
-        let normal1 = (v3 - v2).cross(v0 - v2);
+        let normal0 = (v2 - v1).cross(v0 - v1);
+        let normal1 = (v0 - v3).cross(v2 - v3);
         let normal = (normal0 + normal1).normalized();
         self.positions.push(v0);
         self.positions.push(v1);
@@ -685,6 +688,223 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     scene.add_camera(Camera {
         transform_ref: camera_transform,
         fov_y: 2.0 * (0.025f32 / 2.0).atan2(0.035),
+    });
+
+    scene
+}
+
+
+#[derive(Clone, Copy)]
+struct PlyVertex {
+    pos: Vec3,
+}
+
+#[derive(Clone, Copy)]
+struct PlyFace {
+    indices: UVec3,
+}
+
+impl ply::PropertyAccess for PlyVertex {
+    fn new() -> Self {
+        Self { pos: Vec3::zero() }
+    }
+    fn set_property(&mut self, key: String, property: ply::Property) {
+        match (key.as_ref(), property) {
+            ("x", ply::Property::Float(v)) => self.pos.x = v,
+            ("y", ply::Property::Float(v)) => self.pos.y = v,
+            ("z", ply::Property::Float(v)) => self.pos.z = v,
+            _ => {}
+        }
+    }
+}
+
+impl ply::PropertyAccess for PlyFace {
+    fn new() -> Self {
+        Self { indices: UVec3::zero() }
+    }
+    fn set_property(&mut self, key: String, property: ply::Property) {
+        match (key.as_ref(), property) {
+            ("vertex_indices", ply::Property::ListInt(v)) => {
+                assert_eq!(v.len(), 3);
+                for (dst, src) in self.indices.as_mut_slice().iter_mut().zip(v.iter().rev()) {
+                    *dst = *src as u32;
+                }
+            }
+            (k, _) => panic!("unknown key {}", k),
+        }
+    }
+}
+
+pub fn load_ply(filename: &Path) -> Geometry {
+    println!("loading {:?}", filename);
+    let mut f = BufReader::new(File::open(filename).unwrap());
+
+    let vertex_parser = parser::Parser::<PlyVertex>::new();
+    let face_parser = parser::Parser::<PlyFace>::new();
+    let header = vertex_parser.read_header(&mut f).unwrap();
+    let mut vertices = Vec::new();
+    let mut faces = Vec::new();
+    for (_key, element) in header.elements.iter() {
+        match element.name.as_ref() {
+            "vertex" => {
+                vertices = vertex_parser
+                    .read_payload_for_element(&mut f, element, &header)
+                    .unwrap();
+            }
+            "face" => {
+                faces = face_parser.read_payload_for_element(&mut f, element, &header).unwrap();
+            }
+            _ => panic!("unexpected element {:?}", element),
+        }
+    }    
+
+    let mut min = Vec3::broadcast(f32::INFINITY);
+    let mut max = Vec3::broadcast(-f32::INFINITY);
+    for v in vertices.iter() {
+        min = min.min_by_component(v.pos);
+        max = max.max_by_component(v.pos);
+    }
+
+    let mut normals = vec![Vec3::zero(); vertices.len()];
+    for src in faces.iter() {
+        let v0 = vertices[src.indices[0] as usize].pos;
+        let v1 = vertices[src.indices[1] as usize].pos;
+        let v2 = vertices[src.indices[2] as usize].pos;
+        let normal = (v2 - v1).cross(v0 - v1).normalized();
+        if !normal.is_nan() {
+            // TODO: weight by angle at vertex?
+            normals[src.indices[0] as usize] += normal;
+            normals[src.indices[1] as usize] += normal;
+            normals[src.indices[2] as usize] += normal;
+        }
+    }
+    for n in normals.iter_mut() {
+        let u = n.normalized();
+        if !u.is_nan() {
+            *n = u;
+        }
+    }
+let uvs = vec![Vec2::zero(); normals.len()];
+
+    Geometry::TriangleMesh {
+        positions: vertices.drain(..).map(|v| v.pos).collect(),
+        normals: Some(normals),
+        uvs: Some(uvs),
+        indices: faces.drain(..).map(|f| f.indices).collect(),
+        min,
+        max,
+    }
+}
+
+
+pub fn create_material_test_scene(ply_filename: &Path) -> Scene {
+    let mut scene = Scene::default();
+
+    let eps = 0.001;
+    let wall_distance = 4.0 - eps;
+    let floor_size = 8.0 - eps;
+    let floor_geometry = scene.add_geometry(TriangleMeshBuilder::new()
+        .with_quad(
+            Vec3::new(-floor_size, eps, wall_distance),
+            Vec3::new( floor_size, eps, wall_distance),
+            Vec3::new(floor_size, eps, -floor_size),
+            Vec3::new(-floor_size, eps, -floor_size))
+        .with_quad(
+            Vec3::new(-floor_size, eps, wall_distance),
+            Vec3::new( floor_size, eps, wall_distance),
+            Vec3::new(floor_size, floor_size, wall_distance),
+            Vec3::new(-floor_size, floor_size, wall_distance))
+        .build());
+    let floor_material = scene.add_material(Material {
+        reflectance: Reflectance::Checkerboard(Vec3::broadcast(0.8)),
+        surface: Surface::Diffuse,
+        emission: None
+    });
+    let identity = scene.add_transform(Transform::default());
+    scene.add_instance(Instance::new(identity, floor_geometry, floor_material));
+
+    let object_mesh = load_ply(ply_filename);
+    let (centre, half_extent) = match object_mesh {
+        Geometry::TriangleMesh { min, max, .. } => {
+            (0.5*(max + min),
+            0.5*(max - min))
+        },
+        _ => panic!("expected a triangle mesh"),
+    };
+
+    let object_geometry = scene.add_geometry(object_mesh);
+    let max_half_extent = half_extent.component_max();
+    let y_offset = half_extent.y/max_half_extent;
+    let spacing = 1.5;
+    for i in 0..3 {
+        let object_transform = scene.add_transform(Transform {
+            world_from_local: Similarity3::new(
+                Vec3::new(((i as f32) - 1.0)*spacing, y_offset - centre.y/max_half_extent, 0.0),
+                Rotor3::from_rotation_xz(0.75*PI),
+                1.0/max_half_extent
+            )
+        });
+        let object_material = scene.add_material(Material {
+            reflectance: Reflectance::Constant(Vec3::one()),
+            surface: Surface::RoughConductor {
+                conductor: match i {
+                    0 => Conductor::Gold,
+                    1 => Conductor::Iron,
+                    2 => Conductor::Copper,
+                    _ => panic!("unexpected index"),
+                },
+                roughness: 0.2,
+            },
+            emission: None
+        });
+        scene.add_instance(Instance::new(object_transform, object_geometry, object_material));
+    }
+
+    let light1_geometry = scene.add_geometry(Geometry::Quad {
+        local_from_quad: Similarity3::new(
+            Vec3::new(0.0, 6.0, 0.0),
+            Rotor3::from_rotation_yz(0.5*PI),
+            1.0
+        ),
+        size: Vec2::new(5.0, 5.0)
+    });
+    let light2_geometry = scene.add_geometry(Geometry::Quad {
+        local_from_quad: Similarity3::new(
+            Vec3::new(-6.0, 3.0, 0.0),
+            Rotor3::from_rotation_xz(-0.5*PI),
+            1.0
+        ),
+        size: Vec2::new(5.0, 5.0)
+    });
+    let light3_geometry = scene.add_geometry(Geometry::Quad {
+        local_from_quad: Similarity3::new(
+            Vec3::new(4.5, 3.0, -4.5),
+            Rotor3::from_rotation_xz(0.25*PI),
+            1.0
+        ),
+        size: Vec2::new(5.0, 5.0)
+    });
+    let light_material = scene.add_material(Material {
+        reflectance: Reflectance::Constant(Vec3::zero()),
+        surface: Surface::None,
+        emission: Some(Emission::Constant(Vec3::broadcast(1.0)))
+    });
+    scene.add_instance(Instance::new(identity, light1_geometry, light_material));
+    scene.add_instance(Instance::new(identity, light2_geometry, light_material));
+    scene.add_instance(Instance::new(identity, light3_geometry, light_material));
+    scene.add_light(Light::Dome { emission: Emission::Constant(Vec3::broadcast(0.05)) });
+
+    let camera_orientation = Rotor3::from_rotation_xz(-PI/16.0)*Rotor3::from_rotation_yz(PI/8.0);
+    let camera_transform = scene.add_transform(Transform {
+        world_from_local: Similarity3::new(
+            Vec3::new(0.0, y_offset, 0.0) + camera_orientation * Vec3::new(0.0, 0.0, -7.5),
+            camera_orientation,
+            1.0
+        )
+    });
+    scene.add_camera(Camera {
+        transform_ref: camera_transform,
+        fov_y: PI/8.0
     });
 
     scene

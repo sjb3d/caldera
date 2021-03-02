@@ -47,7 +47,7 @@ void main()
     const vec3 p1 = g_record.position_buffer.pos[tri[1]];
     const vec3 p2 = g_record.position_buffer.pos[tri[2]];
 
-    const vec3 geom_normal_vec_ls = cross(p1 - p0, p2 - p0);
+    const vec3 geom_normal_vec_ls = cross(p2 - p1, p0 - p1);
     const vec3 hit_pos_ls
         = p0*(1.f - g_bary_coord.x - g_bary_coord.y)
         + p1*g_bary_coord.x
@@ -82,6 +82,15 @@ void main()
         reflectance = texture(g_textures[nonuniformEXT(texture_index)], uv).xyz;        
     } else {
         reflectance = g_record.shader.reflectance;
+    }
+    
+    if (is_checkerboard(g_record.shader)) {
+        const vec3 coord_flt = hit_pos_ls*2.f;
+        const uvec3 coord = uvec3(ivec3(coord_flt)) ^ (floatBitsToUint(coord_flt) >> 31);
+        const uint p = coord.x ^ coord.y ^ coord.z;
+        if ((p & 1) == 0) {
+            reflectance = .66f*reflectance;
+        }
     }
 
     // transform to world space

@@ -305,6 +305,7 @@ impl ExtendShaderFlags {
     const HAS_NORMALS: ExtendShaderFlags = ExtendShaderFlags(0x0100_0000);
     const HAS_TEXTURE: ExtendShaderFlags = ExtendShaderFlags(0x0200_0000);
     const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0400_0000);
+    const IS_CHECKERBOARD: ExtendShaderFlags = ExtendShaderFlags(0x0800_0000);
 
     fn new(bsdf_type: BsdfType, material_index: u32, texture_index: Option<TextureIndex>) -> Self {
         let mut flags = Self((material_index << 20) | (bsdf_type.into_integer() << 16));
@@ -334,6 +335,31 @@ struct ExtendShader {
     reflectance: Vec3,
     roughness: f32,
     light_index: u32,
+}
+
+impl ExtendShader {
+    fn new(reflectance: &Reflectance, surface: &Surface, texture_index: Option<TextureIndex>) -> Self {
+        let mut flags = ExtendShaderFlags::new(
+            surface.bsdf_type(),
+            surface.material_index(),
+            texture_index,
+        );
+        let reflectance = match reflectance {
+            Reflectance::Checkerboard(c) => {
+                flags |= ExtendShaderFlags::IS_CHECKERBOARD;
+                *c
+            },
+            Reflectance::Constant(c) => *c,
+            Reflectance::Texture(_) => Vec3::zero(),
+        }
+        .clamped(Vec3::zero(), Vec3::one());
+        Self {
+            flags,
+            reflectance,
+            roughness: surface.roughness(),
+            light_index: 0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -1115,6 +1141,7 @@ impl Renderer {
                     Conductor::Aluminium => ALUMINIUM_SAMPLES,
                     Conductor::AluminiumAntimonide => ALUMINIUM_ANTIMONIDE_SAMPLES,
                     Conductor::Chromium => CHROMIUM_SAMPLES,
+                    Conductor::Copper => COPPER_SAMPLES,
                     Conductor::Iron => IRON_SAMPLES,
                     Conductor::Lithium => LITHIUM_SAMPLES,
                     Conductor::Gold => GOLD_SAMPLES,
@@ -1386,23 +1413,12 @@ impl Renderer {
                     let transform = scene.transform(instance.transform_ref);
                     let material = scene.material(instance.material_ref);
 
-                    let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture;
-                    let reflectance = match material.reflectance {
-                        Reflectance::Constant(c) => c,
-                        Reflectance::Texture(_) => Vec3::zero(),
-                    }
-                    .clamped(Vec3::zero(), Vec3::one());
 
-                    let mut shader = ExtendShader {
-                        flags: ExtendShaderFlags::new(
-                            material.surface.bsdf_type(),
-                            material.surface.material_index(),
-                            reflectance_texture,
-                        ),
-                        reflectance,
-                        roughness: material.surface.roughness(),
-                        light_index: 0,
-                    };
+                    let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture;
+                    let mut shader = ExtendShader::new(
+                        &material.reflectance,
+                        &material.surface,
+                        reflectance_texture);
                     if let Some(emission) = material.emission {
                         shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
                         shader.light_index = light_info.len() as u32;

@@ -346,7 +346,6 @@ impl PipelineCache {
                 let rasterization_state_create_info = vk::PipelineRasterizationStateCreateInfo {
                     polygon_mode: vk::PolygonMode::FILL,
                     cull_mode: vk::CullModeFlags::BACK,
-                    front_face: vk::FrontFace::CLOCKWISE,
                     line_width: 1.0,
                     ..Default::default()
                 };

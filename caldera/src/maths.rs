@@ -40,6 +40,16 @@ impl AsFloat for UVec2 {
     }
 }
 
+pub trait IsNan {
+    fn is_nan(&self) -> bool;
+}
+
+impl IsNan for Vec3 {
+    fn is_nan(&self) -> bool {
+        self.x.is_nan() || self.y.is_nan() || self.z.is_nan()
+    }
+}
+
 pub trait Saturated {
     fn saturated(&self) -> Self;
 }

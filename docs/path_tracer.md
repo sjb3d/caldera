@@ -58,10 +58,14 @@ As is tradition, here are some boxes under a couple of different lighting condit
 
 ![cornell-box](trace_cornell-box.jpg) ![cornell-box_dome-light](trace_cornell-box_dome-light.jpg)
 
-Here is a variation on the classic Veach multiple importance sampling scene, showing 64 samples per pixel with BSDF sampling only, light sampling only, then the same samples weighted using multiple importance sampling.
+Here is a variation on the classic Veach multiple importance sampling scene, showing 64 samples per pixel with BSDF sampling only, 64 with light sampling only, then 32 samples of each weighted using multiple importance sampling.
 
 ![cornell-box_conductor_surfaces-only](trace_cornell-box_conductor_surfaces-only.jpg) ![cornell-box_conductor_lights-only](trace_cornell-box_conductor_lights-only.jpg)
  ![cornell-box_conductor](trace_cornell-box_conductor.jpg)
+
+Here is a test scene for some conductors using data from [refractiveindex.info](https://refractiveindex.info/) for copper, iron and gold under a uniform illuminant:
+
+![trace_material_conductors](trace_material_conductors.jpg)
 
 The next set of images are rendered from these excellent [rendering resources](https://benedikt-bitterli.me/resources/) by Benedikt Bitterli and [blendswap.com](https://blendswap.com/) artists nacimus, Wig42, cekuhnen, Jay-Artist, NewSee2l035 and aXel.
 

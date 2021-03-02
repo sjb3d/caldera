@@ -34,7 +34,7 @@ impl ply::PropertyAccess for PlyFace {
         match (key.as_ref(), property) {
             ("vertex_indices", ply::Property::ListInt(v)) => {
                 assert_eq!(v.len(), 3);
-                for (dst, src) in self.indices.as_mut_slice().iter_mut().zip(v.iter().rev()) {
+                for (dst, src) in self.indices.as_mut_slice().iter_mut().zip(v.iter()) {
                     *dst = *src as u32;
                 }
             }
@@ -136,12 +136,18 @@ impl MeshInfo {
             let v0 = vertices[src.indices[0] as usize].pos;
             let v1 = vertices[src.indices[1] as usize].pos;
             let v2 = vertices[src.indices[2] as usize].pos;
-            let normal = (v2 - v0).cross(v1 - v0).normalized();
-            if !normal.x.is_nan() && !normal.y.is_nan() && !normal.z.is_nan() {
+            let normal = (v2 - v1).cross(v0 - v1).normalized();
+            if !normal.is_nan() {
                 // TODO: weight by angle at vertex?
                 normals[src.indices[0] as usize] += normal;
                 normals[src.indices[1] as usize] += normal;
                 normals[src.indices[2] as usize] += normal;
+            }
+        }
+        for n in normals.iter_mut() {
+            let u = n.normalized();
+            if !u.is_nan() {
+                *n = u;
             }
         }
         self.triangle_count = faces.len() as u32;

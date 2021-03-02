@@ -683,6 +683,8 @@ enum SceneDesc {
     Import { filename: PathBuf },
     /// Import from Tungsten scene.json file
     Tungsten { filename: PathBuf },
+    /// Material test scene
+    MaterialTest { ply_filename: PathBuf },
 }
 
 #[derive(Debug, StructOpt)]
@@ -726,7 +728,11 @@ fn main() {
             import::load_scene(&contents)
         }
         SceneDesc::Tungsten { filename } => tungsten::load_scene(filename, renderer_params.observer_illuminant()),
+        SceneDesc::MaterialTest { ply_filename } => create_material_test_scene(ply_filename),
     };
+    if scene.cameras.is_empty() {
+        panic!("scene must contain at least one camera!");
+    }
 
     if let Some(output) = app_params.output {
         let mut app = CommandlineApp::new(&context_params, scene, renderer_params);

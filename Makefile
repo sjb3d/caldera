@@ -116,7 +116,8 @@ IMAGES=\
 	docs/trace_cornell-box_dome-light.jpg \
 	docs/trace_cornell-box_conductor.jpg \
 	docs/trace_cornell-box_conductor_surfaces-only.jpg \
-	docs/trace_cornell-box_conductor_lights-only.jpg
+	docs/trace_cornell-box_conductor_lights-only.jpg \
+	docs/trace_material_conductors.jpg
 
 clean-images:
 	$(RM) $(IMAGES)
@@ -151,10 +152,13 @@ docs/trace_cornell-box_dome-light.%: shaders Makefile
 	$(TRACE) -o $@ -w 492 -h 492 $(MANY_SAMPLES) cornell-box dome-light
 
 docs/trace_cornell-box_conductor.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box cornell-box conductor
+	$(TRACE) -o $@ -w 320 -h 320 -s 5 -f box cornell-box conductor
 
 docs/trace_cornell-box_conductor_surfaces-only.%: shaders Makefile
 	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique surfaces-only cornell-box conductor
 
 docs/trace_cornell-box_conductor_lights-only.%: shaders Makefile
 	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique lights-only cornell-box conductor
+
+docs/trace_material_conductors.%: shaders Makefile
+	$(TRACE) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply

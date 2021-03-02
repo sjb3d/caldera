@@ -101,6 +101,7 @@ struct ExtendShader {
 #define EXTEND_SHADER_FLAGS_HAS_NORMALS_BIT     0x01000000
 #define EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT     0x02000000
 #define EXTEND_SHADER_FLAGS_IS_EMISSIVE_BIT     0x04000000
+#define EXTEND_SHADER_FLAGS_IS_CHECKERBOARD_BIT 0x08000000
 
 uint get_texture_index(ExtendShader s)
 {
@@ -125,6 +126,10 @@ bool has_normals(ExtendShader s)
 bool has_texture(ExtendShader s)
 {
     return (s.flags & EXTEND_SHADER_FLAGS_HAS_TEXTURE_BIT) != 0;
+}
+bool is_checkerboard(ExtendShader s)
+{
+    return (s.flags & EXTEND_SHADER_FLAGS_IS_CHECKERBOARD_BIT) != 0;
 }
 
 #endif
