@@ -7,11 +7,11 @@ publish = false
 
 [dependencies]
 caldera = { path = "../../caldera" }
-spark = { path = "../../../spark/spark" }
+spark = { git = "https://github.com/sjb3d/spark/" }
 bytemuck = { version = "1.5", features = ["derive"] }
 winit = "0.24"
 imgui = "0.6.1"
-pmj = { path = "../../../pmj/pmj" }
+pmj = { git = "https://github.com/sjb3d/pmj/" }
 rand = { version = "0.7", features = ["small_rng"] }
 rayon = "1.3"
 structopt = "0.3"

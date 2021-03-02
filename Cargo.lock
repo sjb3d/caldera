@@ -1184,6 +1184,7 @@ dependencies = [
 [[package]]
 name = "pmj"
 version = "0.1.0"
+source = "git+https://github.com/sjb3d/pmj/#d0d7c198eeaf82b0b162c5dd82088f1f5ce00dcb"
 dependencies = [
  "rand_core 0.5.1",
 ]
@@ -1603,6 +1604,7 @@ dependencies = [
 [[package]]
 name = "spark"
 version = "0.1.0"
+source = "git+https://github.com/sjb3d/spark/#203d77945be265c1e771e2cc911e7e029349f731"
 dependencies = [
  "lazy_static",
  "shared_library",
@@ -1611,6 +1613,7 @@ dependencies = [
 [[package]]
 name = "spark-imgui"
 version = "0.1.0"
+source = "git+https://github.com/sjb3d/spark/#203d77945be265c1e771e2cc911e7e029349f731"
 dependencies = [
  "arrayvec",
  "imgui",

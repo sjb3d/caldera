@@ -8,8 +8,8 @@ publish = false
 [dependencies]
 caldera-macro = { path = "../caldera-macro" }
 arrayvec = "0.5"
-spark = { path = "../../spark/spark" }
-spark-imgui = { path = "../../spark/spark-imgui" }
+spark = { git = "https://github.com/sjb3d/spark/" }
+spark-imgui = { git = "https://github.com/sjb3d/spark/" }
 notify = "4.0"
 winit = "0.24"
 raw-window-handle = "0.3"
