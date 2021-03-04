@@ -106,3 +106,4 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] Microfacet multi-scattering?
 - [ ] Path re-use?
 - [x] Spectral rendering?
+- [ ] Spiky illuminants
