@@ -78,6 +78,7 @@ struct ExtendPayload {
     Normal32 geom_normal;
     Normal32 shading_normal;
     BsdfParams bsdf_params;
+    uint primitive_index;
 };
 
 struct ExtendShader {

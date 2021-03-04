@@ -113,4 +113,5 @@ void main()
         g_record.shader.roughness,
         get_material_index(g_record.shader),
         is_front_hit);
+    g_extend.primitive_index = gl_PrimitiveID;
 }
