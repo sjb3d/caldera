@@ -215,6 +215,13 @@ pub fn load_scene(i: &str) -> Scene {
                     min = min.min_by_component(*pos);
                     max = max.max_by_component(*pos);
                 }
+                let mut area = 0.0;
+                for tri in indices.iter() {
+                    let p0 = positions[tri.x as usize];
+                    let p1 = positions[tri.y as usize];
+                    let p2 = positions[tri.z as usize];
+                    area += (0.5 * (p2 - p1).cross(p0 - p1).mag()) as f64;
+                }
                 let geometry_ref = scene.add_geometry(Geometry::TriangleMesh {
                     positions,
                     normals: Some(normals),
@@ -222,6 +229,7 @@ pub fn load_scene(i: &str) -> Scene {
                     indices,
                     min,
                     max,
+                    area: area as f32,
                 });
                 if geometry_refs.insert(name, geometry_ref).is_some() {
                     panic!("multiple geometry with name \"{}\"", name);

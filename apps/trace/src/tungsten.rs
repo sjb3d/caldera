@@ -254,6 +254,13 @@ fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geome
         min = min.min_by_component(v.pos);
         max = max.max_by_component(v.pos);
     }
+    let mut area = 0.0;
+    for t in triangles.iter() {
+        let p0 = vertices[t.indices.x as usize].pos;
+        let p1 = vertices[t.indices.y as usize].pos;
+        let p2 = vertices[t.indices.z as usize].pos;
+        area += (0.5 * (p2 - p1).cross(p0 - p1).mag()) as f64;
+    }
 
     scene::Geometry::TriangleMesh {
         positions: vertices.iter().map(|v| v.pos).collect(),
@@ -262,6 +269,7 @@ fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geome
         indices: triangles.drain(..).map(|t| t.indices.as_unsigned()).collect(),
         min,
         max,
+        area: area as f32,
     }
 }
 

@@ -27,6 +27,7 @@ pub enum Geometry {
         indices: Vec<UVec3>,
         min: Vec3,
         max: Vec3,
+        area: f32,
     },
     Quad {
         local_from_quad: Similarity3,
@@ -298,6 +299,7 @@ pub struct TriangleMeshBuilder {
     pub normals: Vec<Vec3>,
     pub uvs: Vec<Vec2>,
     pub indices: Vec<UVec3>,
+    pub area: f32,
 }
 
 impl TriangleMeshBuilder {
@@ -307,14 +309,15 @@ impl TriangleMeshBuilder {
             normals: Vec::new(),
             uvs: Vec::new(),
             indices: Vec::new(),
+            area: 0.0,
         }
     }
 
     pub fn with_quad(mut self, v0: Vec3, v1: Vec3, v2: Vec3, v3: Vec3) -> Self {
         let base = UVec3::broadcast(self.positions.len() as u32);
-        let normal0 = (v2 - v1).cross(v0 - v1);
-        let normal1 = (v0 - v3).cross(v2 - v3);
-        let normal = (normal0 + normal1).normalized();
+        let normal_vec0 = (v2 - v1).cross(v0 - v1);
+        let normal_vec1 = (v0 - v3).cross(v2 - v3);
+        let normal = (normal_vec0 + normal_vec1).normalized();
         self.positions.push(v0);
         self.positions.push(v1);
         self.positions.push(v2);
@@ -329,6 +332,7 @@ impl TriangleMeshBuilder {
         self.uvs.push(Vec2::new(0.0, 1.0));
         self.indices.push(base + UVec3::new(0, 1, 2));
         self.indices.push(base + UVec3::new(2, 3, 0));
+        self.area += 0.5 * (normal_vec0.mag() + normal_vec1.mag());
         self
     }
 
@@ -346,6 +350,7 @@ impl TriangleMeshBuilder {
             indices: self.indices,
             min,
             max,
+            area: self.area,
         }
     }
 }
@@ -772,10 +777,12 @@ pub fn load_ply(filename: &Path) -> Geometry {
     }
 
     let mut normals = vec![Vec3::zero(); vertices.len()];
+    let mut area = 0.0;
     for src in faces.iter() {
         let v0 = vertices[src.indices[0] as usize].pos;
         let v1 = vertices[src.indices[1] as usize].pos;
         let v2 = vertices[src.indices[2] as usize].pos;
+        area += (0.5 * (v2 - v1).cross(v0 - v1).mag()) as f64;
         let normal = (v2 - v1).cross(v0 - v1).normalized();
         if !normal.is_nan() {
             // TODO: weight by angle at vertex?
@@ -799,6 +806,7 @@ pub fn load_ply(filename: &Path) -> Geometry {
         indices: faces.drain(..).map(|f| f.indices).collect(),
         min,
         max,
+        area: area as f32,
     }
 }
 
