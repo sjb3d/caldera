@@ -27,11 +27,35 @@ layout(buffer_reference, scalar) buffer LightInfoTable {
     LightInfoEntry entries[];
 };
 
-#define LIGHT_TYPE_QUAD         0
-#define LIGHT_TYPE_DISC         1
-#define LIGHT_TYPE_SPHERE       2
-#define LIGHT_TYPE_DOME         3
-#define LIGHT_TYPE_SOLID_ANGLE  4
+#define LIGHT_TYPE_TRIANGLE_MESH    0
+#define LIGHT_TYPE_QUAD             1
+#define LIGHT_TYPE_DISC             2
+#define LIGHT_TYPE_SPHERE           3
+#define LIGHT_TYPE_DOME             4
+#define LIGHT_TYPE_SOLID_ANGLE      5
+
+layout(buffer_reference, scalar) buffer LightProbabilityTable {
+    float probability[];
+};
+layout(buffer_reference, scalar) buffer LightIndexBuffer {
+    uvec3 tri[];
+};
+layout(buffer_reference, scalar) buffer LightPositionBuffer {
+    vec3 pos[];
+};
+struct TriangleMeshLightParams {
+    LightAliasTable alias_table;
+    LightIndexBuffer index_buffer;
+    LightPositionBuffer position_buffer;
+    mat4x3 world_from_local;
+    vec3 illuminant_tint;
+    uint triangle_count;
+    float area_pdf;
+    float unit_scale;
+};
+layout(buffer_reference, scalar) buffer TriangleMeshLightParamsBuffer {
+    TriangleMeshLightParams params;
+};
 
 struct PlanarLightParams {
     vec3 illuminant_tint;

@@ -410,12 +410,12 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
                     path.as_ref().with_file_name(primitive.file.as_ref().unwrap()),
                     extra_scale,
                 );
+                let area = match mesh {
+                    scene::Geometry::TriangleMesh { area, .. } => area,
+                    _ => panic!("expected a mesh"),
+                };
 
-                let emission = load_emission(primitive, 1.0);
-                if emission.is_some() {
-                    println!("TODO: emissive triangle mesh!")
-                }
-                let material = load_material(&primitive.bsdf.as_ref().unwrap(), None);
+                let material = load_material(&primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
 
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));

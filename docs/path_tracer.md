@@ -67,13 +67,15 @@ Here is a test scene for some conductors using data from [refractiveindex.info](
 
 ![trace_material_conductors](trace_material_conductors.jpg)
 
-The next set of images are rendered from these excellent [rendering resources](https://benedikt-bitterli.me/resources/) by Benedikt Bitterli and [blendswap.com](https://blendswap.com/) artists nacimus, Wig42, cekuhnen, Jay-Artist, NewSee2l035 and aXel.
+The next set of images are rendered from these excellent [rendering resources](https://benedikt-bitterli.me/resources/) by Benedikt Bitterli and [blendswap.com](https://blendswap.com/) artists nacimus, Wig42, cekuhnen, Jay-Artist, thecali, NewSee2l035 and aXel.
 
 ![bathroom2](trace_bathroom2.jpg)
 
 ![staircase](trace_staircase.jpg) ![coffee](trace_coffee.jpg)
 
 ![living-room-2](trace_living-room-2.jpg)
+
+![spaceship](trace_spaceship.jpg)
 
 ![staircase2](trace_staircase2.jpg)
 
@@ -100,7 +102,7 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] Image-based dome light
 - [ ] More flexible materials (graphs?)
 - [x] Disc primitive
-- [ ] Triangle mesh emitter?
+- [x] Triangle mesh emitter?
 - [ ] Microfacet multi-scattering?
 - [ ] Path re-use?
 - [x] Spectral rendering?

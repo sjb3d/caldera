@@ -80,6 +80,7 @@ impl Illuminator for Emission {
 #[repr(u32)]
 #[derive(Clone, Copy, Contiguous, PartialEq, Eq)]
 enum LightType {
+    TriangleMesh,
     Quad,
     Disc,
     Sphere,
@@ -100,6 +101,19 @@ struct LightInfoEntry {
     light_flags: u32,
     probability: f32,
     params_offset: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct TriangleMeshLightParams {
+    alias_table_address: u64,
+    index_buffer_address: u64,
+    position_buffer_address: u64,
+    world_from_local: Transform3,
+    illuminant_tint: Vec3,
+    triangle_count: u32,
+    area_pdf: f32,
+    unit_scale: f32,
 }
 
 #[repr(C)]
@@ -226,6 +240,7 @@ struct ShaderData {
 struct GeometryAttribData {
     normal_buffer: Option<StaticBufferHandle>,
     uv_buffer: Option<StaticBufferHandle>,
+    alias_table: Option<StaticBufferHandle>,
 }
 
 #[derive(Clone, Copy)]
@@ -235,6 +250,7 @@ enum GeometryRecordData {
         position_buffer_address: u64,
         normal_buffer_address: u64,
         uv_buffer_address: u64,
+        alias_table_address: u64,
     },
     Procedural,
 }
@@ -653,7 +669,7 @@ pub struct RendererParams {
     #[structopt(name = "sample_count_log2", short, long, default_value = "8", global = true)]
     pub log2_sample_count: u32,
 
-    #[structopt(long, default_value = "pmj", global = true)]
+    #[structopt(long, default_value = "sobol", global = true)]
     pub sequence_type: SequenceType,
 
     #[structopt(long, global = true)]
@@ -715,6 +731,64 @@ impl RenderProgress {
 
     pub fn done(&self, params: &RendererParams) -> bool {
         self.next_sample_index >= params.sample_count()
+    }
+}
+
+struct AliasTable {
+    under: Vec<(u32, f32)>,
+    over: Vec<(u32, f32)>,
+}
+
+impl AliasTable {
+    pub fn new() -> Self {
+        Self {
+            under: Vec::new(),
+            over: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, u: f32) {
+        let i = (self.under.len() + self.over.len()) as u32;
+        if u < 1.0 {
+            self.under.push((i, u));
+        } else {
+            self.over.push((i, u));
+        }
+    }
+
+    pub fn into_iter(self) -> AliasTableIterator {
+        AliasTableIterator { table: self }
+    }
+}
+
+struct AliasTableIterator {
+    table: AliasTable,
+}
+
+impl Iterator for AliasTableIterator {
+    type Item = (f32, u32, u32);
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((small_i, small_u)) = self.table.under.pop() {
+            if let Some((big_i, big_u)) = self.table.over.pop() {
+                let remain_u = big_u - (1.0 - small_u);
+                if remain_u < 1.0 {
+                    self.table.under.push((big_i, remain_u));
+                } else {
+                    self.table.over.push((big_i, remain_u));
+                }
+                Some((small_u, small_i, big_i))
+            } else {
+                println!("no alias found for {} (entry {})", small_u, small_i);
+                Some((1.0, small_i, small_i))
+            }
+        } else if let Some((big_i, big_u)) = self.table.over.pop() {
+            if big_u > 1.0 {
+                println!("no alias found for {} (entry {})", big_u, big_i);
+            }
+            Some((1.0, big_i, big_i))
+        } else {
+            None
+        }
     }
 }
 
@@ -788,6 +862,8 @@ impl Renderer {
             let has_normals = matches!(geometry, Geometry::TriangleMesh { normals: Some(_), .. });
             let has_uvs_and_texture = matches!(geometry, Geometry::TriangleMesh { uvs: Some(_), .. })
                 && matches!(material.reflectance, Reflectance::Texture(_));
+            let has_emissive_triangles =
+                matches!(geometry, Geometry::TriangleMesh { .. }) && material.emission.is_some();
 
             if has_normals {
                 geometry_attrib_data
@@ -927,6 +1003,54 @@ impl Renderer {
                         }))
                     }
                     _ => unreachable!(),
+                };
+            }
+
+            if has_emissive_triangles {
+                geometry_attrib_data
+                    .get_mut(geometry_ref.0 as usize)
+                    .unwrap()
+                    .alias_table = {
+                    let alias_table = resource_loader.create_buffer();
+                    resource_loader.async_load({
+                        let scene = Arc::clone(scene);
+                        move |allocator| {
+                            let (positions, indices, total_area) = match scene.geometry(geometry_ref) {
+                                Geometry::TriangleMesh {
+                                    positions,
+                                    indices,
+                                    area,
+                                    ..
+                                } => (positions, indices, area),
+                                _ => unreachable!(),
+                            };
+                            let triangle_count = indices.len();
+
+                            let alias_table_desc = BufferDesc::new(triangle_count * mem::size_of::<LightAliasEntry>());
+
+                            let mut alias_table_tmp = AliasTable::new();
+                            for tri in indices.iter() {
+                                let p0 = positions[tri.x as usize];
+                                let p1 = positions[tri.y as usize];
+                                let p2 = positions[tri.z as usize];
+                                let area = 0.5 * (p2 - p1).cross(p0 - p1).mag();
+                                let p = area / total_area;
+                                alias_table_tmp.push(p * (triangle_count as f32));
+                            }
+
+                            let mut mapping = allocator
+                                .map_buffer(alias_table, &alias_table_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                                .unwrap();
+                            for (u, i, j) in alias_table_tmp.into_iter() {
+                                let entry = LightAliasEntry {
+                                    split: u,
+                                    indices: (j << 16) | i,
+                                };
+                                mapping.write(&entry);
+                            }
+                        }
+                    });
+                    Some(alias_table)
                 };
             }
         }
@@ -1275,11 +1399,23 @@ impl Renderer {
                     } else {
                         0
                     };
+
+                    let alias_table_address = if let Some(alias_table) = attrib_data.alias_table {
+                        unsafe {
+                            self.context
+                                .device
+                                .get_buffer_device_address_helper(resource_loader.get_buffer(alias_table)?)
+                        }
+                    } else {
+                        0
+                    };
+
                     Some(GeometryRecordData::Triangles {
                         index_buffer_address,
                         position_buffer_address,
                         normal_buffer_address,
                         uv_buffer_address,
+                        alias_table_address,
                     })
                 }
                 GeometryAccelData::Procedural { .. } => Some(GeometryRecordData::Procedural),
@@ -1431,7 +1567,34 @@ impl Renderer {
 
                         let params_offset = light_params_data.len();
                         let (light_type, area_ws) = match geometry {
-                            Geometry::TriangleMesh { .. } => unimplemented!(),
+                            Geometry::TriangleMesh { indices, area, .. } => {
+                                let (index_buffer_address, position_buffer_address, alias_table_address) =
+                                    match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
+                                        GeometryRecordData::Triangles {
+                                            index_buffer_address,
+                                            position_buffer_address,
+                                            alias_table_address,
+                                            ..
+                                        } => (index_buffer_address, position_buffer_address, alias_table_address),
+                                        GeometryRecordData::Procedural => panic!("unexpected geometry record"),
+                                    };
+                                let triangle_count = indices.len() as u32;
+                                let area_ws =
+                                    area * transform.world_from_local.scale * transform.world_from_local.scale;
+
+                                light_params_data.extend_from_slice(bytemuck::bytes_of(&TriangleMeshLightParams {
+                                    alias_table_address,
+                                    index_buffer_address,
+                                    position_buffer_address,
+                                    triangle_count,
+                                    world_from_local: transform.world_from_local.into_transform(),
+                                    illuminant_tint,
+                                    area_pdf: 1.0 / area_ws,
+                                    unit_scale,
+                                }));
+
+                                (LightType::TriangleMesh, area_ws)
+                            }
                             Geometry::Quad { local_from_quad, size } => {
                                 let world_from_quad = world_from_local * *local_from_quad;
 
@@ -1509,6 +1672,7 @@ impl Renderer {
                             position_buffer_address,
                             normal_buffer_address,
                             uv_buffer_address,
+                            ..
                         } => {
                             if normal_buffer_address != 0 {
                                 shader.flags |= ExtendShaderFlags::HAS_NORMALS;
@@ -1654,56 +1818,24 @@ impl Renderer {
                     .unwrap();
 
                 let rcp_total_sampled_light_power = 1.0 / light_info.iter().map(|info| info.probability).sum::<f32>();
-                let mut under = Vec::new();
-                let mut over = Vec::new();
                 for info in light_info.iter_mut() {
                     info.probability *= rcp_total_sampled_light_power;
                     writer.write(info);
                 }
 
                 writer.write_zeros(light_alias_offset - writer.written());
-                for (index, probability) in light_info
+                let mut alias_table = AliasTable::new();
+                for u in light_info
                     .iter()
                     .map(|info| info.probability)
                     .take(sampled_light_count as usize)
-                    .enumerate()
                 {
-                    let u = probability * (sampled_light_count as f32);
-                    if u < 1.0 {
-                        under.push((index, u));
-                    } else {
-                        over.push((index, u));
-                    }
+                    alias_table.push(u * (sampled_light_count as f32));
                 }
-                for _ in 0..sampled_light_count {
-                    let entry = if let Some((small_i, small_u)) = under.pop() {
-                        if let Some((big_i, big_u)) = over.pop() {
-                            let remain_u = big_u - (1.0 - small_u);
-                            if remain_u < 1.0 {
-                                under.push((big_i, remain_u));
-                            } else {
-                                over.push((big_i, remain_u));
-                            }
-                            LightAliasEntry {
-                                split: small_u,
-                                indices: ((big_i << 16) | small_i) as u32,
-                            }
-                        } else {
-                            println!("no alias found for {} (light {})", small_u, small_i);
-                            LightAliasEntry {
-                                split: 1.0,
-                                indices: ((small_i << 16) | small_i) as u32,
-                            }
-                        }
-                    } else {
-                        let (big_i, big_u) = over.pop().unwrap();
-                        if big_u > 1.0 {
-                            println!("no alias found for {} (light {})", big_u, big_i);
-                        }
-                        LightAliasEntry {
-                            split: 1.0,
-                            indices: ((big_i << 16) | big_i) as u32,
-                        }
+                for (u, i, j) in alias_table.into_iter() {
+                    let entry = LightAliasEntry {
+                        split: u,
+                        indices: (j << 16) | i,
                     };
                     writer.write(&entry);
                 }

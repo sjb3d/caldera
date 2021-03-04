@@ -65,7 +65,7 @@ Has code for:
 
 ![trace](docs/trace_living-room-2_ui.jpg)
 
-A spectral path tracer built on Vulkan ray tracing.  **[For more information about this path tracer and a gallery click here.](docs/path_tracer.md).**  The scene above is from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
+A spectral path tracer built on Vulkan ray tracing.  **[For more information about this path tracer and a gallery click here](docs/path_tracer.md).**  The scene above is from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
 
 ## Library Details
 

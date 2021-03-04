@@ -31,7 +31,8 @@ INC=\
 	trace/sphere_common.glsl \
 	trace/sphere_light.glsl \
 	trace/smooth_dielectric_bsdf.glsl \
-	trace/smooth_plastic_bsdf.glsl
+	trace/smooth_plastic_bsdf.glsl \
+	trace/triangle_mesh_light.glsl
 
 SRC=\
 	compute/trace.comp.glsl \
@@ -112,6 +113,7 @@ IMAGES=\
 	docs/trace_staircase.jpg \
 	docs/trace_living-room-2.jpg \
 	docs/trace_staircase2.jpg \
+	docs/trace_spaceship.jpg \
 	docs/trace_cornell-box.jpg \
 	docs/trace_cornell-box_dome-light.jpg \
 	docs/trace_cornell-box_conductor.jpg \
@@ -144,6 +146,9 @@ docs/trace_staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
 
 docs/trace_staircase2.%: ../tungsten_scenes/staircase2/scene.json shaders Makefile
 	$(TRACE) -o $@ -w 1000 -h 1000 -e -0.5 -b 16 --planar-lights-are-two-sided enable $(MANY_SAMPLES) tungsten $<
+
+docs/trace_spaceship.%: ../tungsten_scenes/spaceship/scene.json shaders Makefile
+	$(TRACE) -o $@ -w 1000 -h 560 -b 16 $(MANY_SAMPLES) tungsten $<
 
 docs/trace_cornell-box.%: shaders Makefile
 	$(TRACE) -o $@ -w 492 -h 492 -e 1.0 $(MANY_SAMPLES) cornell-box

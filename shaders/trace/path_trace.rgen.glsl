@@ -15,6 +15,7 @@
 #include "fresnel.glsl"
 #include "spectrum.glsl"
 
+#include "triangle_mesh_light.glsl"
 #include "disc_light.glsl"
 #include "dome_light.glsl"
 #include "quad_light.glsl"
@@ -76,14 +77,6 @@ layout(set = 0, binding = 7, r32f) uniform restrict writeonly image2D g_result[3
 vec4 rand_u01(uint seq_index)
 {
     return rand_u01(gl_LaunchIDEXT.xy, seq_index, g_path_trace.sample_index, g_path_trace.sequence_type);
-}
-
-uint sample_uniform_discrete(uint count, inout float u01)
-{
-    const float index_flt = float(count)*u01;
-    const uint index = min(uint(index_flt), count - 1);
-    u01 = index_flt - float(index);
-    return index;
 }
 
 EXTEND_PAYLOAD(g_extend);
@@ -175,6 +168,9 @@ void sample_single_light(
     float unit_scale;
     switch (get_light_type(light_info.light_flags)) {
 #define PARAMS  target_position, target_normal, light_rand_u01, light_position_or_extdir, light_normal, illuminant_tint, solid_angle_pdf_and_ext_bit, unit_scale
+        case LIGHT_TYPE_TRIANGLE_MESH: {
+            triangle_mesh_light_sample(params_addr, PARAMS);
+        } break;
         case LIGHT_TYPE_QUAD: {
             const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED) != 0;
             quad_light_sample(params_addr, is_two_sided, PARAMS);
@@ -238,6 +234,7 @@ void sample_all_lights(
 
 void evaluate_single_light(
     float hero_wavelength,
+    uint primitive_index,
     uint light_index,
     vec3 target_position,
     vec3 light_position_or_extdir,
@@ -253,6 +250,9 @@ void evaluate_single_light(
     float solid_angle_pdf;
     switch (get_light_type(light_info.light_flags)) {
 #define PARAMS  target_position, light_position_or_extdir, illuminant_tint, solid_angle_pdf
+        case LIGHT_TYPE_TRIANGLE_MESH: {
+            triangle_mesh_light_eval(params_addr, primitive_index, PARAMS);
+        } break;
         case LIGHT_TYPE_QUAD:
         case LIGHT_TYPE_DISC: {
             const bool is_two_sided = (g_path_trace.flags & PATH_TRACE_FLAG_PLANAR_LIGHTS_ARE_TWO_SIDED) != 0;
@@ -418,6 +418,7 @@ void main()
             float light_solid_angle_pdf;
             evaluate_single_light(
                 hero_wavelength,
+                hit.primitive_index,
                 light_index,
                 prev_position,
                 light_position_or_extdir,

@@ -56,6 +56,14 @@ float unit_float_from_high_bits(uint x)
     return uintBitsToFloat(0x3f800000U | (x >> 9)) - 1.f;
 }
 
+uint sample_uniform_discrete(uint count, inout float u01)
+{
+    const float index_flt = float(count)*u01;
+    const uint index = min(uint(index_flt), count - 1);
+    u01 = index_flt - float(index);
+    return index;
+}
+
 bool split_random_variable(float accept_probability, inout float u01)
 {
     const bool is_accept = (u01 <= accept_probability);
