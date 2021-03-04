@@ -323,6 +323,7 @@ impl Context {
             let mut scalar_block_layout_features = vk::PhysicalDeviceScalarBlockLayoutFeaturesEXT::default();
             let mut pipeline_creation_cache_control_features =
                 vk::PhysicalDevicePipelineCreationCacheControlFeaturesEXT::default();
+            let mut inline_uniform_block_features = vk::PhysicalDeviceInlineUniformBlockFeaturesEXT::default();
             let mut buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::default();
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
             let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
@@ -354,7 +355,10 @@ impl Context {
             );
             params.inline_uniform_block.apply(
                 || available_extensions.supports_ext_inline_uniform_block(),
-                || extensions.enable_ext_inline_uniform_block(),
+                || {
+                    extensions.enable_ext_inline_uniform_block();
+                    inline_uniform_block_features.inline_uniform_block = vk::TRUE;
+                },
                 || panic!("EXT_inline_uniform_block not supported"),
             );
             params.ray_tracing.apply(
@@ -389,6 +393,7 @@ impl Context {
                 .p_enabled_features(Some(&enabled_features))
                 .insert_next(&mut scalar_block_layout_features)
                 .insert_next(&mut pipeline_creation_cache_control_features)
+                .insert_next(&mut inline_uniform_block_features)
                 .insert_next(&mut buffer_device_address_features)
                 .insert_next(&mut acceleration_structure_features)
                 .insert_next(&mut ray_tracing_pipeline_features)
