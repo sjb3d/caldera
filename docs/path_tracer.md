@@ -16,7 +16,7 @@ The `trace` app is a spectral path tracer that makes use of Vulkan ray tracing e
   * Smooth or rough fresnel dieletrics and conductors
   * Diffuse with dielectric coating
 * Importance sampling of lights
-  * Quad/disc/sphere shaped emitters
+  * Quad/disc/sphere or triangle mesh shaped emitters
   * Dome or solid angle distant lights
 * Multiple importance sampling between BSDFs and lights
 * Simple fixed material model
