@@ -11,17 +11,17 @@ float offset_wavelength(float base, float fraction)
     return result;
 }
 
-vec3 expand_wavelengths(float hero_wavelength)
-{
-    vec3 wavelengths;
-    wavelengths.x = hero_wavelength;
-    wavelengths.y = offset_wavelength(hero_wavelength, .33f);
-    wavelengths.z = offset_wavelength(hero_wavelength, .66f);
-    return wavelengths;
-}
-
 #define WAVELENGTHS_PER_RAY     3
 #define HERO_VEC                vec3
+
+HERO_VEC expand_wavelengths(float hero_wavelength)
+{
+    HERO_VEC wavelengths;
+    wavelengths.x = hero_wavelength;
+    wavelengths.y = offset_wavelength(hero_wavelength, 1.f/WAVELENGTHS_PER_RAY);
+    wavelengths.z = offset_wavelength(hero_wavelength, 2.f/WAVELENGTHS_PER_RAY);
+    return wavelengths;
+}
 
 float smits_power_from_rec709(float wavelength, vec3 col, sampler2D table)
 {

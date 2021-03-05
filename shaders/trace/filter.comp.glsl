@@ -25,7 +25,7 @@ layout(set = 0, binding = 0, scalar) uniform FilterData {
 layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 2, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
 layout(set = 0, binding = 3) uniform sampler1D g_xyz_from_wavelength;
-layout(set = 0, binding = 4, r32f) uniform restrict readonly image2D g_input[3];
+layout(set = 0, binding = 4, r32f) uniform restrict readonly image2D g_input[WAVELENGTHS_PER_RAY];
 layout(set = 0, binding = 5, rgba32f) uniform restrict image2D g_result;
 
 #include "sequence.glsl"

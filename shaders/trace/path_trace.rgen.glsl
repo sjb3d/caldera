@@ -68,7 +68,7 @@ layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobo
 layout(set = 0, binding = 4) uniform sampler1DArray g_illuminants;
 layout(set = 0, binding = 5) uniform sampler1DArray g_conductors;
 layout(set = 0, binding = 6) uniform sampler2D g_smits_table;
-layout(set = 0, binding = 7, r32f) uniform restrict writeonly image2D g_result[3];
+layout(set = 0, binding = 7, r32f) uniform restrict writeonly image2D g_result[WAVELENGTHS_PER_RAY];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
