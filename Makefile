@@ -166,4 +166,4 @@ docs/trace_cornell-box_conductor_lights-only.%: shaders Makefile
 	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique lights-only cornell-box conductor
 
 docs/trace_material_conductors.%: shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply
+	$(TRACE) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply e

@@ -80,12 +80,39 @@ pub enum Surface {
     RoughConductor { conductor: Conductor, roughness: f32 },
 }
 
+#[derive(Debug, Clone, Copy, Contiguous, Eq, PartialEq, EnumFromStr)]
+#[repr(u32)]
+pub enum Illuminant {
+    E,
+    CornellBox,
+    D65,
+    F10,
+}
+
+impl Illuminant {
+    pub fn white_point(&self) -> WhitePoint {
+        match self {
+            Self::E => WhitePoint::E,
+            Self::CornellBox => unimplemented!(),
+            Self::D65 => WhitePoint::D65,
+            Self::F10 => unimplemented!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
-pub enum Emission {
-    CornellBox(f32),
-    Constant(Vec3), // TODO: add illuminant
-    D65(Vec3),
-    // TODO: black body temperature
+pub struct Emission {
+    pub illuminant: Illuminant,
+    pub intensity: Vec3,
+}
+
+impl Emission {
+    pub fn new_uniform(intensity: Vec3) -> Self {
+        Self {
+            illuminant: Illuminant::E,
+            intensity,
+        }
+    }
 }
 
 /*
@@ -613,11 +640,11 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     match variant {
         CornellBoxVariant::DomeLight => {
             scene.add_light(Light::Dome {
-                emission: Emission::Constant(Vec3::new(0.4, 0.6, 0.8) * 0.8),
+                emission: Emission::new_uniform(Vec3::new(0.4, 0.6, 0.8) * 0.8),
             });
             let solid_angle = PI / 4096.0;
             scene.add_light(Light::SolidAngle {
-                emission: Emission::Constant(Vec3::new(1.0, 0.8, 0.6) * 2.0 / solid_angle),
+                emission: Emission::new_uniform(Vec3::new(1.0, 0.8, 0.6) * 2.0 / solid_angle),
                 direction_ws: Vec3::new(-1.0, 8.0, -5.0).normalized(),
                 solid_angle,
             });
@@ -637,7 +664,10 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
                 let material = scene.add_material(Material {
                     reflectance: Reflectance::Constant(Vec3::zero()),
                     surface: Surface::None,
-                    emission: Some(Emission::CornellBox(power / (4.0 * PI * r * r))),
+                    emission: Some(Emission {
+                        illuminant: Illuminant::CornellBox,
+                        intensity: Vec3::broadcast(power / (4.0 * PI * r * r)),
+                    }),
                 });
                 scene.add_instance(Instance::new(identity, sphere, material));
             }
@@ -691,7 +721,10 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             let light_material = scene.add_material(Material {
                 reflectance: Reflectance::Constant(Vec3::broadcast(0.78)),
                 surface: Surface::Diffuse,
-                emission: Some(Emission::CornellBox(1.0)),
+                emission: Some(Emission {
+                    illuminant: Illuminant::CornellBox,
+                    intensity: Vec3::broadcast(1.0),
+                }),
             });
             scene.add_instance(Instance::new(identity, light_geometry, light_material));
         }
@@ -810,7 +843,7 @@ pub fn load_ply(filename: &Path) -> Geometry {
     }
 }
 
-pub fn create_material_test_scene(ply_filename: &Path) -> Scene {
+pub fn create_material_test_scene(ply_filename: &Path, illuminant: Illuminant) -> Scene {
     let mut scene = Scene::default();
 
     let eps = 0.001;
@@ -889,13 +922,16 @@ pub fn create_material_test_scene(ply_filename: &Path) -> Scene {
     let light_material = scene.add_material(Material {
         reflectance: Reflectance::Constant(Vec3::zero()),
         surface: Surface::None,
-        emission: Some(Emission::Constant(Vec3::broadcast(1.0))),
+        emission: Some(Emission {
+            illuminant,
+            intensity: Vec3::broadcast(1.0),
+        }),
     });
     scene.add_instance(Instance::new(identity, light1_geometry, light_material));
     scene.add_instance(Instance::new(identity, light2_geometry, light_material));
     scene.add_instance(Instance::new(identity, light3_geometry, light_material));
     scene.add_light(Light::Dome {
-        emission: Emission::Constant(Vec3::broadcast(0.05)),
+        emission: Emission::new_uniform(Vec3::broadcast(0.05)),
     });
 
     let camera_orientation = Rotor3::from_rotation_xz(-PI / 16.0) * Rotor3::from_rotation_yz(PI / 8.0);

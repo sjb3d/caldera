@@ -273,7 +273,7 @@ fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geome
     }
 }
 
-pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Scene {
+pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> scene::Scene {
     let reader = BufReader::new(File::open(&path).unwrap());
 
     let scene: Scene = serde_json::from_reader(reader).unwrap();
@@ -286,10 +286,9 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
         if let Some(TextureOrValue::Value(v)) = &primitive.emission {
             tint = Some(v.into_vec3());
         }
-        tint.map(|v| match illuminant {
-            Illuminant::E => scene::Emission::Constant(v),
-            Illuminant::D65 => scene::Emission::D65(v),
-            _ => panic!("TODO: unknown illuminant"),
+        tint.map(|tint| scene::Emission {
+            illuminant,
+            intensity: tint,
         })
     };
 
@@ -450,7 +449,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
                 let direction_ws = world_from_local.rotation * Vec3::unit_y();
 
                 output.add_light(scene::Light::SolidAngle {
-                    emission: scene::Emission::Constant(emission),
+                    emission: scene::Emission::new_uniform(emission),
                     direction_ws,
                     solid_angle,
                 });
@@ -464,13 +463,19 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: Illuminant) -> scene::Sce
                     }
                 };
                 output.add_light(scene::Light::Dome {
-                    emission: scene::Emission::Constant(emission),
+                    emission: scene::Emission {
+                        illuminant,
+                        intensity: emission,
+                    },
                 });
             }
             PrimitiveType::Skydome => {
                 println!("TODO: convert Skydome geometry!");
                 output.add_light(scene::Light::Dome {
-                    emission: scene::Emission::Constant(Vec3::new(0.2, 0.3, 0.4)),
+                    emission: scene::Emission {
+                        illuminant,
+                        intensity: Vec3::new(0.2, 0.3, 0.4),
+                    },
                 });
             }
             PrimitiveType::Curves => {

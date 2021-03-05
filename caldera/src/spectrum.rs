@@ -498,6 +498,18 @@ const D65_ILLUMINANT: &[f32] = &[
 ];
 const D65_SAMPLE_NORM: f32 = 0.01;
 
+// from https://www.rit.edu/cos/colorscience/rc_useful_data.php
+const F10_WAVELENGTH_BASE: f32 = 380.0;
+const F10_WAVELENGTH_STEP_SIZE: f32 = 5.0;
+const F10_ILLUMINANT: &[f32] = &[
+    1.11, 0.63, 0.62, 0.57, 1.48, 12.16, 2.12, 2.7, 3.74, 5.14, 6.75, 34.39, 14.86, 10.4, 10.76, 10.67, 10.11, 9.27,
+    8.29, 7.29, 7.91, 16.64, 16.73, 10.44, 5.94, 3.34, 2.35, 1.88, 1.59, 1.47, 1.8, 5.71, 40.98, 73.69, 33.61, 8.24,
+    3.38, 2.47, 2.14, 4.86, 11.45, 14.79, 12.16, 8.97, 6.52, 8.81, 44.12, 34.55, 12.09, 12.15, 10.52, 4.43, 1.95, 2.19,
+    3.19, 2.77, 2.29, 2.0, 1.52, 1.35, 1.47, 1.79, 1.74, 1.02, 1.14, 3.32, 4.49, 2.05, 0.49, 0.24, 0.21, 0.21, 0.24,
+    0.24, 0.21, 0.17, 0.21, 0.22, 0.17, 0.12, 0.09,
+];
+const F10_SAMPLE_NORM: f32 = 0.1;
+
 pub trait Sweep {
     type Item;
 
@@ -633,17 +645,30 @@ where
     }
 }
 
-fn d65_illuminant_sample_iter() -> impl Iterator<Item = (f32, f32)> {
-    D65_ILLUMINANT.iter().enumerate().map(|(i, v)| {
-        (
-            D65_WAVELENGTH_BASE + D65_WAVELENGTH_STEP_SIZE * (i as f32),
-            *v * D65_SAMPLE_NORM,
-        )
-    })
+pub fn d65_illuminant_sweep() -> impl Sweep<Item = f32> {
+    D65_ILLUMINANT
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            (
+                D65_WAVELENGTH_BASE + D65_WAVELENGTH_STEP_SIZE * (i as f32),
+                *v * D65_SAMPLE_NORM,
+            )
+        })
+        .into_sweep()
 }
 
-pub fn d65_illuminant_sweep() -> impl Sweep<Item = f32> {
-    d65_illuminant_sample_iter().into_sweep()
+pub fn f10_illuminant_sweep() -> impl Sweep<Item = f32> {
+    F10_ILLUMINANT
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            (
+                F10_WAVELENGTH_BASE + F10_WAVELENGTH_STEP_SIZE * (i as f32),
+                *v * F10_SAMPLE_NORM,
+            )
+        })
+        .into_sweep()
 }
 
 fn xyz_matching_sample_iter() -> impl Iterator<Item = (f32, Vec3)> {

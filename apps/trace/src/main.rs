@@ -324,14 +324,14 @@ impl App {
                         let rec709_from_xyz = rec709_from_xyz_matrix()
                             * chromatic_adaptation_matrix(
                                 bradford_lms_from_xyz_matrix(),
-                                Illuminant::D65,
-                                renderer_params.observer_illuminant(),
+                                WhitePoint::D65,
+                                renderer_params.observer_white_point(),
                             );
                         let acescg_from_xyz = ap1_from_xyz_matrix()
                             * chromatic_adaptation_matrix(
                                 bradford_lms_from_xyz_matrix(),
-                                Illuminant::D60,
-                                renderer_params.observer_illuminant(),
+                                WhitePoint::D60,
+                                renderer_params.observer_white_point(),
                             );
 
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
@@ -591,14 +591,14 @@ impl CommandlineApp {
                                 let rec709_from_xyz = rec709_from_xyz_matrix()
                                     * chromatic_adaptation_matrix(
                                         bradford_lms_from_xyz_matrix(),
-                                        Illuminant::D65,
-                                        Illuminant::E,
+                                        WhitePoint::D65,
+                                        WhitePoint::E,
                                     );
                                 let acescg_from_xyz = ap1_from_xyz_matrix()
                                     * chromatic_adaptation_matrix(
                                         bradford_lms_from_xyz_matrix(),
-                                        Illuminant::D60,
-                                        Illuminant::E,
+                                        WhitePoint::D60,
+                                        WhitePoint::E,
                                     );
 
                                 let descriptor_set = capture_descriptor_set_layout.write(
@@ -708,7 +708,10 @@ enum SceneDesc {
     /// Import from Tungsten scene.json file
     Tungsten { filename: PathBuf },
     /// Material test scene
-    MaterialTest { ply_filename: PathBuf },
+    MaterialTest {
+        ply_filename: PathBuf,
+        illuminant: Illuminant,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -752,7 +755,10 @@ fn main() {
             import::load_scene(&contents)
         }
         SceneDesc::Tungsten { filename } => tungsten::load_scene(filename, renderer_params.observer_illuminant()),
-        SceneDesc::MaterialTest { ply_filename } => create_material_test_scene(ply_filename),
+        SceneDesc::MaterialTest {
+            ply_filename,
+            illuminant,
+        } => create_material_test_scene(ply_filename, *illuminant),
     };
     if scene.cameras.is_empty() {
         panic!("scene must contain at least one camera!");

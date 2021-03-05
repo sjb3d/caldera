@@ -82,7 +82,7 @@ pub const fn xyz_from_ap1_matrix() -> Mat3 {
 #[allow(clippy::excessive_precision)]
 pub fn derive_aces_fit_matrices() {
     let xyz_from_rec709 = xyz_from_rec709_matrix();
-    let d60_from_d65 = chromatic_adaptation_matrix(bradford_lms_from_xyz_matrix(), Illuminant::D60, Illuminant::D65);
+    let d60_from_d65 = chromatic_adaptation_matrix(bradford_lms_from_xyz_matrix(), WhitePoint::D60, WhitePoint::D65);
     let ap1_from_xyz = ap1_from_xyz_matrix();
 
     // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
@@ -120,31 +120,27 @@ impl ToXYZ for Vec2 {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Illuminant {
+pub enum WhitePoint {
     D60,
     D65,
     E,
     Custom { chroma: Vec2 },
 }
 
-impl Default for Illuminant {
+impl Default for WhitePoint {
     fn default() -> Self {
         Self::D65
     }
 }
 
-impl Illuminant {
-    fn chroma(&self) -> Vec2 {
+impl WhitePoint {
+    fn to_chroma(&self) -> Vec2 {
         match self {
-            Illuminant::D60 => Vec2::new(0.32168, 0.33767),
-            Illuminant::D65 => Vec2::new(0.31270, 0.32900),
-            Illuminant::E => Vec2::new(0.3333, 0.3333),
-            Illuminant::Custom { chroma } => *chroma,
+            Self::D60 => Vec2::new(0.32168, 0.33767),
+            Self::D65 => Vec2::new(0.31270, 0.32900),
+            Self::E => Vec2::new(0.3333, 0.3333),
+            Self::Custom { chroma } => *chroma,
         }
-    }
-
-    fn white(&self) -> Vec3 {
-        self.chroma().to_xyz()
     }
 }
 
@@ -156,8 +152,8 @@ pub const fn bradford_lms_from_xyz_matrix() -> Mat3 {
     )
 }
 
-pub fn chromatic_adaptation_matrix(lms_from_xyz: Mat3, dst: Illuminant, src: Illuminant) -> Mat3 {
-    let dst_lms = lms_from_xyz * dst.white();
-    let src_lms = lms_from_xyz * src.white();
+pub fn chromatic_adaptation_matrix(lms_from_xyz: Mat3, dst: WhitePoint, src: WhitePoint) -> Mat3 {
+    let dst_lms = lms_from_xyz * dst.to_chroma().to_xyz();
+    let src_lms = lms_from_xyz * src.to_chroma().to_xyz();
     lms_from_xyz.inversed() * Mat3::from_nonuniform_scale(dst_lms / src_lms) * lms_from_xyz
 }
