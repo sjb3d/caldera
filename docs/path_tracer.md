@@ -63,7 +63,7 @@ Here is a variation on the classic Veach multiple importance sampling scene, sho
 ![cornell-box_conductor_surfaces-only](trace_cornell-box_conductor_surfaces-only.jpg) ![cornell-box_conductor_lights-only](trace_cornell-box_conductor_lights-only.jpg)
  ![cornell-box_conductor](trace_cornell-box_conductor.jpg)
 
-Here is a test scene for some conductors using data from [refractiveindex.info](https://refractiveindex.info/) for copper, iron and gold under a uniform illuminant:
+Here is a test scene for some conductors using spectral reflectance data from [refractiveindex.info](https://refractiveindex.info/) for copper, iron and gold under a uniform illuminant:
 
 ![trace_material_conductors](trace_material_conductors.jpg)
 
