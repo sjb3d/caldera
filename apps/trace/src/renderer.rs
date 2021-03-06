@@ -807,7 +807,7 @@ pub struct Renderer {
 impl Renderer {
     const PMJ_SEQUENCE_COUNT: u32 = 1024;
 
-    const LOG2_MAX_SAMPLES_PER_SEQUENCE: u32 = 10;
+    const LOG2_MAX_SAMPLES_PER_SEQUENCE: u32 = 12;
     const MAX_SAMPLES_PER_SEQUENCE: u32 = 1 << Self::LOG2_MAX_SAMPLES_PER_SEQUENCE;
 
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
