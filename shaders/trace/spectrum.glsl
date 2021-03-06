@@ -14,7 +14,7 @@ float offset_wavelength(float base, float fraction)
 #define WAVELENGTHS_PER_RAY     3
 #define HERO_VEC                vec3
 
-HERO_VEC expand_wavelengths(float hero_wavelength)
+HERO_VEC expand_wavelengths_from_hero(float hero_wavelength)
 {
     HERO_VEC wavelengths;
     wavelengths.x = hero_wavelength;

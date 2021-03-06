@@ -5,7 +5,7 @@
 
 void get_eta_k(
     sampler1DArray conductors,
-    float hero_wavelength,
+    HERO_VEC wavelengths,
     uint material_index,
     out HERO_VEC eta,
     out HERO_VEC k)
@@ -13,7 +13,7 @@ void get_eta_k(
     const HERO_VEC wavelengths_u = unlerp(
         HERO_VEC(SMITS_WAVELENGTH_MIN),
         HERO_VEC(SMITS_WAVELENGTH_MAX),
-        expand_wavelengths(hero_wavelength));
+        wavelengths);
     const float layer = float(material_index);
     const vec2 eta_k0 = texture(conductors, vec2(wavelengths_u.x, layer)).xy;
     const vec2 eta_k1 = texture(conductors, vec2(wavelengths_u.y, layer)).xy;
@@ -24,7 +24,7 @@ void get_eta_k(
 
 void rough_conductor_bsdf_eval(
     sampler1DArray conductors,
-    float hero_wavelength,
+    HERO_VEC wavelengths,
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
@@ -43,7 +43,7 @@ void rough_conductor_bsdf_eval(
     const float h_dot_v = abs(dot(h, v));
 
     HERO_VEC eta, k;
-    get_eta_k(conductors, hero_wavelength, get_material_index(params), eta, k);
+    get_eta_k(conductors, wavelengths, get_material_index(params), eta, k);
 
     f   = reflectance
         * fresnel_conductor(eta, k, h_dot_v)
@@ -54,7 +54,7 @@ void rough_conductor_bsdf_eval(
 
 void rough_conductor_bsdf_sample(
     sampler1DArray conductors,
-    float hero_wavelength,
+    HERO_VEC wavelengths,
     vec3 out_dir,
     BsdfParams params,
     vec3 bsdf_rand_u01,
@@ -77,7 +77,7 @@ void rough_conductor_bsdf_sample(
     const float h_dot_v = abs(dot(h, v));
 
     HERO_VEC eta, k;
-    get_eta_k(conductors, hero_wavelength, get_material_index(params), eta, k);
+    get_eta_k(conductors, wavelengths, get_material_index(params), eta, k);
 
     estimator
         = reflectance

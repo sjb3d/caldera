@@ -596,6 +596,7 @@ type BoolParam = bool;
 pub enum WavelengthSamplingMethod {
     Uniform,
     HeroMIS,
+    ContinuousMIS,
 }
 
 #[derive(Debug, StructOpt)]
@@ -664,7 +665,7 @@ pub struct RendererParams {
     #[structopt(long, global = true)]
     pub d65_observer: bool,
 
-    #[structopt(long, possible_values=WavelengthSamplingMethod::VARIANTS, default_value = "hero-mis", global = true)]
+    #[structopt(long, possible_values=WavelengthSamplingMethod::VARIANTS, default_value = "continuous-mis", global = true)]
     pub wavelength_sampling_method: WavelengthSamplingMethod,
 }
 
@@ -1972,9 +1973,14 @@ impl Renderer {
                 WavelengthSamplingMethod::Uniform,
             );
             needs_reset |= ui.radio_button(
-                im_str!("HeroMIS"),
+                im_str!("Hero MIS"),
                 &mut self.params.wavelength_sampling_method,
                 WavelengthSamplingMethod::HeroMIS,
+            );
+            needs_reset |= ui.radio_button(
+                im_str!("Continuous MIS"),
+                &mut self.params.wavelength_sampling_method,
+                WavelengthSamplingMethod::ContinuousMIS,
             );
 
             ui.text("Sampling Technique:");

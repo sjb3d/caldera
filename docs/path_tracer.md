@@ -29,6 +29,7 @@ The `trace` app is a spectral path tracer that makes use of Vulkan ray tracing e
 Here are some of the references used when creating the renderer:
 
 * [Hero Wavelength Spectral Sampling](https://cgg.mff.cuni.cz/~wilkie/Website/EGSR_14_files/WNDWH14HWSS.pdf) to associate more than one wavelength with each ray (where possible) for reduced colour noise
+* [Continuous Multiple Importance Sampling](http://iliyan.com/publications/ContinuousMIS) to sample all wavelengths of the ray proportional to the illuminant, to reduce colour noise even more
 * [CIE 1931 Colour Matching Functions](http://cvrl.ioo.ucl.ac.uk/) to convert spectral samples to the XYZ colour space
 * [An RGB to Spectrum Conversion for Reflectances](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.40.9608&rep=rep1&type=pdf) to use Rec709/sRGB colours as reflectance in a spectral renderer
 * [RefractiveIndex.info](https://refractiveindex.info/) for measured material properties for dielectrics and conductors
