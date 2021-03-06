@@ -40,6 +40,9 @@
 #define MIS_HEURISTIC_BALANCE   1
 #define MIS_HEURISTIC_POWER2    2
 
+#define WAVELENGTH_SAMPLING_METHOD_UNIFORM      0
+#define WAVELENGTH_SAMPLING_METHOD_HERO_MIS     1
+
 struct CameraParams {
     mat4x3 world_from_local;
     vec2 fov_size_at_unit_z;
@@ -59,6 +62,7 @@ layout(set = 0, binding = 0, scalar) uniform PathTraceUniforms {
     uint max_segment_count;
     uint mis_heuristic;
     uint sequence_type;
+    uint wavelength_sampling_method;
     uint flags;
 } g_path_trace;
 
@@ -68,7 +72,10 @@ layout(set = 0, binding = 3, rgba32ui) uniform restrict readonly uimage2D g_sobo
 layout(set = 0, binding = 4) uniform sampler1DArray g_illuminants;
 layout(set = 0, binding = 5) uniform sampler1DArray g_conductors;
 layout(set = 0, binding = 6) uniform sampler2D g_smits_table;
-layout(set = 0, binding = 7, r32f) uniform restrict writeonly image2D g_result[WAVELENGTHS_PER_RAY];
+layout(set = 0, binding = 7) uniform sampler1D g_wavelength_inv_cdf;
+layout(set = 0, binding = 8) uniform sampler1D g_wavelength_pdf;
+layout(set = 0, binding = 9) uniform sampler1D g_xyz_matching;
+layout(set = 0, binding = 10, r32f) uniform restrict writeonly image2D g_result[3];
 
 #define LOG2_EPSILON_FACTOR     (-18)
 
@@ -338,13 +345,26 @@ void main()
     HERO_VEC prev_sample;
     float path_max_roughness;
 
-    // pick a wavelength
+    // pick wavelengths for this ray
     float hero_wavelength;
     float wavelength_pdf;
     {
         const vec4 wavelength_rand_u01 = rand_u01(0);
-        hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength_rand_u01.x);
-        wavelength_pdf = WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
+        switch (g_path_trace.wavelength_sampling_method) {
+            case WAVELENGTH_SAMPLING_METHOD_UNIFORM: {
+                hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength_rand_u01.x);
+                wavelength_pdf = WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN);
+            } break;
+            case WAVELENGTH_SAMPLING_METHOD_HERO_MIS: {
+                hero_wavelength = texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x;
+                const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
+                wavelength_pdf
+                    = texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x
+                    + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x
+                    + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x
+                    ;
+            } break;
+        }
     }
 
     // sample the camera
@@ -615,7 +635,14 @@ void main()
         }
     }
 
-    imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.x, vec3(0.f)));
-    imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.y, vec3(0.f)));
-    imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result_sum.z, vec3(0.f)));
+    // save out in XYZ
+    const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
+    const vec3 result
+        = result_sum.x*texture(g_xyz_matching, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).xyz
+        + result_sum.y*texture(g_xyz_matching, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).xyz
+        + result_sum.z*texture(g_xyz_matching, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).xyz
+        ;
+    imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result.x, vec3(0.f)));
+    imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result.y, vec3(0.f)));
+    imageStore(g_result[2], ivec2(gl_LaunchIDEXT.xy), vec4(result.z, vec3(0.f)));
 }

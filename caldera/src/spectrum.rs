@@ -486,34 +486,73 @@ const CIE_SAMPLES: &[Vec3] = &cie_samples!(
 );
 const CIE_SAMPLE_NORM: f32 = 1.0 / 106.856834;
 
+pub struct RegularlySampledIlluminant {
+    pub samples: &'static [f32],
+    pub sample_norm: f32,
+    pub wavelength_base: f32,
+    pub wavelength_step_size: f32,
+}
+
+impl RegularlySampledIlluminant {
+    pub fn iter(self) -> impl Iterator<Item = (f32, f32)> {
+        self.samples.iter().enumerate().map(move |(i, v)| {
+            (
+                self.wavelength_base + self.wavelength_step_size * (i as f32),
+                v * self.sample_norm,
+            )
+        })
+    }
+}
+
+pub const E_ILLUMINANT: RegularlySampledIlluminant = RegularlySampledIlluminant {
+    samples: &[1.0, 1.0],
+    sample_norm: 1.0,
+    wavelength_base: 300.0,
+    wavelength_step_size: 500.0,
+};
+
 // from https://en.wikipedia.org/wiki/Illuminant_D65
-const D65_WAVELENGTH_BASE: f32 = 300.0;
-const D65_WAVELENGTH_STEP_SIZE: f32 = 10.0;
-const D65_ILLUMINANT: &[f32] = &[
+const D65_ILLUMINANT_SAMPLES: &[f32] = &[
     0.034100, 3.294500, 20.236000, 37.053500, 39.948800, 44.911700, 46.638300, 52.089100, 49.975500, 54.648200,
     82.754900, 91.486000, 93.431800, 86.682300, 104.865000, 117.008000, 117.812000, 114.861000, 115.923000, 108.811000,
     109.354000, 107.802000, 104.790000, 107.689000, 104.405000, 104.046000, 100.000000, 96.334200, 95.788000,
     88.685600, 90.006200, 89.599100, 87.698700, 83.288600, 83.699200, 80.026800, 80.214600, 82.277800, 78.284200,
     69.721300, 71.609100, 74.349000, 61.604000, 69.885600, 75.087000, 63.592700, 46.418200, 66.805400, 63.382800,
 ];
-const D65_SAMPLE_NORM: f32 = 0.01;
+pub const D65_ILLUMINANT: RegularlySampledIlluminant = RegularlySampledIlluminant {
+    samples: D65_ILLUMINANT_SAMPLES,
+    sample_norm: 0.01,
+    wavelength_base: 300.0,
+    wavelength_step_size: 10.0,
+};
 
 // from https://www.rit.edu/cos/colorscience/rc_useful_data.php
-const F10_WAVELENGTH_BASE: f32 = 380.0;
-const F10_WAVELENGTH_STEP_SIZE: f32 = 5.0;
-const F10_ILLUMINANT: &[f32] = &[
+const F10_ILLUMINANT_SAMPLES: &[f32] = &[
     1.11, 0.63, 0.62, 0.57, 1.48, 12.16, 2.12, 2.7, 3.74, 5.14, 6.75, 34.39, 14.86, 10.4, 10.76, 10.67, 10.11, 9.27,
     8.29, 7.29, 7.91, 16.64, 16.73, 10.44, 5.94, 3.34, 2.35, 1.88, 1.59, 1.47, 1.8, 5.71, 40.98, 73.69, 33.61, 8.24,
     3.38, 2.47, 2.14, 4.86, 11.45, 14.79, 12.16, 8.97, 6.52, 8.81, 44.12, 34.55, 12.09, 12.15, 10.52, 4.43, 1.95, 2.19,
     3.19, 2.77, 2.29, 2.0, 1.52, 1.35, 1.47, 1.79, 1.74, 1.02, 1.14, 3.32, 4.49, 2.05, 0.49, 0.24, 0.21, 0.21, 0.24,
     0.24, 0.21, 0.17, 0.21, 0.22, 0.17, 0.12, 0.09,
 ];
-const F10_SAMPLE_NORM: f32 = 0.1;
+pub const F10_ILLUMINANT: RegularlySampledIlluminant = RegularlySampledIlluminant {
+    samples: F10_ILLUMINANT_SAMPLES,
+    sample_norm: 0.1,
+    wavelength_base: 380.0,
+    wavelength_step_size: 5.0,
+};
 
 pub trait Sweep {
     type Item;
 
     fn next(&mut self, input: f32) -> Self::Item;
+
+    fn map<U, F>(self, f: F) -> SweepMap<Self::Item, U, Self, F>
+    where
+        Self: Sized,
+        F: Fn(Self::Item) -> U,
+    {
+        SweepMap { a: self, f }
+    }
 
     fn product<U>(self, other: U) -> SweepProduct<Self::Item, Self, U>
     where
@@ -521,7 +560,7 @@ pub trait Sweep {
         U: Sweep<Item = Self::Item>,
         Self::Item: Mul<Output = Self::Item>,
     {
-        SweepProduct::new(self, other)
+        SweepProduct { a: self, b: other }
     }
 }
 
@@ -594,6 +633,27 @@ where
     }
 }
 
+pub struct SweepMap<T, U, A, F>
+where
+    A: Sweep<Item = T>,
+    F: Fn(T) -> U,
+{
+    a: A,
+    f: F,
+}
+
+impl<T, U, A, F> Sweep for SweepMap<T, U, A, F>
+where
+    A: Sweep<Item = T>,
+    F: Fn(T) -> U,
+{
+    type Item = U;
+    fn next(&mut self, input: f32) -> U {
+        let t = self.a.next(input);
+        (self.f)(t)
+    }
+}
+
 pub struct SweepProduct<T, A, B>
 where
     A: Sweep<Item = T>,
@@ -602,17 +662,6 @@ where
 {
     a: A,
     b: B,
-}
-
-impl<T, A, B> SweepProduct<T, A, B>
-where
-    A: Sweep<Item = T>,
-    B: Sweep<Item = T>,
-    T: Mul<Output = T>,
-{
-    fn new(a: A, b: B) -> Self {
-        Self { a, b }
-    }
 }
 
 impl<T, A, B> Sweep for SweepProduct<T, A, B>
@@ -643,32 +692,6 @@ where
     fn into_sweep(self) -> Self::IntoType {
         SampleSweep::new(self)
     }
-}
-
-pub fn d65_illuminant_sweep() -> impl Sweep<Item = f32> {
-    D65_ILLUMINANT
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            (
-                D65_WAVELENGTH_BASE + D65_WAVELENGTH_STEP_SIZE * (i as f32),
-                *v * D65_SAMPLE_NORM,
-            )
-        })
-        .into_sweep()
-}
-
-pub fn f10_illuminant_sweep() -> impl Sweep<Item = f32> {
-    F10_ILLUMINANT
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            (
-                F10_WAVELENGTH_BASE + F10_WAVELENGTH_STEP_SIZE * (i as f32),
-                *v * F10_SAMPLE_NORM,
-            )
-        })
-        .into_sweep()
 }
 
 fn xyz_matching_sample_iter() -> impl Iterator<Item = (f32, Vec3)> {

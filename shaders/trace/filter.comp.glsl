@@ -24,9 +24,8 @@ layout(set = 0, binding = 0, scalar) uniform FilterData {
 
 layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2D g_pmj_samples;
 layout(set = 0, binding = 2, rgba32ui) uniform restrict readonly uimage2D g_sobol_samples;
-layout(set = 0, binding = 3) uniform sampler1D g_xyz_from_wavelength;
-layout(set = 0, binding = 4, r32f) uniform restrict readonly image2D g_input[WAVELENGTHS_PER_RAY];
-layout(set = 0, binding = 5, rgba32f) uniform restrict image2D g_result;
+layout(set = 0, binding = 3, r32f) uniform restrict readonly image2D g_input[3];
+layout(set = 0, binding = 4, rgba32f) uniform restrict image2D g_result;
 
 #include "sequence.glsl"
 
@@ -81,19 +80,9 @@ void main()
         const uvec2 load_coord = tile_coord_base + uvec2(local_x, local_y);
         vec3 value = vec3(0.f);
         if (all(lessThan(load_coord, g_filter.image_size))) {
-            vec3 samples;
-            samples.x = imageLoad(g_input[0], ivec2(load_coord)).x;
-            samples.y = imageLoad(g_input[1], ivec2(load_coord)).x;
-            samples.z = imageLoad(g_input[2], ivec2(load_coord)).x;
-
-            const vec4 pixel_rand_u01 = rand_u01(load_coord, 0);
-            const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, pixel_rand_u01.x);
-            const HERO_VEC wavelengths = expand_wavelengths(hero_wavelength);
-            value
-                = samples.x*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).xyz
-                + samples.y*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).xyz
-                + samples.z*texture(g_xyz_from_wavelength, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).xyz
-                ;
+            value.x = imageLoad(g_input[0], ivec2(load_coord)).x;
+            value.y = imageLoad(g_input[1], ivec2(load_coord)).x;
+            value.z = imageLoad(g_input[2], ivec2(load_coord)).x;
         }
         s_tile_r[raster_index] = value.x;
         s_tile_g[raster_index] = value.y;

@@ -183,7 +183,9 @@ struct PathTraceUniforms {
     max_segment_count: u32,
     mis_heuristic: u32,
     sequence_type: u32,
+    wavelength_sampling_method: u32,
     flags: PathTraceFlags,
+    _pad: u32,
 }
 
 #[repr(C)]
@@ -201,6 +203,9 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     illuminants: SampledImage,
     conductors: SampledImage,
     smits_table: SampledImage,
+    wavelength_inv_cdf: SampledImage,
+    wavelength_pdf: SampledImage,
+    xyz_matching: SampledImage,
     result: [StorageImage; 3],
 });
 
@@ -563,9 +568,9 @@ impl Drop for TextureBindingSet {
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
 pub enum ToneMapMethod {
-    None = 0,
-    FilmicSrgb = 1,
-    AcesFit = 2,
+    None,
+    FilmicSrgb,
+    AcesFit,
 }
 
 #[repr(u32)]
@@ -585,6 +590,13 @@ pub fn try_bool_from_str(s: &str) -> Result<bool, String> {
 }
 
 type BoolParam = bool;
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
+pub enum WavelengthSamplingMethod {
+    Uniform,
+    HeroMIS,
+}
 
 #[derive(Debug, StructOpt)]
 pub struct RendererParams {
@@ -651,6 +663,9 @@ pub struct RendererParams {
 
     #[structopt(long, global = true)]
     pub d65_observer: bool,
+
+    #[structopt(long, possible_values=WavelengthSamplingMethod::VARIANTS, default_value = "hero-mis", global = true)]
+    pub wavelength_sampling_method: WavelengthSamplingMethod,
 }
 
 impl RendererParams {
@@ -688,7 +703,6 @@ descriptor_set_layout!(FilterDescriptorSetLayout {
     data: UniformData<FilterData>,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
-    xyz_from_wavelength: SampledImage,
     input: [StorageImage; 3],
     result: StorageImage,
 });
@@ -798,7 +812,9 @@ pub struct Renderer {
     smits_table_image: StaticImageHandle,
     illuminants_image: StaticImageHandle,
     conductors_image: StaticImageHandle,
-    xyz_from_wavelength_image: StaticImageHandle,
+    wavelength_inv_cdf_image: StaticImageHandle,
+    wavelength_pdf_image: StaticImageHandle,
+    xyz_matching_image: StaticImageHandle,
     result_image: ImageHandle,
 
     pub params: RendererParams,
@@ -1059,9 +1075,12 @@ impl Renderer {
 
         let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(
             descriptor_set_layout_cache,
-            clamp_linear_sampler,
-            clamp_linear_sampler,
-            clamp_point_sampler,
+            clamp_linear_sampler, // illuminants
+            clamp_linear_sampler, // conductors
+            clamp_point_sampler,  // smits_table
+            clamp_linear_sampler, // wavelength_inv_cdf
+            clamp_point_sampler,  // wavelength_pdf
+            clamp_linear_sampler, // xyz_matching
         );
         let texture_binding_set = TextureBindingSet::new(context, texture_images);
         let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_multi_layout(&[
@@ -1109,8 +1128,7 @@ impl Renderer {
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
 
-        let filter_descriptor_set_layout =
-            FilterDescriptorSetLayout::new(descriptor_set_layout_cache, clamp_linear_sampler);
+        let filter_descriptor_set_layout = FilterDescriptorSetLayout::new(descriptor_set_layout_cache);
         let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
 
         let pmj_samples_image = resource_loader.create_image();
@@ -1197,6 +1215,13 @@ impl Renderer {
         const WAVELENGTH_MIN: u32 = 380;
         const WAVELENGTH_MAX: u32 = 720;
 
+        let illuminant_samples = |illuminant: Illuminant| match illuminant {
+            Illuminant::E => E_ILLUMINANT,
+            Illuminant::CornellBox => CORNELL_BOX_ILLUMINANT,
+            Illuminant::D65 => D65_ILLUMINANT,
+            Illuminant::F10 => F10_ILLUMINANT,
+        };
+
         const ILLUMINANT_RESOLUTION: u32 = 5;
         const ILLUMINANT_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / ILLUMINANT_RESOLUTION;
         let illuminants_image = resource_loader.create_image();
@@ -1217,26 +1242,10 @@ impl Renderer {
 
             assert_eq!(Illuminant::E.into_integer(), 0);
             for i in 1..=Illuminant::MAX_VALUE {
-                match Illuminant::from_integer(i).unwrap() {
-                    Illuminant::E => unreachable!(),
-                    Illuminant::CornellBox => {
-                        let mut sweep = CORNELL_BOX_LIGHT_SAMPLES.iter().cloned().into_sweep();
-                        for wavelength in (0..ILLUMINANT_PIXEL_COUNT).map(wavelength_from_index) {
-                            writer.write(&sweep.next(wavelength));
-                        }
-                    }
-                    Illuminant::D65 => {
-                        let mut sweep = d65_illuminant_sweep();
-                        for wavelength in (0..ILLUMINANT_PIXEL_COUNT).map(wavelength_from_index) {
-                            writer.write(&sweep.next(wavelength));
-                        }
-                    }
-                    Illuminant::F10 => {
-                        let mut sweep = f10_illuminant_sweep();
-                        for wavelength in (0..ILLUMINANT_PIXEL_COUNT).map(wavelength_from_index) {
-                            writer.write(&sweep.next(wavelength));
-                        }
-                    }
+                let samples = illuminant_samples(Illuminant::from_integer(i).unwrap());
+                let mut sweep = samples.iter().into_sweep();
+                for wavelength in (0..ILLUMINANT_PIXEL_COUNT).map(wavelength_from_index) {
+                    writer.write(&sweep.next(wavelength));
                 }
             }
         });
@@ -1296,7 +1305,85 @@ impl Renderer {
             }
         });
 
-        let xyz_from_wavelength_image = resource_loader.create_image();
+        // HACK: use the first illuminant in the scene as the pdf for wavelength sampling
+        let illuminant_for_pdf = scene
+            .instances
+            .iter()
+            .find_map(|instance| {
+                scene
+                    .material(instance.material_ref)
+                    .emission
+                    .map(|emission| emission.illuminant)
+            })
+            .or_else(|| {
+                scene.lights.iter().map(|light| match light {
+                Light::Dome { emission } => emission,
+                Light::SolidAngle { emission, .. } => emission,
+            }.illuminant).next()
+            })
+            .unwrap_or(Illuminant::E);
+
+        const WAVELENGTH_SAMPLER_RESOLUTION: u32 = 1024;
+        let wavelength_inv_cdf_image = resource_loader.create_image();
+        let wavelength_pdf_image = resource_loader.create_image();
+        resource_loader.async_load(move |allocator| {
+            let mut sweep = illuminant_samples(illuminant_for_pdf).iter().into_sweep();
+            let mut prob_samples: Vec<_> = (WAVELENGTH_MIN..=WAVELENGTH_MAX)
+                .map(|wavelength| {
+                    let wavelength = wavelength as f32;
+                    (wavelength, sweep.next(wavelength))
+                })
+                .collect();
+
+            let pdf_desc = ImageDesc::new_1d(
+                WAVELENGTH_MAX - WAVELENGTH_MIN,
+                vk::Format::R32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let mut writer = allocator
+                .map_image(wavelength_pdf_image, &pdf_desc, ImageUsage::RAY_TRACING_SAMPLED)
+                .unwrap();
+
+            let prob_sum = prob_samples.iter().map(|(_, p)| p).sum::<f32>();
+            let uniform_prob = 1.0 / ((WAVELENGTH_MAX - WAVELENGTH_MIN) as f32);
+            for (_, p) in prob_samples.iter_mut() {
+                *p = (*p / prob_sum) * 0.99 + uniform_prob * 0.01;
+            }
+
+            let mut prob_sweep = prob_samples.iter().cloned().into_sweep();
+            for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
+                let pdf: f32 = prob_sweep.next((wavelength as f32) + 0.5);
+                writer.write(&pdf);
+            }
+
+            let mut cdf_acc = 0.0;
+            let cdf_samples: Vec<_> = prob_samples
+                .iter()
+                .map(|(w, p)| {
+                    let cdf = cdf_acc;
+                    cdf_acc += p;
+                    (cdf, *w)
+                })
+                .collect();
+
+            let inv_cdf_desc = ImageDesc::new_1d(
+                WAVELENGTH_SAMPLER_RESOLUTION,
+                vk::Format::R32_SFLOAT,
+                vk::ImageAspectFlags::COLOR,
+            );
+            let mut writer = allocator
+                .map_image(wavelength_inv_cdf_image, &inv_cdf_desc, ImageUsage::RAY_TRACING_SAMPLED)
+                .unwrap();
+
+            let mut cdf_sweep = cdf_samples.iter().cloned().into_sweep();
+            for i in 0..WAVELENGTH_SAMPLER_RESOLUTION {
+                let p = ((i as f32) + 0.5) / (WAVELENGTH_SAMPLER_RESOLUTION as f32);
+                let wavelength: f32 = cdf_sweep.next(p);
+                writer.write(&wavelength);
+            }
+        });
+
+        let xyz_matching_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
             let desc = ImageDesc::new_1d(
                 WAVELENGTH_MAX - WAVELENGTH_MIN,
@@ -1304,7 +1391,7 @@ impl Renderer {
                 vk::ImageAspectFlags::COLOR,
             );
             let mut writer = allocator
-                .map_image(xyz_from_wavelength_image, &desc, ImageUsage::COMPUTE_SAMPLED)
+                .map_image(xyz_matching_image, &desc, ImageUsage::COMPUTE_SAMPLED)
                 .unwrap();
 
             let mut sweep = xyz_matching_sweep();
@@ -1345,7 +1432,9 @@ impl Renderer {
             smits_table_image,
             illuminants_image,
             conductors_image,
-            xyz_from_wavelength_image,
+            wavelength_inv_cdf_image,
+            wavelength_pdf_image,
+            xyz_matching_image,
             result_image,
             params,
         }
@@ -1876,6 +1965,18 @@ impl Renderer {
             needs_reset |= ui.radio_button(im_str!("PMJ"), &mut self.params.sequence_type, SequenceType::Pmj);
             needs_reset |= ui.radio_button(im_str!("Sobol"), &mut self.params.sequence_type, SequenceType::Sobol);
 
+            ui.text("Wavelength Sampling Method:");
+            needs_reset |= ui.radio_button(
+                im_str!("Uniform"),
+                &mut self.params.wavelength_sampling_method,
+                WavelengthSamplingMethod::Uniform,
+            );
+            needs_reset |= ui.radio_button(
+                im_str!("HeroMIS"),
+                &mut self.params.wavelength_sampling_method,
+                WavelengthSamplingMethod::HeroMIS,
+            );
+
             ui.text("Sampling Technique:");
             needs_reset |= ui.radio_button(
                 im_str!("Lights Only"),
@@ -2014,7 +2115,9 @@ impl Renderer {
         let illuminants_image_view = resource_loader.get_image_view(self.illuminants_image)?;
         let conductors_image_view = resource_loader.get_image_view(self.conductors_image)?;
         let smits_table_image_view = resource_loader.get_image_view(self.smits_table_image)?;
-        let xyz_from_wavelength_image_view = resource_loader.get_image_view(self.xyz_from_wavelength_image)?;
+        let wavelength_inv_cdf_image_view = resource_loader.get_image_view(self.wavelength_inv_cdf_image)?;
+        let wavelength_pdf_image_view = resource_loader.get_image_view(self.wavelength_pdf_image)?;
+        let xyz_matching_image_view = resource_loader.get_image_view(self.xyz_matching_image)?;
 
         // do a pass
         if !progress.done(&self.params) {
@@ -2114,7 +2217,9 @@ impl Renderer {
                                     max_segment_count: self.params.max_bounces + 2,
                                     mis_heuristic: self.params.mis_heuristic.into_integer(),
                                     sequence_type: self.params.sequence_type.into_integer(),
+                                    wavelength_sampling_method: self.params.wavelength_sampling_method.into_integer(),
                                     flags: path_trace_flags,
+                                    _pad: 0,
                                 }
                             },
                             top_level_accel,
@@ -2123,6 +2228,9 @@ impl Renderer {
                             illuminants_image_view,
                             conductors_image_view,
                             smits_table_image_view,
+                            wavelength_inv_cdf_image_view,
+                            wavelength_pdf_image_view,
+                            xyz_matching_image_view,
                             &temp_image_views,
                         );
 
@@ -2206,7 +2314,6 @@ impl Renderer {
                             },
                             pmj_samples_image_view,
                             sobol_samples_image_view,
-                            xyz_from_wavelength_image_view,
                             &temp_image_views,
                             result_image_view,
                         );

@@ -445,13 +445,12 @@ const CORNELL_BOX_RED_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
     (700.0, 0.642)
 );
 #[rustfmt::skip]
-pub const CORNELL_BOX_LIGHT_SAMPLES: &[(f32, f32)] = &spectrum_samples!(
-    (400.0,  0.0),
-    (500.0,  8.0),
-    (600.0, 15.6),
-    (700.0, 18.4),
-    (800.0,  0.0)
-);
+pub const CORNELL_BOX_ILLUMINANT: RegularlySampledIlluminant = RegularlySampledIlluminant {
+    samples: &[0.0, 8.0, 15.6, 18.4, 0.0],
+    sample_norm: 1.0,
+    wavelength_base: 400.0,
+    wavelength_step_size: 100.0,
+};
 
 #[derive(Debug, EnumFromStr)]
 pub enum CornellBoxVariant {
@@ -588,17 +587,17 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
     let white_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
             CORNELL_BOX_WHITE_SAMPLES.iter().cloned().into_sweep(),
-            d65_illuminant_sweep(),
+            D65_ILLUMINANT.iter().into_sweep(),
         );
     let red_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
             CORNELL_BOX_RED_SAMPLES.iter().cloned().into_sweep(),
-            d65_illuminant_sweep(),
+            D65_ILLUMINANT.iter().into_sweep(),
         );
     let green_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
             CORNELL_BOX_GREEN_SAMPLES.iter().cloned().into_sweep(),
-            d65_illuminant_sweep(),
+            D65_ILLUMINANT.iter().into_sweep(),
         );
 
     let white_material = scene.add_material(Material {
