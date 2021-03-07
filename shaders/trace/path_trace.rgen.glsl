@@ -90,6 +90,46 @@ vec4 rand_u01(uint seq_index)
 EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
 
+HERO_VEC sample_wavelengths(out HERO_VEC pdfs)
+{
+    const vec4 wavelength_rand_u01 = rand_u01(0);
+    HERO_VEC wavelengths;
+    switch (g_path_trace.wavelength_sampling_method) {
+        case WAVELENGTH_SAMPLING_METHOD_UNIFORM: {
+            const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength_rand_u01.x);
+            wavelengths = expand_wavelengths_from_hero(hero_wavelength);
+            pdfs = HERO_VEC(WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN));
+        } break;
+        case WAVELENGTH_SAMPLING_METHOD_HERO_MIS: {
+            const float hero_wavelength = texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x;
+            wavelengths = expand_wavelengths_from_hero(hero_wavelength);
+            pdfs = HERO_VEC(
+                    texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x
+                + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x
+                + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x
+            );
+        } break;
+        case WAVELENGTH_SAMPLING_METHOD_CONTINUOUS_MIS: {
+            // offset a single sample for stratification (rather than using x/y/z)
+            wavelengths = HERO_VEC(
+                texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x,
+                texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 1.f/WAVELENGTHS_PER_RAY)).x,
+                texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 2.f/WAVELENGTHS_PER_RAY)).x);
+            /*
+                We are taking some shortcuts here due to the path pdf not being wavelength-dependent yet.
+                This let us compute the weight ahead of time using only the wavelength pdf.
+                This will need revisiting to track some terms per-wavelength once refraction
+                is implemented properly.
+            */
+            pdfs = WAVELENGTHS_PER_RAY*HERO_VEC(
+                texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x,
+                texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x,
+                texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x);
+        } break;
+    }
+    return wavelengths;
+}
+
 HERO_VEC illuminant(HERO_VEC wavelengths, uint index, vec3 tint)
 {
     HERO_VEC power;
@@ -346,44 +386,8 @@ void main()
     float path_max_roughness;
 
     // pick wavelengths for this ray
-    HERO_VEC wavelengths;
     HERO_VEC wavelength_pdfs;
-    {
-        const vec4 wavelength_rand_u01 = rand_u01(0);
-        switch (g_path_trace.wavelength_sampling_method) {
-            case WAVELENGTH_SAMPLING_METHOD_UNIFORM: {
-                const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength_rand_u01.x);
-                wavelengths = expand_wavelengths_from_hero(hero_wavelength);
-                wavelength_pdfs = HERO_VEC(WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN));
-            } break;
-            case WAVELENGTH_SAMPLING_METHOD_HERO_MIS: {
-                const float hero_wavelength = texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x;
-                wavelengths = expand_wavelengths_from_hero(hero_wavelength);
-                wavelength_pdfs = HERO_VEC(
-                      texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x
-                    + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x
-                    + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x
-                );
-            } break;
-            case WAVELENGTH_SAMPLING_METHOD_CONTINUOUS_MIS: {
-                // offset a single sample for stratification (rather than using x/y/z)
-                wavelengths = HERO_VEC(
-                    texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x,
-                    texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 1.f/WAVELENGTHS_PER_RAY)).x,
-                    texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 2.f/WAVELENGTHS_PER_RAY)).x);
-                /*
-                    We are taking some shortcuts here due to the path pdf not being wavelength-dependent yet.
-                    This let us compute the weight ahead of time using only the wavelength pdf.
-                    This will need revisiting to track some terms per-wavelength once refraction
-                    is implemented properly.
-                */
-                wavelength_pdfs = WAVELENGTHS_PER_RAY*HERO_VEC(
-                    texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x,
-                    texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x,
-                    texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x);
-            } break;
-        }
-    }
+    const HERO_VEC wavelengths = sample_wavelengths(wavelength_pdfs);
 
     // sample the camera
     {
