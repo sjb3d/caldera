@@ -119,7 +119,10 @@ IMAGES=\
 	docs/trace_cornell-box_conductor.jpg \
 	docs/trace_cornell-box_conductor_surfaces-only.jpg \
 	docs/trace_cornell-box_conductor_lights-only.jpg \
-	docs/trace_material_conductors.jpg
+	docs/trace_material_conductors.jpg \
+	docs/trace_material_gold_f10_uniform.jpg \
+	docs/trace_material_gold_f10_hero.jpg \
+	docs/trace_material_gold_f10_continuous.jpg
 
 clean-images:
 	$(RM) $(IMAGES)
@@ -166,4 +169,13 @@ docs/trace_cornell-box_conductor_lights-only.%: shaders Makefile
 	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique lights-only cornell-box conductor
 
 docs/trace_material_conductors.%: shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply e
+	$(TRACE) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply conductors e
+
+docs/trace_material_gold_f10_uniform.%: shaders Makefile
+	$(TRACE) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method uniform material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
+
+docs/trace_material_gold_f10_hero.%: shaders Makefile
+	$(TRACE) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method hero-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
+
+docs/trace_material_gold_f10_continuous.%: shaders Makefile
+	$(TRACE) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method continuous-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10

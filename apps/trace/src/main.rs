@@ -696,6 +696,12 @@ impl CommandlineApp {
     }
 }
 
+#[derive(Debug, EnumFromStr)]
+enum MaterialTestVariant {
+    Conductors,
+    Gold,
+}
+
 #[derive(Debug, StructOpt)]
 enum SceneDesc {
     /// Load a cornell box scene
@@ -710,6 +716,8 @@ enum SceneDesc {
     /// Material test scene
     MaterialTest {
         ply_filename: PathBuf,
+        #[structopt(possible_values=&MaterialTestVariant::VARIANTS)]
+        variant: MaterialTestVariant,
         illuminant: Illuminant,
     },
 }
@@ -757,8 +765,31 @@ fn main() {
         SceneDesc::Tungsten { filename } => tungsten::load_scene(filename, renderer_params.observer_illuminant()),
         SceneDesc::MaterialTest {
             ply_filename,
+            variant,
             illuminant,
-        } => create_material_test_scene(ply_filename, *illuminant),
+        } => {
+            let surfaces: &[Surface] = match variant {
+                MaterialTestVariant::Conductors => &[
+                    Surface::RoughConductor {
+                        conductor: Conductor::Gold,
+                        roughness: 0.2,
+                    },
+                    Surface::RoughConductor {
+                        conductor: Conductor::Iron,
+                        roughness: 0.2,
+                    },
+                    Surface::RoughConductor {
+                        conductor: Conductor::Copper,
+                        roughness: 0.2,
+                    },
+                ],
+                MaterialTestVariant::Gold => &[Surface::RoughConductor {
+                    conductor: Conductor::Gold,
+                    roughness: 0.2,
+                }],
+            };
+            create_material_test_scene(ply_filename, surfaces, *illuminant)
+        }
     };
     if scene.cameras.is_empty() {
         panic!("scene must contain at least one camera!");

@@ -53,7 +53,7 @@ The following crates have been super useful in making the app:
 * [stb](https://crates.io/crates/stb): rust API for the [stb libraries](https://github.com/nothings/stb), used for image IO and BC compression
 * [winit](https://crates.io/crates/winit): cross platform windowing and events
 
-## Gallery
+## Test Images
 
 As is tradition, here are some boxes under a couple of different lighting conditions (original [Cornell box](https://www.graphics.cornell.edu/online/box/data.html) data, and a variant with a mirror material and distant lights).
 
@@ -64,9 +64,15 @@ Here is a variation on the classic Veach multiple importance sampling scene, sho
 ![cornell-box_conductor_surfaces-only](trace_cornell-box_conductor_surfaces-only.jpg) ![cornell-box_conductor_lights-only](trace_cornell-box_conductor_lights-only.jpg)
  ![cornell-box_conductor](trace_cornell-box_conductor.jpg)
 
-Here is a test scene for some conductors using spectral reflectance data from [refractiveindex.info](https://refractiveindex.info/) for copper, iron and gold under a uniform illuminant:
+Here is a test scene for some conductors using spectral reflectance data from [refractiveindex.info](https://refractiveindex.info/) for copper, iron and gold under a uniform illuminant (the colours are entirely from the reflectance data, there is no additional tinting).
 
 ![trace_material_conductors](trace_material_conductors.jpg)
+
+If we change the illuminant to F10 (which has a very spiky distribution), we can check the effect that wavelength importance sampling has on colour noise. The following images use gold lit with F10, all with 8 paths per pixel and 3 wavelengths per path. The first image samples wavelengths uniformly, the second samples only the hero wavelength for that path proportional to F10, the third image samples all wavelengths for that path proportional to F10 (reproducing part of the result of Continuous Importance Sampling):
+
+![trace_material_gold_f10_uniform](trace_material_gold_f10_uniform.jpg) ![trace_material_gold_f10_hero](trace_material_gold_f10_hero.jpg) ![trace_material_gold_f10_continuous](trace_material_gold_f10_continuous.jpg)
+
+## Gallery
 
 The next set of images are rendered from these excellent [rendering resources](https://benedikt-bitterli.me/resources/) by Benedikt Bitterli and [blendswap.com](https://blendswap.com/) artists nacimus, Wig42, cekuhnen, Jay-Artist, thecali, NewSee2l035 and aXel.
 
@@ -107,4 +113,4 @@ There is a barely started exporter for Blender, but support for materials beyond
 - [ ] Microfacet multi-scattering?
 - [ ] Path re-use?
 - [x] Spectral rendering?
-- [ ] Spiky illuminants
+- [x] Spiky illuminants (F10)

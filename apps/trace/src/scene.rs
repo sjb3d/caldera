@@ -842,7 +842,7 @@ pub fn load_ply(filename: &Path) -> Geometry {
     }
 }
 
-pub fn create_material_test_scene(ply_filename: &Path, illuminant: Illuminant) -> Scene {
+pub fn create_material_test_scene(ply_filename: &Path, surfaces: &[Surface], illuminant: Illuminant) -> Scene {
     let mut scene = Scene::default();
 
     let eps = 0.001;
@@ -882,25 +882,21 @@ pub fn create_material_test_scene(ply_filename: &Path, illuminant: Illuminant) -
     let max_half_extent = half_extent.component_max();
     let y_offset = half_extent.y / max_half_extent;
     let spacing = 1.5;
-    for i in 0..3 {
+    for (i, surface) in surfaces.iter().enumerate() {
         let object_transform = scene.add_transform(Transform {
             world_from_local: Similarity3::new(
-                Vec3::new(((i as f32) - 1.0) * spacing, y_offset - centre.y / max_half_extent, 0.0),
+                Vec3::new(
+                    ((i as f32) - (surfaces.len() as f32 - 1.0) * 0.5) * spacing,
+                    y_offset - centre.y / max_half_extent,
+                    0.0,
+                ),
                 Rotor3::from_rotation_xz(0.75 * PI),
                 1.0 / max_half_extent,
             ),
         });
         let object_material = scene.add_material(Material {
             reflectance: Reflectance::Constant(Vec3::one()),
-            surface: Surface::RoughConductor {
-                conductor: match i {
-                    0 => Conductor::Gold,
-                    1 => Conductor::Iron,
-                    2 => Conductor::Copper,
-                    _ => panic!("unexpected index"),
-                },
-                roughness: 0.2,
-            },
+            surface: *surface,
             emission: None,
         });
         scene.add_instance(Instance::new(object_transform, object_geometry, object_material));
@@ -934,9 +930,10 @@ pub fn create_material_test_scene(ply_filename: &Path, illuminant: Illuminant) -
     });
 
     let camera_orientation = Rotor3::from_rotation_xz(-PI / 16.0) * Rotor3::from_rotation_yz(PI / 8.0);
+    let distance = 5.5 + 1.0*((surfaces.len() - 1) as f32);
     scene.add_camera(Camera::Pinhole {
         world_from_camera: Similarity3::new(
-            Vec3::new(0.0, y_offset, 0.0) + camera_orientation * Vec3::new(0.0, 0.0, -7.5),
+            Vec3::new(0.0, y_offset, 0.0) + camera_orientation * Vec3::new(0.0, 0.0, -distance),
             camera_orientation,
             1.0,
         ),
