@@ -14,7 +14,6 @@ INC=\
 	common/tone_map.glsl \
 	trace/bsdf_common.glsl \
 	trace/diffuse_bsdf.glsl \
-	trace/disc_common.glsl \
 	trace/disc_light.glsl \
 	trace/dome_light.glsl \
 	trace/extend_common.glsl \
@@ -28,7 +27,6 @@ INC=\
 	trace/sequence.glsl \
 	trace/solid_angle_light.glsl \
 	trace/spectrum.glsl \
-	trace/sphere_common.glsl \
 	trace/sphere_light.glsl \
 	trace/smooth_dielectric_bsdf.glsl \
 	trace/smooth_plastic_bsdf.glsl \
@@ -50,8 +48,7 @@ SRC=\
 	trace/copy.vert.glsl \
 	trace/disc.rint.glsl \
 	trace/extend.rmiss.glsl \
-	trace/extend_disc.rchit.glsl \
-	trace/extend_sphere.rchit.glsl \
+	trace/extend_procedural.rchit.glsl \
 	trace/extend_triangle.rchit.glsl \
 	trace/filter.comp.glsl \
 	trace/occlusion.rchit.glsl \

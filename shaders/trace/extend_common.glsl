@@ -133,4 +133,16 @@ bool is_checkerboard(ExtendShader s)
     return (s.flags & EXTEND_SHADER_FLAGS_IS_CHECKERBOARD_BIT) != 0;
 }
 
+#define PROCEDURAL_HIT_FRONT    1
+#define PROCEDURAL_HIT_BACK     0
+
+struct ProceduralHitRecordHeader {
+    float unit_scale;
+    ExtendShader shader;
+};
+
+struct ProceduralHitAttribute {
+    Normal32 geom_normal;
+};
+
 #endif

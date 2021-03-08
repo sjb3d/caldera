@@ -378,7 +378,15 @@ struct ExtendTriangleHitRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct DiscGeomData {
+struct ProceduralHitRecordHeader {
+    unit_scale: f32,
+    shader: ExtendShader,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct IntersectDiscRecord {
+    header: ProceduralHitRecordHeader,
     centre: Vec3,
     normal: Vec3,
     radius: f32,
@@ -386,25 +394,10 @@ struct DiscGeomData {
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
-struct ExtendDiscHitRecord {
-    geom: DiscGeomData,
-    unit_scale: f32,
-    shader: ExtendShader,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct SphereGeomData {
+struct IntersectSphereRecord {
+    header: ProceduralHitRecordHeader,
     centre: Vec3,
     radius: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct ExtendSphereHitRecord {
-    geom: SphereGeomData,
-    unit_scale: f32,
-    shader: ExtendShader,
 }
 
 #[repr(usize)]
@@ -1100,12 +1093,12 @@ impl Renderer {
                     intersection: None,
                 },
                 ShaderGroup::ExtendHitDisc => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/extend_disc.rchit.spv",
+                    closest_hit: "trace/extend_procedural.rchit.spv",
                     any_hit: None,
                     intersection: Some("trace/disc.rint.spv"),
                 },
                 ShaderGroup::ExtendHitSphere => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/extend_sphere.rchit.spv",
+                    closest_hit: "trace/extend_procedural.rchit.spv",
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
                 },
@@ -1575,8 +1568,8 @@ impl Renderer {
 
         // hit shaders
         let hit_record_size = mem::size_of::<ExtendTriangleHitRecord>()
-            .max(mem::size_of::<ExtendDiscHitRecord>())
-            .max(mem::size_of::<ExtendSphereHitRecord>()) as u32;
+            .max(mem::size_of::<IntersectDiscRecord>())
+            .max(mem::size_of::<IntersectSphereRecord>()) as u32;
         let hit_stride = align_up(
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
@@ -1785,15 +1778,14 @@ impl Renderer {
                                 local_from_disc,
                                 radius,
                             } => {
-                                let geom = DiscGeomData {
+                                let hit_record = IntersectDiscRecord {
+                                    header: ProceduralHitRecordHeader {
+                                        unit_scale,
+                                        shader,
+                                    },
                                     centre: local_from_disc.translation,
                                     normal: local_from_disc.transform_vec3(Vec3::unit_z()).normalized(),
                                     radius: (local_from_disc.scale * radius).abs(),
-                                };
-                                let hit_record = ExtendDiscHitRecord {
-                                    geom,
-                                    unit_scale,
-                                    shader,
                                 };
 
                                 let end_offset = writer.written() + hit_region.stride as usize;
@@ -1807,14 +1799,13 @@ impl Renderer {
                                 writer.write_zeros(end_offset - writer.written());
                             }
                             Geometry::Sphere { centre, radius } => {
-                                let geom = SphereGeomData {
+                                let hit_record = IntersectSphereRecord {
+                                    header: ProceduralHitRecordHeader {
+                                        unit_scale,
+                                        shader,
+                                    },
                                     centre: *centre,
                                     radius: radius.abs(),
-                                };
-                                let hit_record = ExtendSphereHitRecord {
-                                    geom,
-                                    unit_scale,
-                                    shader,
                                 };
 
                                 let end_offset = writer.written() + hit_region.stride as usize;
