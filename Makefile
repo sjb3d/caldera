@@ -20,6 +20,7 @@ INC=\
 	trace/light_common.glsl \
 	trace/mirror_bsdf.glsl \
 	trace/occlusion_common.glsl \
+	trace/path_trace_common.glsl \
 	trace/quad_light.glsl \
 	trace/rough_conductor_bsdf.glsl \
 	trace/rough_dielectric_bsdf.glsl \
@@ -51,6 +52,7 @@ SRC=\
 	trace/extend_procedural.rchit.glsl \
 	trace/extend_triangle.rchit.glsl \
 	trace/filter.comp.glsl \
+	trace/mandelbulb.rint.glsl \
 	trace/occlusion.rchit.glsl \
 	trace/occlusion.rmiss.glsl \
 	trace/path_trace.rgen.glsl \

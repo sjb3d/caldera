@@ -44,6 +44,14 @@ vec2 copysign(vec2 x, vec2 s)
     return uintBitsToFloat(y_bits);
 }
 
+vec3 flip_sign(vec3 x, vec3 s)
+{
+    const uvec3 x_bits = floatBitsToUint(x);
+    const uvec3 s_bits = floatBitsToUint(s);
+    const uvec3 y_bits = x_bits ^ (s_bits & FLT_BITS_SIGN);
+    return uintBitsToFloat(y_bits);
+}
+
 bool sign_bit_set(float x)
 {
     const uint x_bits = floatBitsToUint(x);

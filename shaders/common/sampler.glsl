@@ -119,6 +119,12 @@ float get_hemisphere_cosine_weighted_proj_pdf()
     return 1.f/PI;
 }
 
+vec3 dir_from_phi_theta(float phi, float theta)
+{
+    const float sin_theta = sin(theta);
+    return vec3(cos(phi)*sin_theta, sin(phi)*sin_theta, cos(theta));
+}
+
 vec3 dir_from_phi_cos_theta(float phi, float cos_theta)
 {
     const float sin_theta = sqrt(max(0.f, 1.f - cos_theta*cos_theta));

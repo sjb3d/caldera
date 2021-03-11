@@ -37,7 +37,7 @@ vec3 sample_vndf(vec3 Ve, vec2 alpha, vec2 u)
     const vec3 Vh = normalize(vec3(alpha.x*Ve.x, alpha.y*Ve.y, Ve.z));
     // orthonormal basis
     const float lensq = dot(Vh.xy, Vh.xy);
-    const vec3 T1 = (lensq > 0.f) ? (vec3(-Vh.y, Vh.x, 0.f)/sqrt(lensq)) : vec3(1.f, 0.f, 0.f);
+    const vec3 T1 = (lensq > 0.f) ? (vec3(-Vh.y, Vh.x, 0.f)*inversesqrt(lensq)) : vec3(1.f, 0.f, 0.f);
     const vec3 T2 = cross(Vh, T1);
     // parameterization of the projected area
     vec2 p = sample_disc_uniform(u);

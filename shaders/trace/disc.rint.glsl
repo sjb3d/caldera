@@ -27,6 +27,7 @@ void main()
     const vec3 hit_from_centre = p + t*d;
     if (dot(hit_from_centre, hit_from_centre) < r*r) {
         g_attrib.geom_normal = make_normal32(n);
+        g_attrib.epsilon_exponent = default_epsilon_exponent(g_record.header.unit_scale);
         reportIntersectionEXT(t, sign_bit_set(d_dot_n) ? PROCEDURAL_HIT_FRONT : PROCEDURAL_HIT_BACK);
     }
 }

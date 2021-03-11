@@ -35,6 +35,9 @@ impl UnitScale for Geometry {
                 radius,
             } => local_from_disc.translation.abs().component_max() + local_from_disc.scale.abs() * radius.abs(),
             Geometry::Sphere { centre, radius } => centre.abs().component_max() + radius,
+            Geometry::Mandelbulb { local_from_bulb } => {
+                local_from_bulb.translation.abs().component_max() + local_from_bulb.scale.abs() * MANDELBULB_RADIUS
+            }
         };
         let world_offset = world_from_local.translation.abs().component_max();
         world_offset.max(world_from_local.scale.abs() * local_offset)
@@ -167,6 +170,7 @@ struct CameraParams {
     fov_size_at_unit_z: Vec2,
     aperture_radius_ls: f32,
     focus_distance_ls: f32,
+    pixel_size_at_unit_z: f32,
 }
 
 #[repr(C)]
@@ -185,7 +189,6 @@ struct PathTraceUniforms {
     sequence_type: u32,
     wavelength_sampling_method: u32,
     flags: PathTraceFlags,
-    _pad: u32,
 }
 
 #[repr(C)]
@@ -400,6 +403,14 @@ struct IntersectSphereRecord {
     radius: f32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct IntersectMandelbulbRecord {
+    header: ProceduralHitRecordHeader,
+    centre: Vec3,
+    // TODO: local transform
+}
+
 #[repr(usize)]
 #[derive(Clone, Copy, Contiguous)]
 enum ShaderGroup {
@@ -408,10 +419,12 @@ enum ShaderGroup {
     ExtendHitTriangle,
     ExtendHitDisc,
     ExtendHitSphere,
+    ExtendHitMandelbulb,
     OcclusionMiss,
     OcclusionHitTriangle,
     OcclusionHitDisc,
     OcclusionHitSphere,
+    OcclusionHitMandelbulb,
 }
 
 #[derive(Clone, Copy)]
@@ -817,7 +830,7 @@ pub struct Renderer {
 impl Renderer {
     const PMJ_SEQUENCE_COUNT: u32 = 1024;
 
-    const LOG2_MAX_SAMPLES_PER_SEQUENCE: u32 = 12;
+    const LOG2_MAX_SAMPLES_PER_SEQUENCE: u32 = if cfg!(debug_assertions) { 10 } else { 12 };
     const MAX_SAMPLES_PER_SEQUENCE: u32 = 1 << Self::LOG2_MAX_SAMPLES_PER_SEQUENCE;
 
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
@@ -1102,6 +1115,11 @@ impl Renderer {
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
                 },
+                ShaderGroup::ExtendHitMandelbulb => RayTracingShaderGroupDesc::Hit {
+                    closest_hit: "trace/extend_procedural.rchit.spv",
+                    any_hit: None,
+                    intersection: Some("trace/mandelbulb.rint.spv"),
+                },
                 ShaderGroup::OcclusionMiss => RayTracingShaderGroupDesc::Miss("trace/occlusion.rmiss.spv"),
                 ShaderGroup::OcclusionHitTriangle => RayTracingShaderGroupDesc::Hit {
                     closest_hit: "trace/occlusion.rchit.spv",
@@ -1117,6 +1135,11 @@ impl Renderer {
                     closest_hit: "trace/occlusion.rchit.spv",
                     any_hit: None,
                     intersection: Some("trace/sphere.rint.spv"),
+                },
+                ShaderGroup::OcclusionHitMandelbulb => RayTracingShaderGroupDesc::Hit {
+                    closest_hit: "trace/occlusion.rchit.spv",
+                    any_hit: None,
+                    intersection: Some("trace/mandelbulb.rint.spv"),
                 },
             })
             .collect();
@@ -1569,7 +1592,8 @@ impl Renderer {
         // hit shaders
         let hit_record_size = mem::size_of::<ExtendTriangleHitRecord>()
             .max(mem::size_of::<IntersectDiscRecord>())
-            .max(mem::size_of::<IntersectSphereRecord>()) as u32;
+            .max(mem::size_of::<IntersectSphereRecord>())
+            .max(mem::size_of::<IntersectMandelbulbRecord>()) as u32;
         let hit_stride = align_up(
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
@@ -1731,6 +1755,7 @@ impl Renderer {
 
                                 (LightType::Sphere, area_ws)
                             }
+                            Geometry::Mandelbulb { .. } => unimplemented!(),
                         };
 
                         align16_vec(&mut light_params_data);
@@ -1779,10 +1804,7 @@ impl Renderer {
                                 radius,
                             } => {
                                 let hit_record = IntersectDiscRecord {
-                                    header: ProceduralHitRecordHeader {
-                                        unit_scale,
-                                        shader,
-                                    },
+                                    header: ProceduralHitRecordHeader { unit_scale, shader },
                                     centre: local_from_disc.translation,
                                     normal: local_from_disc.transform_vec3(Vec3::unit_z()).normalized(),
                                     radius: (local_from_disc.scale * radius).abs(),
@@ -1800,10 +1822,7 @@ impl Renderer {
                             }
                             Geometry::Sphere { centre, radius } => {
                                 let hit_record = IntersectSphereRecord {
-                                    header: ProceduralHitRecordHeader {
-                                        unit_scale,
-                                        shader,
-                                    },
+                                    header: ProceduralHitRecordHeader { unit_scale, shader },
                                     centre: *centre,
                                     radius: radius.abs(),
                                 };
@@ -1815,6 +1834,22 @@ impl Renderer {
 
                                 let end_offset = writer.written() + hit_region.stride as usize;
                                 writer.write(shader_group_handle(ShaderGroup::OcclusionHitSphere));
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
+                            }
+                            Geometry::Mandelbulb { local_from_bulb } => {
+                                let hit_record = IntersectMandelbulbRecord {
+                                    header: ProceduralHitRecordHeader { unit_scale, shader },
+                                    centre: local_from_bulb.translation,
+                                };
+
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handle(ShaderGroup::ExtendHitMandelbulb));
+                                writer.write(&hit_record);
+                                writer.write_zeros(end_offset - writer.written());
+
+                                let end_offset = writer.written() + hit_region.stride as usize;
+                                writer.write(shader_group_handle(ShaderGroup::OcclusionHitMandelbulb));
                                 writer.write(&hit_record);
                                 writer.write_zeros(end_offset - writer.written());
                             }
@@ -2159,6 +2194,7 @@ impl Renderer {
                             } => (world_from_camera, fov_y, aperture_radius, focus_distance),
                         };
                         let fov_size_at_unit_z = 2.0 * (0.5 * fov_y).tan() * Vec2::new(aspect_ratio, 1.0);
+                        let pixel_size_at_unit_z = fov_size_at_unit_z.y / size_flt.y;
 
                         let mut path_trace_flags = match self.params.sampling_technique {
                             SamplingTechnique::LightsOnly => PathTraceFlags::ALLOW_LIGHT_SAMPLING,
@@ -2209,6 +2245,7 @@ impl Renderer {
                                         fov_size_at_unit_z,
                                         aperture_radius_ls: aperture_radius,
                                         focus_distance_ls: focus_distance,
+                                        pixel_size_at_unit_z,
                                     },
                                     sample_index,
                                     max_segment_count: self.params.max_bounces + 2,
@@ -2216,7 +2253,6 @@ impl Renderer {
                                     sequence_type: self.params.sequence_type.into_integer(),
                                     wavelength_sampling_method: self.params.wavelength_sampling_method.into_integer(),
                                     flags: path_trace_flags,
-                                    _pad: 0,
                                 }
                             },
                             top_level_accel,

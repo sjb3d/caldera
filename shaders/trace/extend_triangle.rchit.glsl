@@ -2,13 +2,13 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference2 : require
+#extension GL_ARB_gpu_shader_int64 : require
 #extension GL_EXT_nonuniform_qualifier : require
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
 #include "extend_common.glsl"
-
-layout(set = 1, binding = 0) uniform sampler2D g_textures[];
+#include "path_trace_common.glsl"
 
 layout(buffer_reference, scalar) buffer IndexBuffer {
     uvec3 tri[];
@@ -104,7 +104,7 @@ void main()
         get_bsdf_type(g_record.shader),
         is_emissive(g_record.shader),
         g_record.shader.light_index,
-        g_record.unit_scale);
+        default_epsilon_exponent(g_record.unit_scale));
     g_extend.position_or_extdir = hit_pos_ws;
     g_extend.geom_normal = make_normal32(hit_geom_normal_vec_ws);
     g_extend.shading_normal = make_normal32(hit_shading_normal_vec_ws);

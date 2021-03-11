@@ -41,7 +41,12 @@ pub enum Geometry {
         centre: Vec3,
         radius: f32,
     },
+    Mandelbulb {
+        local_from_bulb: Similarity3,
+    },
 }
+
+pub const MANDELBULB_RADIUS: f32 = 1.1;
 
 #[derive(Debug)]
 pub enum Reflectance {
@@ -313,6 +318,9 @@ impl Scene {
                     Geometry::Sphere { centre, radius } => {
                         *centre = world_from_local * *centre;
                         *radius *= world_from_local.scale.abs();
+                    }
+                    Geometry::Mandelbulb { local_from_bulb } => {
+                        *local_from_bulb = world_from_local * *local_from_bulb;
                     }
                 }
                 instance.transform_ref = identity_ref;

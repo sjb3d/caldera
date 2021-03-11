@@ -27,6 +27,7 @@ void main()
         g_attrib.geom_normal = make_normal32(p + t_min*d);
         if (!reportIntersectionEXT(t_min, PROCEDURAL_HIT_FRONT)) {
             g_attrib.geom_normal = make_normal32(p + t_max*d);
+            g_attrib.epsilon_exponent = default_epsilon_exponent(g_record.header.unit_scale);
             reportIntersectionEXT(t_max, PROCEDURAL_HIT_BACK);
         }
     }

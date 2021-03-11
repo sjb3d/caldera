@@ -4,6 +4,15 @@
 #include "bsdf_common.glsl"
 #include "normal_pack.glsl"
 
+#define LOG2_EPSILON_FACTOR             (-18)
+
+int default_epsilon_exponent(float unit_scale)
+{
+    int exponent;
+    frexp(unit_scale, exponent);
+    return exponent + LOG2_EPSILON_FACTOR;
+}
+
 struct HitInfo {
     uint bits;
 };
@@ -20,11 +29,9 @@ HitInfo create_hit_info(
     uint bsdf_type,
     bool is_emissive,
     uint light_index,
-    float unit_scale)
+    int epsilon_exponent)
 {
-    int exponent;
-    frexp(unit_scale, exponent);
-    const uint biased_exponent = uint(exponent + 128);
+    const uint biased_exponent = uint(epsilon_exponent + 128);
 
     HitInfo hit;
     hit.bits
@@ -66,10 +73,10 @@ bool has_surface(HitInfo hit)
 {
     return (hit.bits & HIT_INFO_HAS_SURFACE_BIT) != 0;
 }
-float get_epsilon(HitInfo hit, int exponent_offset_from_unit_scale)
+float get_epsilon(HitInfo hit)
 {
     const int exponent = int(hit.bits >> HIT_INFO_UNIT_SCALE_EXP_SHIFT) - 128;
-    return ldexp(1.f, exponent + exponent_offset_from_unit_scale);
+    return ldexp(1.f, exponent);
 }
 
 struct ExtendPayload {
@@ -143,6 +150,7 @@ struct ProceduralHitRecordHeader {
 
 struct ProceduralHitAttribute {
     Normal32 geom_normal;
+    int epsilon_exponent;
 };
 
 #endif

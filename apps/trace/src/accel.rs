@@ -63,6 +63,7 @@ impl Cluster {
                 Geometry::Quad { .. } => 2,
                 Geometry::Disc { .. } => 1,
                 Geometry::Sphere { .. } => 1,
+                Geometry::Mandelbulb { .. } => 1,
             })
             .sum()
     }
@@ -100,7 +101,9 @@ impl SceneClusters {
                 let (transform_refs, instance_refs): (Vec<_>, Vec<_>) = pairs.drain(..).unzip();
                 let primitive_type = match scene.geometry(geometry_ref) {
                     Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => PrimitiveType::Triangles,
-                    Geometry::Disc { .. } | Geometry::Sphere { .. } => PrimitiveType::Procedural,
+                    Geometry::Disc { .. } | Geometry::Sphere { .. } | Geometry::Mandelbulb { .. } => {
+                        PrimitiveType::Procedural
+                    }
                 };
                 Cluster {
                     transform_refs,
@@ -236,7 +239,9 @@ impl SceneAccel {
                                     );
                                     (mesh_builder.positions.as_slice(), mesh_builder.indices.as_slice())
                                 }
-                                Geometry::Disc { .. } | Geometry::Sphere { .. } => unreachable!(),
+                                Geometry::Disc { .. } | Geometry::Sphere { .. } | Geometry::Mandelbulb { .. } => {
+                                    unreachable!()
+                                }
                             };
 
                             let index_buffer_desc = BufferDesc::new(indices.len() * mem::size_of::<IndexData>());
@@ -321,6 +326,28 @@ impl SceneAccel {
                     });
                     GeometryAccelData::Procedural { aabb_buffer }
                 }
+                Geometry::Mandelbulb { local_from_bulb } => {
+                    let aabb_buffer = resource_loader.create_buffer();
+                    resource_loader.async_load({
+                        let centre = local_from_bulb.translation;
+                        let radius = MANDELBULB_RADIUS * local_from_bulb.scale.abs();
+                        move |allocator| {
+                            let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
+                            let mut writer = allocator
+                                .map_buffer(
+                                    aabb_buffer,
+                                    &buffer_desc,
+                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT,
+                                )
+                                .unwrap();
+                            writer.write(&AabbData {
+                                min: centre - Vec3::broadcast(radius),
+                                max: centre + Vec3::broadcast(radius),
+                            });
+                        }
+                    });
+                    GeometryAccelData::Procedural { aabb_buffer }
+                }
             });
         }
 
@@ -367,7 +394,7 @@ impl SceneAccel {
                             (positions.len() as u32, indices.len() as u32)
                         }
                         Geometry::Quad { .. } => (4, 2),
-                        Geometry::Disc { .. } | Geometry::Sphere { .. } => unreachable!(),
+                        Geometry::Disc { .. } | Geometry::Sphere { .. } | Geometry::Mandelbulb { .. } => unreachable!(),
                     };
 
                     accel_geometry.push(vk::AccelerationStructureGeometryKHR {
