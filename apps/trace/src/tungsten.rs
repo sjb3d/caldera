@@ -3,7 +3,7 @@ use bytemuck::{Pod, Zeroable};
 use caldera::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::{fs::File, io::BufReader, io::Read};
+use std::{fs::File, io::BufReader, io::Read, mem};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -72,6 +72,7 @@ struct Bsdf {
     material: Option<Material>,
     eta: Option<f32>,
     k: Option<f32>,
+    ior: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -222,7 +223,7 @@ struct Triangle {
     mat: i32,
 }
 
-fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geometry {
+fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>, reverse_winding: bool) -> scene::Geometry {
     let mut reader = BufReader::new(File::open(path).unwrap());
 
     let mut vertex_count = 0u64;
@@ -240,6 +241,15 @@ fn load_mesh<P: AsRef<Path>>(path: P, extra_scale: Option<Vec3>) -> scene::Geome
     reader
         .read_exact(bytemuck::cast_slice_mut(triangles.as_mut_slice()))
         .unwrap();
+
+    if reverse_winding {
+        for vtx in vertices.iter_mut() {
+            vtx.normal = -vtx.normal;
+        }
+        for tri in triangles.iter_mut() {
+            mem::swap(&mut tri.indices.x, &mut tri.indices.z);
+        }
+    }
 
     if let Some(extra_scale) = extra_scale {
         for v in vertices.iter_mut() {
@@ -292,7 +302,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
         })
     };
 
-    let load_material = |bsdf_ref: &BsdfRef, emission: Option<scene::Emission>| {
+    let load_material = |bsdf_ref: &BsdfRef| {
         let bsdf = match bsdf_ref {
             BsdfRef::Inline(bsdf) => bsdf,
             BsdfRef::Named(name) => scene
@@ -355,11 +365,15 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
             },
             _ => scene::Surface::Diffuse,
         };
-        scene::Material {
-            reflectance,
-            surface,
-            emission,
-        }
+        let reverse_winding = bsdf.ior.map(|ior| ior < 1.0).unwrap_or(false);
+        (
+            scene::Material {
+                reflectance,
+                surface,
+                emission: None,
+            },
+            reverse_winding,
+        )
     };
 
     let mut output = scene::Scene::default();
@@ -377,7 +391,8 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
                 };
                 let area = (size.x * size.y * world_from_local.scale * world_from_local.scale).abs();
 
-                let material = load_material(primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
+                let (mut material, _) = load_material(primitive.bsdf.as_ref().unwrap());
+                material.emission = load_emission(primitive, area);
 
                 let geometry_ref = output.add_geometry(geometry);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
@@ -395,7 +410,8 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
                 };
                 let area = (PI * radius * radius * world_from_local.scale * world_from_local.scale).abs();
 
-                let material = load_material(primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
+                let (mut material, _) = load_material(primitive.bsdf.as_ref().unwrap());
+                material.emission = load_emission(primitive, area);
 
                 let geometry_ref = output.add_geometry(geometry);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
@@ -405,16 +421,19 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
             PrimitiveType::Mesh => {
                 let (world_from_local, extra_scale) = primitive.transform.decompose();
 
+                let (mut material, reverse_winding) = load_material(&primitive.bsdf.as_ref().unwrap());
+
                 let mesh = load_mesh(
                     path.as_ref().with_file_name(primitive.file.as_ref().unwrap()),
                     extra_scale,
+                    reverse_winding,
                 );
+
                 let area = match mesh {
                     scene::Geometry::TriangleMesh { area, .. } => area,
                     _ => panic!("expected a mesh"),
                 };
-
-                let material = load_material(&primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
+                material.emission = load_emission(primitive, area);
 
                 let geometry_ref = output.add_geometry(mesh);
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
@@ -431,7 +450,8 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
                 let radius = world_from_local.scale.abs();
                 let area = 4.0 * PI * radius * radius;
 
-                let material = load_material(&primitive.bsdf.as_ref().unwrap(), load_emission(primitive, area));
+                let (mut material, _) = load_material(&primitive.bsdf.as_ref().unwrap());
+                material.emission = load_emission(primitive, area);
 
                 let geometry_ref = output.add_geometry(scene::Geometry::Sphere { centre, radius });
                 let transform_ref = output.add_transform(scene::Transform::new(world_from_local));
