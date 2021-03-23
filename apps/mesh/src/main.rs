@@ -4,7 +4,7 @@ mod loader;
 use crate::accel::*;
 use crate::loader::*;
 use bytemuck::{Pod, Zeroable};
-use caldera::*;
+use caldera::prelude::*;
 use imgui::im_str;
 use imgui::Key;
 use spark::vk;

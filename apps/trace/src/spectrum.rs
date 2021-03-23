@@ -1,4 +1,4 @@
-use crate::maths::*;
+use caldera::prelude::*;
 use std::{
     default::Default,
     ops::{Add, Mul},
@@ -705,14 +705,6 @@ fn xyz_matching_sample_iter() -> impl Iterator<Item = (f32, Vec3)> {
 
 pub fn xyz_matching_sweep() -> impl Sweep<Item = Vec3> {
     xyz_matching_sample_iter().into_sweep()
-}
-
-pub fn xyz_from_spectral_radiance_sweep(mut power: impl Sweep<Item = f32>) -> Vec3 {
-    let mut sum = Vec3::zero();
-    for (wavelength, value) in xyz_matching_sample_iter() {
-        sum += value * power.next(wavelength);
-    }
-    sum * CIE_WAVELENGTH_STEP_SIZE
 }
 
 pub fn xyz_from_spectral_reflectance_sweep(

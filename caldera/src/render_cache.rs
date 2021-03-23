@@ -1,6 +1,4 @@
-use crate::allocator::*;
-use crate::context::*;
-use crate::maths::*;
+use crate::prelude::*;
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};

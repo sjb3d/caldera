@@ -1,5 +1,5 @@
 use crate::scene::*;
-use caldera::*;
+use caldera::prelude::*;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till1},

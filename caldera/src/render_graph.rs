@@ -1,9 +1,4 @@
-use crate::allocator::*;
-use crate::barrier::*;
-use crate::context::*;
-use crate::query::*;
-use crate::render_cache::*;
-use crate::resource::*;
+use crate::{prelude::*, resource::*};
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};

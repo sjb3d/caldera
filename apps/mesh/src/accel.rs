@@ -1,6 +1,6 @@
 use crate::loader::*;
 use bytemuck::{Pod, Zeroable};
-use caldera::*;
+use caldera::prelude::*;
 use spark::vk;
 use std::sync::Arc;
 use std::{mem, slice};

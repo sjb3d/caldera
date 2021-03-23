@@ -1,5 +1,5 @@
 use bytemuck::{Contiguous, Pod, Zeroable};
-use caldera::*;
+use caldera::prelude::*;
 use imgui::im_str;
 use imgui::{Drag, Key, Slider};
 use rand::prelude::*;

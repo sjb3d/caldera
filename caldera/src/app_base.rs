@@ -1,19 +1,8 @@
-use crate::allocator::*;
-use crate::command_buffer::*;
-use crate::context::*;
-use crate::descriptor::*;
-use crate::loader::*;
-use crate::maths::*;
-use crate::pipeline_cache::*;
-use crate::query::*;
-use crate::render_graph::*;
-use crate::swapchain::*;
+use crate::prelude::*;
 use imgui::im_str;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use spark::{vk, Device};
-use std::slice;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{slice, sync::Arc, time::Instant};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopWindowTarget},

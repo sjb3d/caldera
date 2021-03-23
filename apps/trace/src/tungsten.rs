@@ -1,6 +1,6 @@
 use crate::scene;
 use bytemuck::{Pod, Zeroable};
-use caldera::*;
+use caldera::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::{fs::File, io::BufReader, io::Read, mem};

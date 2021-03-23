@@ -2,12 +2,19 @@ mod accel;
 mod import;
 mod renderer;
 mod scene;
+mod sobol;
+mod spectrum;
 mod tungsten;
+
+mod prelude {
+    pub use crate::sobol::*;
+    pub use crate::spectrum::*;
+}
 
 use crate::renderer::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
-use caldera::*;
+use caldera::prelude::*;
 use imgui::{im_str, CollapsingHeader, Drag, Key, MouseButton, Slider};
 use spark::vk;
 use std::{
