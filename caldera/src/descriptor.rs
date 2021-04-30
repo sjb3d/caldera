@@ -1,6 +1,6 @@
 use crate::command_buffer::CommandBufferPool;
 use crate::context::Context;
-use arrayvec::{Array, ArrayVec};
+use arrayvec::ArrayVec;
 use imgui::{ProgressBar, Ui};
 use spark::{vk, Builder};
 use std::{
@@ -13,21 +13,6 @@ use std::{
 
 fn align_up(x: u32, alignment: u32) -> u32 {
     (x + alignment - 1) & !(alignment - 1)
-}
-
-#[repr(align(16))]
-struct AlignedArray<A: Array>(A);
-
-unsafe impl<A: Array> Array for AlignedArray<A> {
-    type Item = A::Item;
-    type Index = A::Index;
-    const CAPACITY: usize = A::CAPACITY;
-    fn as_slice(&self) -> &[Self::Item] {
-        self.0.as_slice()
-    }
-    fn as_mut_slice(&mut self) -> &mut [Self::Item] {
-        self.0.as_mut_slice()
-    }
 }
 
 struct UniformDataPool {
@@ -438,12 +423,12 @@ impl DescriptorPool {
         }
         .unwrap();
 
-        let mut buffer_info = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
-        let mut image_info = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
-        let mut writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
-        let mut inline_writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
-        let mut inline_uniform_data = ArrayVec::<AlignedArray<[u8; Self::MAX_UNIFORM_DATA_PER_SET]>>::new();
-        let mut acceleration_structure_writes = ArrayVec::<[_; Self::MAX_DESCRIPTORS_PER_SET]>::new();
+        let mut buffer_info = ArrayVec::<_, { Self::MAX_DESCRIPTORS_PER_SET }>::new();
+        let mut image_info = ArrayVec::<_, { Self::MAX_DESCRIPTORS_PER_SET }>::new();
+        let mut writes = ArrayVec::<_, { Self::MAX_DESCRIPTORS_PER_SET }>::new();
+        let mut inline_writes = ArrayVec::<_, { Self::MAX_DESCRIPTORS_PER_SET }>::new();
+        let mut inline_uniform_data = ArrayVec::<u8, { Self::MAX_UNIFORM_DATA_PER_SET }>::new();
+        let mut acceleration_structure_writes = ArrayVec::<_, { Self::MAX_DESCRIPTORS_PER_SET }>::new();
 
         for (i, data) in data.iter().enumerate() {
             match data {
@@ -483,10 +468,10 @@ impl DescriptorPool {
                     });
                 }
                 DescriptorSetBindingData::UniformData { size, align, writer } => {
+                    let (align, size) = (*align, *size);
                     if let Some(uniform_data_pool) = self.uniform_data_pool.as_ref() {
                         // write uniform data into buffer
-                        let size = *size;
-                        let (addr, offset) = uniform_data_pool.alloc(size, *align).unwrap();
+                        let (addr, offset) = uniform_data_pool.alloc(size, align).unwrap();
                         writer(addr);
 
                         buffer_info.push(vk::DescriptorBufferInfo {
@@ -505,20 +490,22 @@ impl DescriptorPool {
                         });
                     } else {
                         // write uniform data to the stack
-                        let size = *size;
-                        let start_offset = align_up(inline_uniform_data.len() as u32, *align) as usize;
-                        let end_offset = start_offset + (size as usize);
+                        let start_offset = inline_uniform_data.len();
+                        let end_offset = start_offset + ((align + size) as usize);
                         if end_offset > inline_uniform_data.capacity() {
                             panic!("not enough space to write inline uniform data");
                         }
-                        unsafe {
+                        let block = unsafe {
                             inline_uniform_data.set_len(end_offset);
-                        }
-                        writer(&mut inline_uniform_data[start_offset..end_offset]);
+                            let start_ptr = inline_uniform_data.as_mut_ptr().offset(start_offset as isize);
+                            let align_offset = start_ptr.align_offset(align as usize);
+                            slice::from_raw_parts_mut(start_ptr.offset(align_offset as isize), size as usize)
+                        };
+                        writer(block);
 
                         inline_writes.push(vk::WriteDescriptorSetInlineUniformBlockEXT {
                             data_size: size,
-                            p_data: &inline_uniform_data[start_offset] as *const _ as *const _,
+                            p_data: block.as_ptr() as *const _,
                             ..Default::default()
                         });
 

@@ -146,8 +146,8 @@ impl Drop for ShaderLoader {
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct GraphicsPipelineState {
-    vertex_input_bindings: ArrayVec<[vk::VertexInputBindingDescription; 4]>,
-    vertex_input_attributes: ArrayVec<[vk::VertexInputAttributeDescription; 8]>,
+    vertex_input_bindings: ArrayVec<vk::VertexInputBindingDescription, 4>,
+    vertex_input_attributes: ArrayVec<vk::VertexInputAttributeDescription, 8>,
     render_pass: vk::RenderPass, // TODO: replace with state for *compatible* pass
     samples: vk::SampleCountFlags,
 }

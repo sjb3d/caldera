@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 caldera-macro = { path = "../caldera-macro" }
-arrayvec = "0.5"
+arrayvec = "0.7"
 spark = { git = "https://github.com/sjb3d/spark/" }
 spark-imgui = { git = "https://github.com/sjb3d/spark/" }
 notify = "4.0"

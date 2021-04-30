@@ -18,7 +18,7 @@ macro_rules! command_name {
 #[derive(Debug)]
 struct QuerySet {
     query_pool: vk::QueryPool,
-    names: ArrayVec<[Option<&'static CStr>; Self::MAX_PER_FRAME as usize]>,
+    names: ArrayVec<Option<&'static CStr>, { Self::MAX_PER_FRAME as usize }>,
 }
 
 impl QuerySet {
@@ -45,7 +45,7 @@ impl QuerySet {
 pub struct QueryPool {
     context: Arc<Context>,
     sets: [QuerySet; Self::COUNT],
-    last_us: ArrayVec<[(&'static CStr, f32); QuerySet::MAX_PER_FRAME as usize]>,
+    last_us: ArrayVec<(&'static CStr, f32), { QuerySet::MAX_PER_FRAME as usize }>,
     timestamp_valid_mask: u64,
     timestamp_period_us: f32,
     index: usize,
@@ -56,7 +56,7 @@ impl QueryPool {
     const COUNT: usize = CommandBufferPool::COUNT;
 
     pub fn new(context: &Arc<Context>) -> Self {
-        let mut sets = ArrayVec::<[_; Self::COUNT]>::new();
+        let mut sets = ArrayVec::new();
         for _ in 0..Self::COUNT {
             sets.push(QuerySet::new(&context.device));
         }

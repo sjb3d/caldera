@@ -768,7 +768,7 @@ impl<'a> RenderSchedule<'a> {
                     // TODO: initial layout as part of render pass (assumes UNDEFINED for now)
                     cmd.notify_image_use(state.color_output, query_pool);
 
-                    let mut clear_values = ArrayVec::<[_; RenderCache::MAX_ATTACHMENTS]>::new();
+                    let mut clear_values = ArrayVec::<_, { RenderCache::MAX_ATTACHMENTS }>::new();
                     let color_clear_value = vk::ClearValue {
                         color: vk::ClearColorValue {
                             float32: state.color_clear_value,
