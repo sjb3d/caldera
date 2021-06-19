@@ -94,7 +94,7 @@ impl App {
 
     fn render(&mut self, base: &mut AppBase) {
         let ui = base.ui_context.frame();
-        if ui.is_key_pressed(ui.key_index(Key::Escape)) {
+        if ui.is_key_pressed(Key::Escape) {
             base.exit_requested = true;
         }
         imgui::Window::new(im_str!("Debug"))
