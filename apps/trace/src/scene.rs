@@ -595,17 +595,17 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
 
     let white_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
-            CORNELL_BOX_WHITE_SAMPLES.iter().cloned().into_sweep(),
+            CORNELL_BOX_WHITE_SAMPLES.iter().copied().into_sweep(),
             D65_ILLUMINANT.iter().into_sweep(),
         );
     let red_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
-            CORNELL_BOX_RED_SAMPLES.iter().cloned().into_sweep(),
+            CORNELL_BOX_RED_SAMPLES.iter().copied().into_sweep(),
             D65_ILLUMINANT.iter().into_sweep(),
         );
     let green_reflectance = rgb_from_xyz
         * xyz_from_spectral_reflectance_sweep(
-            CORNELL_BOX_GREEN_SAMPLES.iter().cloned().into_sweep(),
+            CORNELL_BOX_GREEN_SAMPLES.iter().copied().into_sweep(),
             D65_ILLUMINANT.iter().into_sweep(),
         );
 
@@ -683,7 +683,7 @@ pub fn create_cornell_box_scene(variant: &CornellBoxVariant) -> Scene {
             let camera_x = 0.278;
             let camera_z = -0.8;
             let roughness = [0.05, 0.1, 0.25, 0.5];
-            for (i, roughness) in roughness.iter().cloned().enumerate() {
+            for (i, roughness) in roughness.iter().copied().enumerate() {
                 let x = 0.35 - 0.11 * (i as f32).powf(0.85);
                 let y = 0.5488 / 2.0;
                 let z = 0.25 - 0.06 * (i as f32).powf(1.2);
@@ -939,7 +939,7 @@ pub fn create_material_test_scene(ply_filename: &Path, surfaces: &[Surface], ill
     });
 
     let camera_orientation = Rotor3::from_rotation_xz(-PI / 16.0) * Rotor3::from_rotation_yz(PI / 8.0);
-    let distance = 5.5 + 1.0*((surfaces.len() - 1) as f32);
+    let distance = 5.5 + 1.0 * ((surfaces.len() - 1) as f32);
     scene.add_camera(Camera::Pinhole {
         world_from_camera: Similarity3::new(
             Vec3::new(0.0, y_offset, 0.0) + camera_orientation * Vec3::new(0.0, 0.0, -distance),

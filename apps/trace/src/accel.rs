@@ -213,7 +213,7 @@ impl SceneAccel {
 
         // make vertex/index buffers for each referenced geometry
         let mut geometry_accel_data: Vec<_> = scene.geometries.iter().map(|_| None).collect();
-        for geometry_ref in clusters.geometry_iter().cloned() {
+        for geometry_ref in clusters.geometry_iter().copied() {
             let geometry = scene.geometry(geometry_ref);
             *geometry_accel_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(match geometry {
                 Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => {
@@ -572,9 +572,9 @@ impl SceneAccel {
 
                 let mut record_offset = 0;
                 for (cluster, acceleration_structure_reference) in
-                    clusters.0.iter().zip(accel_device_addresses.iter().cloned())
+                    clusters.0.iter().zip(accel_device_addresses.iter().copied())
                 {
-                    for transform_ref in cluster.transform_refs.iter().cloned() {
+                    for transform_ref in cluster.transform_refs.iter().copied() {
                         let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
                         let transform = scene.transform(transform_ref);
                         let instance = AccelerationStructureInstance {

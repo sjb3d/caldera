@@ -62,7 +62,7 @@ impl Swapchain {
                 (vk::Format::B8G8R8A8_SRGB, vk::ColorSpaceKHR::SRGB_NONLINEAR) => true,
                 _ => false,
             })
-            .cloned()
+            .copied()
             .expect("no supported swapchain format found");
 
         let min_image_count = cmp::max(Self::MIN_IMAGE_COUNT, surface_capabilities.min_image_count);

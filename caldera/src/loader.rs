@@ -355,7 +355,7 @@ impl ResourceLoader {
                 StaticBufferResource::Ready { desc, .. } => Some(desc),
                 _ => None,
             })
-            .cloned()
+            .copied()
     }
 
     pub fn get_buffer(&self, handle: StaticBufferHandle) -> Option<vk::Buffer> {
@@ -374,7 +374,7 @@ impl ResourceLoader {
                 StaticImageResource::Ready { desc, .. } => Some(desc),
                 _ => None,
             })
-            .cloned()
+            .copied()
     }
 
     pub fn get_image(&self, handle: StaticImageHandle) -> Option<vk::Image> {

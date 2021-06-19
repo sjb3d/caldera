@@ -523,7 +523,7 @@ impl TextureBindingSet {
 
     fn try_write(&mut self, resource_loader: &ResourceLoader) -> Option<()> {
         let mut image_info = Vec::new();
-        for image in self.images.iter().cloned() {
+        for image in self.images.iter().copied() {
             image_info.push(vk::DescriptorImageInfo {
                 sampler: Some(self.linear_sampler),
                 image_view: Some(resource_loader.get_image_view(image)?),
@@ -857,7 +857,7 @@ impl Renderer {
         let mut texture_images = Vec::new();
         let mut shader_data = vec![ShaderData::default(); scene.materials.len()];
         let mut geometry_attrib_data = vec![GeometryAttribData::default(); scene.geometries.len()];
-        for instance_ref in accel.clusters().instance_iter().cloned() {
+        for instance_ref in accel.clusters().instance_iter().copied() {
             let instance = scene.instance(instance_ref);
             let material_ref = instance.material_ref;
             let geometry_ref = instance.geometry_ref;
@@ -1368,7 +1368,7 @@ impl Renderer {
                 *p = (*p / prob_sum) * 0.99 + uniform_prob * 0.01;
             }
 
-            let mut prob_sweep = prob_samples.iter().cloned().into_sweep();
+            let mut prob_sweep = prob_samples.iter().copied().into_sweep();
             for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
                 let pdf: f32 = prob_sweep.next((wavelength as f32) + 0.5);
                 writer.write(&pdf);
@@ -1393,7 +1393,7 @@ impl Renderer {
                 .map_image(wavelength_inv_cdf_image, &inv_cdf_desc, ImageUsage::RAY_TRACING_SAMPLED)
                 .unwrap();
 
-            let mut cdf_sweep = cdf_samples.iter().cloned().into_sweep();
+            let mut cdf_sweep = cdf_samples.iter().copied().into_sweep();
             for i in 0..WAVELENGTH_SAMPLER_RESOLUTION {
                 let p = ((i as f32) + 0.5) / (WAVELENGTH_SAMPLER_RESOLUTION as f32);
                 let wavelength: f32 = cdf_sweep.next(p);
@@ -1465,7 +1465,7 @@ impl Renderer {
     fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingData> {
         // gather the data we need for records
         let mut geometry_records = vec![None; self.scene.geometries.len()];
-        for geometry_ref in self.accel.clusters().geometry_iter().cloned() {
+        for geometry_ref in self.accel.clusters().geometry_iter().copied() {
             let geometry_buffer_data = self.accel.geometry_accel_data(geometry_ref)?;
             geometry_records[geometry_ref.0 as usize] = match geometry_buffer_data {
                 GeometryAccelData::Triangles {
@@ -1545,7 +1545,7 @@ impl Renderer {
             .accel
             .clusters()
             .instance_iter()
-            .cloned()
+            .copied()
             .filter(|&instance_ref| {
                 let material_ref = self.scene.instance(instance_ref).material_ref;
                 self.scene.material(material_ref).emission.is_some()
@@ -1651,7 +1651,7 @@ impl Renderer {
                 let mut light_params_data = Vec::new();
                 let align16 = |n: usize| (n + 15) & !15;
                 let align16_vec = |v: &mut Vec<u8>| v.resize(align16(v.len()), 0);
-                for instance_ref in clusters.instance_iter().cloned() {
+                for instance_ref in clusters.instance_iter().copied() {
                     let instance = scene.instance(instance_ref);
                     let geometry = scene.geometry(instance.geometry_ref);
                     let transform = scene.transform(instance.transform_ref);
