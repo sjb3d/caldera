@@ -97,7 +97,7 @@ impl CommandBufferPool {
 
     pub fn new(context: &Arc<Context>) -> Self {
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             sets: [CommandBufferSet::new(context), CommandBufferSet::new(context)],
             index: 0,
         }

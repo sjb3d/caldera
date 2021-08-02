@@ -244,7 +244,7 @@ pub(crate) struct RenderCache {
 impl ResourceCache {
     pub fn new(context: &Arc<Context>) -> Self {
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             buffer_info: HashMap::new(),
             buffer: HashMap::new(),
             image_info: HashMap::new(),
@@ -279,7 +279,7 @@ impl ResourceCache {
                 all_usage_flags,
             })
             .or_insert_with(|| {
-                let buffer = context.device.create_buffer_from_desc(&desc, all_usage_flags).unwrap();
+                let buffer = context.device.create_buffer_from_desc(desc, all_usage_flags).unwrap();
                 let mem_req = unsafe { context.device.get_buffer_memory_requirements(buffer) };
                 unsafe { context.device.destroy_buffer(Some(buffer), None) };
                 BufferInfo { mem_req }
@@ -302,7 +302,7 @@ impl ResourceCache {
                 alloc: *alloc,
             })
             .or_insert_with(|| {
-                let buffer = context.device.create_buffer_from_desc(&desc, all_usage_flags).unwrap();
+                let buffer = context.device.create_buffer_from_desc(desc, all_usage_flags).unwrap();
 
                 let mem_req_check = unsafe { context.device.get_buffer_memory_requirements(buffer) };
                 assert_eq!(info.mem_req, mem_req_check);
@@ -322,7 +322,7 @@ impl ResourceCache {
                 all_usage_flags,
             })
             .or_insert_with(|| {
-                let image = context.device.create_image_from_desc(&desc, all_usage_flags).unwrap();
+                let image = context.device.create_image_from_desc(desc, all_usage_flags).unwrap();
                 let mem_req = unsafe { context.device.get_image_memory_requirements(image) };
                 unsafe { context.device.destroy_image(Some(image), None) };
                 ImageInfo { mem_req }
@@ -345,7 +345,7 @@ impl ResourceCache {
                 alloc: *alloc,
             })
             .or_insert_with(|| {
-                let image = context.device.create_image_from_desc(&desc, all_usage_flags).unwrap();
+                let image = context.device.create_image_from_desc(desc, all_usage_flags).unwrap();
 
                 let mem_req_check = unsafe { context.device.get_image_memory_requirements(image) };
                 assert_eq!(info.mem_req, mem_req_check);
@@ -383,7 +383,7 @@ impl RenderCache {
 
     pub fn new(context: &Arc<Context>) -> Self {
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             render_pass: HashMap::new(),
             framebuffer: HashMap::new(),
         }

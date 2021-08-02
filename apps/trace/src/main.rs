@@ -191,7 +191,7 @@ impl App {
 
         let scene = Arc::new(scene);
         let renderer = Renderer::new(
-            &context,
+            context,
             &scene,
             &mut base.systems.descriptor_set_layout_cache,
             &base.systems.pipeline_cache,
@@ -204,7 +204,7 @@ impl App {
 
         let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), renderer.params.fov_y_override);
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             scene,
@@ -342,7 +342,7 @@ impl App {
                             );
 
                         let copy_descriptor_set = copy_descriptor_set_layout.write(
-                            &descriptor_pool,
+                            descriptor_pool,
                             |buf: &mut CopyData| {
                                 *buf = CopyData {
                                     exposure_scale: renderer_params.log2_exposure_scale.exp2(),
@@ -372,7 +372,7 @@ impl App {
                     // draw imgui
                     ui_platform.prepare_render(&ui, window);
                     if show_debug_ui {
-                        let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
+                        let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
                         ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
                     }
                 }
@@ -444,7 +444,7 @@ impl CaptureBuffer {
         .unwrap();
 
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             size,
             mem,
             buffer: Unique::new(buffer, context.allocate_handle_uid()),
@@ -609,7 +609,7 @@ impl CommandlineApp {
                                     );
 
                                 let descriptor_set = capture_descriptor_set_layout.write(
-                                    &descriptor_pool,
+                                    descriptor_pool,
                                     |buf: &mut CaptureData| {
                                         *buf = CaptureData {
                                             size: renderer_params.size(),

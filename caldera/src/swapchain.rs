@@ -93,7 +93,7 @@ impl Swapchain {
         let uid = context.allocate_handle_uid();
 
         Swapchain {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             swapchain,
             surface_format,
             size,

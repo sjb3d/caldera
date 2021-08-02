@@ -61,7 +61,7 @@ impl QueryPool {
             sets.push(QuerySet::new(&context.device));
         }
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             sets: sets.into_inner().unwrap(),
             last_us: ArrayVec::new(),
             timestamp_valid_mask: 1u64
@@ -97,10 +97,7 @@ impl QueryPool {
                 .iter()
                 .take(QuerySet::MAX_PER_FRAME as usize - 1)
                 .enumerate()
-                .filter_map(|(i, name)| match name {
-                    Some(name) => Some((i, name)),
-                    None => None,
-                })
+                .filter_map(|(i, name)| name.map(|name| (i, name)))
             {
                 let timestamp_delta = (query_results[i + 1] - query_results[i]) & self.timestamp_valid_mask;
                 self.last_us

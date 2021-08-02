@@ -150,7 +150,7 @@ impl ResourceLoader {
         };
 
         let shared = Arc::new(ResourceLoaderShared {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             exit_signal: AtomicBool::new(false),
             buffers: Mutex::new(ResourceVec::new()),
             images: Mutex::new(ResourceVec::new()),

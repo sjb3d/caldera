@@ -35,7 +35,7 @@ impl Chunk {
             unsafe { context.device.allocate_memory(&memory_allocate_info, None) }.unwrap()
         };
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             memory_type_index,
             mem,
             size,
@@ -81,7 +81,7 @@ pub struct Allocator {
 impl Allocator {
     pub fn new(context: &Arc<Context>, chunk_size: u32) -> Self {
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             chunks: Vec::new(),
             chunk_size,
         }

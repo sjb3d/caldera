@@ -333,6 +333,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
                 })
                 .or_else(|| {
                     bsdf.eta.zip(bsdf.k).and_then(|(eta, k)| {
+                        #[allow(clippy::float_cmp)]
                         if eta == 2.0 && k == 0.0 {
                             Some(scene::Conductor::Custom)
                         } else {
@@ -421,7 +422,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
             PrimitiveType::Mesh => {
                 let (world_from_local, extra_scale) = primitive.transform.decompose();
 
-                let (mut material, reverse_winding) = load_material(&primitive.bsdf.as_ref().unwrap());
+                let (mut material, reverse_winding) = load_material(primitive.bsdf.as_ref().unwrap());
 
                 let mesh = load_mesh(
                     path.as_ref().with_file_name(primitive.file.as_ref().unwrap()),
@@ -450,7 +451,7 @@ pub fn load_scene<P: AsRef<Path>>(path: P, illuminant: scene::Illuminant) -> sce
                 let radius = world_from_local.scale.abs();
                 let area = 4.0 * PI * radius * radius;
 
-                let (mut material, _) = load_material(&primitive.bsdf.as_ref().unwrap());
+                let (mut material, _) = load_material(primitive.bsdf.as_ref().unwrap());
                 material.emission = load_emission(primitive, area);
 
                 let geometry_ref = output.add_geometry(scene::Geometry::Sphere { centre, radius });

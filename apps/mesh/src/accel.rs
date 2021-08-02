@@ -170,7 +170,7 @@ impl AccelLevel {
         );
 
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             accel,
             buffer,
         }
@@ -287,7 +287,7 @@ impl AccelLevel {
         );
 
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             accel,
             buffer,
         }
@@ -569,7 +569,7 @@ impl AccelInfo {
                 let output_image_view = params.get_image_view(output_image);
 
                 let trace_descriptor_set = self.trace_descriptor_set_layout.write(
-                    &descriptor_pool,
+                    descriptor_pool,
                     |buf: &mut TraceData| {
                         *buf = TraceData {
                             ray_origin,

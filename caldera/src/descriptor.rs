@@ -81,7 +81,7 @@ impl UniformDataPool {
         let mapping = unsafe { context.device.map_memory(mem, 0, vk::WHOLE_SIZE, Default::default()) }.unwrap();
 
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             min_alignment,
             atom_size,
             size_per_frame,
@@ -385,7 +385,7 @@ impl DescriptorPool {
             pools.into_inner().unwrap()
         };
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             pools,
             pool_index: 0,
             uniform_data_pool: if use_inline_uniform_block {
@@ -497,9 +497,9 @@ impl DescriptorPool {
                         }
                         let block = unsafe {
                             inline_uniform_data.set_len(end_offset);
-                            let start_ptr = inline_uniform_data.as_mut_ptr().offset(start_offset as isize);
+                            let start_ptr = inline_uniform_data.as_mut_ptr().add(start_offset);
                             let align_offset = start_ptr.align_offset(align as usize);
-                            slice::from_raw_parts_mut(start_ptr.offset(align_offset as isize), size as usize)
+                            slice::from_raw_parts_mut(start_ptr.add(align_offset), size as usize)
                         };
                         writer(block);
 

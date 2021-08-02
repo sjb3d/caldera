@@ -52,6 +52,7 @@ pub const fn xyz_from_rec709_matrix() -> Mat3 {
         Vec3::new(0.1804375, 0.0721750, 0.9503041),
     )
 }
+#[allow(clippy::excessive_precision)]
 pub const fn rec709_from_xyz_matrix() -> Mat3 {
     // reference: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
     Mat3::new(
@@ -70,6 +71,7 @@ pub const fn ap1_from_xyz_matrix() -> Mat3 {
         Vec3::new(-0.2364246952, 0.0167563477, 0.9883948585),
     )
 }
+#[allow(clippy::excessive_precision)]
 pub const fn xyz_from_ap1_matrix() -> Mat3 {
     // reference: https://github.com/ampas/aces-dev/blob/master/transforms/ctl/README-MATRIX.md
     Mat3::new(
@@ -134,16 +136,17 @@ impl Default for WhitePoint {
 }
 
 impl WhitePoint {
-    fn to_chroma(&self) -> Vec2 {
+    fn to_chroma(self) -> Vec2 {
         match self {
             Self::D60 => Vec2::new(0.32168, 0.33767),
             Self::D65 => Vec2::new(0.31270, 0.32900),
             Self::E => Vec2::new(0.3333, 0.3333),
-            Self::Custom { chroma } => *chroma,
+            Self::Custom { chroma } => chroma,
         }
     }
 }
 
+#[allow(clippy::excessive_precision)]
 pub const fn bradford_lms_from_xyz_matrix() -> Mat3 {
     Mat3::new(
         Vec3::new(0.8951000, -0.7502000, 0.0389000),

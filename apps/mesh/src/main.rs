@@ -79,7 +79,7 @@ impl App {
         });
 
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             raster_descriptor_set_layout,
             raster_pipeline_layout,
             copy_descriptor_set_layout,
@@ -253,7 +253,7 @@ impl App {
                     if let Some(trace_image) = trace_image {
                         let trace_image_view = params.get_image_view(trace_image);
 
-                        let copy_descriptor_set = copy_descriptor_set_layout.write(&descriptor_pool, trace_image_view);
+                        let copy_descriptor_set = copy_descriptor_set_layout.write(descriptor_pool, trace_image_view);
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
 
@@ -275,7 +275,7 @@ impl App {
                         Some(instance_buffer),
                     ) = (position_buffer, attribute_buffer, index_buffer, instance_buffer)
                     {
-                        let raster_descriptor_set = raster_descriptor_set_layout.write(&descriptor_pool, |buf| {
+                        let raster_descriptor_set = raster_descriptor_set_layout.write(descriptor_pool, |buf| {
                             *buf = RasterData {
                                 proj_from_world: proj_from_view * view_from_world.into_homogeneous_matrix(),
                             };
@@ -373,7 +373,7 @@ impl App {
                     // draw imgui
                     ui_platform.prepare_render(&ui, window);
 
-                    let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
+                    let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
                     ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
                 }
             },

@@ -55,7 +55,8 @@ impl<T> ResourceVec<T> {
 
     pub(crate) fn allocate(&mut self, data: T) -> ResourceHandle {
         let index = if let Some(index) = self.active.iter_zeros().next() {
-            assert_eq!(self.active.get_mut(index).unwrap().replace(true), false);
+            let was_active = self.active.get_mut(index).unwrap().replace(true);
+            assert!(!was_active);
             index
         } else {
             let index = self.active.len();
@@ -74,7 +75,8 @@ impl<T> ResourceVec<T> {
 
     pub(crate) fn free(&mut self, handle: ResourceHandle) {
         let index = handle.index as usize;
-        assert_eq!(self.active.get_mut(index).unwrap().replace(false), true);
+        let was_active = self.active.get_mut(index).unwrap().replace(false);
+        assert!(was_active);
         self.entries.get_mut(index).unwrap().data.take().unwrap();
     }
 

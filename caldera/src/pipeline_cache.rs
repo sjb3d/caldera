@@ -62,7 +62,7 @@ impl ShaderLoader {
         let new_shaders = Arc::new(Mutex::new(HashMap::new()));
 
         let join_handle = thread::spawn({
-            let context = Arc::clone(&context);
+            let context = Arc::clone(context);
             let new_shaders = Arc::clone(&new_shaders);
             let short_base_path = base_path.clone();
             let full_base_path = base_path.canonicalize().unwrap();
@@ -88,7 +88,7 @@ impl ShaderLoader {
         });
 
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             base_path,
             reloader: Some(ShaderReloader { watcher, join_handle }),
             current_shaders,
@@ -244,7 +244,7 @@ impl PipelineCache {
             unsafe { context.device.create_pipeline_cache(&create_info, None) }.unwrap()
         };
         Self {
-            context: Arc::clone(&context),
+            context: Arc::clone(context),
             shader_loader: ShaderLoader::new(context, path),
             pipeline_cache,
             current_pipelines: HashMap::new(),

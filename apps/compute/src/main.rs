@@ -253,7 +253,7 @@ impl App {
                         ];
 
                         let descriptor_set = trace_descriptor_set_layout.write(
-                            &descriptor_pool,
+                            descriptor_pool,
                             |buf: &mut TraceData| {
                                 let dims_rcp = Vec2::broadcast(1.0) / trace_image_size.as_float();
                                 *buf = TraceData {
@@ -269,7 +269,7 @@ impl App {
 
                         dispatch_helper(
                             &context.device,
-                            &pipeline_cache,
+                            pipeline_cache,
                             cmd,
                             trace_pipeline_layout,
                             "compute/trace.comp.spv",
@@ -329,7 +329,7 @@ impl App {
                     set_viewport_helper(&context.device, cmd, swap_size);
 
                     let copy_descriptor_set = copy_descriptor_set_layout.write(
-                        &descriptor_pool,
+                        descriptor_pool,
                         |buf| {
                             *buf = CopyData {
                                 offset: ((trace_image_size.as_signed() - swap_size.as_signed()) / 2),
@@ -343,7 +343,7 @@ impl App {
                     );
                     draw_helper(
                         &context.device,
-                        &pipeline_cache,
+                        pipeline_cache,
                         cmd,
                         copy_pipeline_layout,
                         &GraphicsPipelineState::new(render_pass, main_sample_count),
@@ -356,7 +356,7 @@ impl App {
                     // draw imgui
                     ui_platform.prepare_render(&ui, window);
 
-                    let pipeline = pipeline_cache.get_ui(&ui_renderer, render_pass, main_sample_count);
+                    let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
                     ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
                 }
             },

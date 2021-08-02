@@ -145,16 +145,16 @@ impl AppDisplay {
 
 impl AppSystems {
     pub fn new(context: &Arc<Context>) -> Self {
-        let descriptor_set_layout_cache = DescriptorSetLayoutCache::new(&context);
-        let descriptor_pool = DescriptorPool::new(&context);
-        let pipeline_cache = PipelineCache::new(&context, "spv/bin");
-        let command_buffer_pool = CommandBufferPool::new(&context);
-        let query_pool = QueryPool::new(&context);
+        let descriptor_set_layout_cache = DescriptorSetLayoutCache::new(context);
+        let descriptor_pool = DescriptorPool::new(context);
+        let pipeline_cache = PipelineCache::new(context, "spv/bin");
+        let command_buffer_pool = CommandBufferPool::new(context);
+        let query_pool = QueryPool::new(context);
 
         const CHUNK_SIZE: u32 = 128 * 1024 * 1024;
-        let mut global_allocator = Allocator::new(&context, CHUNK_SIZE);
+        let mut global_allocator = Allocator::new(context, CHUNK_SIZE);
         let resource_loader = ResourceLoader::new(context, &mut global_allocator, CHUNK_SIZE);
-        let render_graph = RenderGraph::new(&context, CHUNK_SIZE, CHUNK_SIZE);
+        let render_graph = RenderGraph::new(context, CHUNK_SIZE, CHUNK_SIZE);
 
         Self {
             descriptor_set_layout_cache,
@@ -290,7 +290,7 @@ impl AppBase {
             }
             event => {
                 self.ui_platform
-                    .handle_event(self.ui_context.io_mut(), &self.window, &event);
+                    .handle_event(self.ui_context.io_mut(), &self.window, event);
             }
         }
 

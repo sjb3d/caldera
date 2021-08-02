@@ -542,10 +542,8 @@ impl TextureBindingSet {
     }
 
     fn update(&mut self, resource_loader: &ResourceLoader) {
-        if !self.is_written {
-            if self.try_write(resource_loader).is_some() {
-                self.is_written = true;
-            }
+        if !self.is_written && self.try_write(resource_loader).is_some() {
+            self.is_written = true;
         }
     }
 
@@ -837,6 +835,7 @@ impl Renderer {
     const HIT_ENTRY_COUNT_PER_INSTANCE: u32 = 2;
     const MISS_ENTRY_COUNT: u32 = 2;
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: &Arc<Context>,
         scene: &Arc<Scene>,
@@ -1969,7 +1968,7 @@ impl Renderer {
     pub fn debug_ui(&mut self, progress: &mut RenderProgress, ui: &Ui) {
         let mut needs_reset = false;
 
-        if CollapsingHeader::new(im_str!("Stats")).default_open(true).build(&ui) {
+        if CollapsingHeader::new(im_str!("Stats")).default_open(true).build(ui) {
             ui.text(format!("Unique BLAS: {}", self.accel.unique_bottom_level_accel_count()));
             ui.text(format!(
                 "Instanced BLAS: {}",
@@ -1983,11 +1982,11 @@ impl Renderer {
             }
         }
 
-        if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(&ui) {
-            ProgressBar::new(progress.fraction(&self.params)).build(&ui);
+        if CollapsingHeader::new(im_str!("Renderer")).default_open(true).build(ui) {
+            ProgressBar::new(progress.fraction(&self.params)).build(ui);
             Slider::new(im_str!("Log2 Samples"))
                 .range(0..=Self::LOG2_MAX_SAMPLES_PER_SEQUENCE)
-                .build(&ui, &mut self.params.log2_sample_count);
+                .build(ui, &mut self.params.log2_sample_count);
 
             ui.text("Sequence Type:");
             needs_reset |= ui.radio_button(im_str!("PMJ"), &mut self.params.sequence_type, SequenceType::Pmj);
@@ -2051,13 +2050,13 @@ impl Renderer {
                 ui.radio_button_bool(im_str!("None"), true);
                 ui.radio_button_bool(im_str!("Balance"), false);
                 ui.radio_button_bool(im_str!("Power2"), false);
-                style.pop(&ui);
+                style.pop(ui);
             }
-            id.pop(&ui);
+            id.pop(ui);
 
             needs_reset |= Slider::new(im_str!("Max Bounces"))
                 .range(0..=24)
-                .build(&ui, &mut self.params.max_bounces);
+                .build(ui, &mut self.params.max_bounces);
             needs_reset |= ui.checkbox(im_str!("Accumulate Roughness"), &mut self.params.accumulate_roughness);
             needs_reset |= ui.checkbox(
                 im_str!("Sample Sphere Light Solid Angle"),
@@ -2069,7 +2068,7 @@ impl Renderer {
             );
         }
 
-        if CollapsingHeader::new(im_str!("Film")).default_open(true).build(&ui) {
+        if CollapsingHeader::new(im_str!("Film")).default_open(true).build(ui) {
             ui.text("Filter:");
             needs_reset |= ui.radio_button(im_str!("Box"), &mut self.params.filter_type, FilterType::Box);
             needs_reset |= ui.radio_button(im_str!("Gaussian"), &mut self.params.filter_type, FilterType::Gaussian);
@@ -2078,7 +2077,7 @@ impl Renderer {
             let id = ui.push_id(im_str!("Tone Map"));
             Drag::new(im_str!("Exposure Bias"))
                 .speed(0.05)
-                .build(&ui, &mut self.params.log2_exposure_scale);
+                .build(ui, &mut self.params.log2_exposure_scale);
             ui.text("Tone Map:");
             ui.radio_button(im_str!("None"), &mut self.params.tone_map_method, ToneMapMethod::None);
             ui.radio_button(
@@ -2091,7 +2090,7 @@ impl Renderer {
                 &mut self.params.tone_map_method,
                 ToneMapMethod::AcesFit,
             );
-            id.pop(&ui);
+            id.pop(ui);
         }
 
         if progress.next_sample_index > self.params.sample_count() {
@@ -2127,6 +2126,7 @@ impl Renderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render<'a>(
         &'a self,
         progress: &mut RenderProgress,
@@ -2337,7 +2337,7 @@ impl Renderer {
                         let result_image_view = params.get_image_view(self.result_image);
 
                         let descriptor_set = self.filter_descriptor_set_layout.write(
-                            &descriptor_pool,
+                            descriptor_pool,
                             |buf: &mut FilterData| {
                                 *buf = FilterData {
                                     image_size: self.params.size(),

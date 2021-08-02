@@ -512,6 +512,7 @@ pub const E_ILLUMINANT: RegularlySampledIlluminant = RegularlySampledIlluminant 
 };
 
 // from https://en.wikipedia.org/wiki/Illuminant_D65
+#[allow(clippy::excessive_precision)]
 const D65_ILLUMINANT_SAMPLES: &[f32] = &[
     0.034100, 3.294500, 20.236000, 37.053500, 39.948800, 44.911700, 46.638300, 52.089100, 49.975500, 54.648200,
     82.754900, 91.486000, 93.431800, 86.682300, 104.865000, 117.008000, 117.812000, 114.861000, 115.923000, 108.811000,
@@ -620,7 +621,7 @@ where
         self.prev_input = Some(input);
         while let (Some(prev_sample), Some(next_sample)) = (self.prev_sample, self.next_sample) {
             if input < prev_sample.0 {
-                return T::default();
+                break;
             }
             if input < next_sample.0 {
                 let t = (input - prev_sample.0) / (next_sample.0 - prev_sample.0);
@@ -629,7 +630,7 @@ where
             self.prev_sample = self.next_sample;
             self.next_sample = self.iter.next();
         }
-        return T::default();
+        T::default()
     }
 }
 
@@ -784,6 +785,7 @@ pub const ALUMINIUM_ANTIMONIDE_SAMPLES: &[SampledRefractiveIndex] = &refractive_
     (0.8266, 3.54, 0.0002),
     (0.8856, 3.5, 0.0001)
 );
+#[allow(clippy::approx_constant)]
 pub const CHROMIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
     (0.32, 1.65, 2.47),
     (0.332, 1.69, 2.53),
