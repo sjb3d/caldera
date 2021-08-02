@@ -8,6 +8,7 @@ use rayon::prelude::*;
 use spark::vk;
 use std::sync::Arc;
 use structopt::StructOpt;
+use strum::VariantNames;
 use winit::{
     dpi::{LogicalSize, Size},
     event_loop::EventLoop,

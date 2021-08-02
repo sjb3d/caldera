@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use structopt::StructOpt;
+use strum::VariantNames;
 use winit::{
     dpi::{LogicalSize, Size},
     event_loop::EventLoop,

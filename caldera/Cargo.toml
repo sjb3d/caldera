@@ -19,3 +19,4 @@ bytemuck = { version = "1.5", features = ["derive"] }
 ultraviolet = { version = "0.7.5", features = ["int", "bytemuck"] }
 bitvec = "0.20"
 structopt = "0.3"
+strum = { version = "0.21", features = ["derive"] }

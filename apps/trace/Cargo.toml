@@ -19,4 +19,5 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 stb = "0.3.2"
 structopt = "0.3"
+strum = { version = "0.21", features = ["derive"] }
 ply-rs = "0.1.3"

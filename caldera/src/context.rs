@@ -1,5 +1,4 @@
 use crate::window_surface;
-use caldera_macro::EnumFromStr;
 use spark::{vk, Builder, Device, DeviceExtensions, Instance, InstanceExtensions, Loader};
 use std::{
     ffi::CStr,
@@ -8,6 +7,7 @@ use std::{
     slice,
     sync::atomic::{AtomicU64, Ordering},
 };
+use strum::{EnumString, EnumVariantNames};
 use winit::window::Window;
 
 unsafe extern "system" fn debug_messenger(
@@ -66,7 +66,8 @@ pub type UniqueImageView = Unique<vk::ImageView>;
 pub type UniqueRenderPass = Unique<vk::RenderPass>;
 pub type UniqueFramebuffer = Unique<vk::Framebuffer>;
 
-#[derive(Debug, EnumFromStr)]
+#[derive(Debug, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum ContextFeature {
     Disable,
     Optional,

@@ -25,6 +25,7 @@ use std::{
     sync::Arc,
 };
 use structopt::StructOpt;
+use strum::{EnumString, EnumVariantNames, VariantNames};
 use winit::{
     dpi::{LogicalSize, Size},
     event::VirtualKeyCode,
@@ -703,7 +704,8 @@ impl CommandlineApp {
     }
 }
 
-#[derive(Debug, EnumFromStr)]
+#[derive(Debug, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 enum MaterialTestVariant {
     Conductors,
     Gold,

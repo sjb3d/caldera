@@ -7,6 +7,7 @@ use std::{
     io::BufReader,
     path::{Path, PathBuf},
 };
+use strum::{EnumString, EnumVariantNames};
 
 #[derive(Debug, Default)]
 pub struct Transform {
@@ -86,8 +87,9 @@ pub enum Surface {
     RoughConductor { conductor: Conductor, roughness: f32 },
 }
 
-#[derive(Debug, Clone, Copy, Contiguous, Eq, PartialEq, EnumFromStr)]
 #[repr(u32)]
+#[derive(Debug, Clone, Copy, Contiguous, Eq, PartialEq, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum Illuminant {
     E,
     CornellBox,
@@ -461,7 +463,8 @@ pub const CORNELL_BOX_ILLUMINANT: RegularlySampledIlluminant = RegularlySampledI
     wavelength_step_size: 100.0,
 };
 
-#[derive(Debug, EnumFromStr)]
+#[derive(Debug, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum CornellBoxVariant {
     Original,
     DomeLight,

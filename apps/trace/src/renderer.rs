@@ -18,6 +18,7 @@ use std::{
     sync::Arc,
 };
 use structopt::StructOpt;
+use strum::{EnumString, EnumVariantNames, VariantNames};
 
 trait UnitScale {
     fn unit_scale(&self, world_from_local: Similarity3) -> f32;
@@ -70,7 +71,8 @@ enum LightType {
 }
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, Contiguous, PartialEq, Eq, EnumFromStr)]
+#[derive(Debug, Clone, Copy, Contiguous, PartialEq, Eq, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum SequenceType {
     Pmj,
     Sobol,
@@ -157,7 +159,8 @@ impl BitOrAssign for PathTraceFlags {
 }
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum MultipleImportanceHeuristic {
     None,
     Balance,
@@ -241,7 +244,8 @@ enum GeometryRecordData {
     Procedural,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumFromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum SamplingTechnique {
     LightsOnly,
     SurfacesOnly,
@@ -571,7 +575,8 @@ impl Drop for TextureBindingSet {
 }
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum ToneMapMethod {
     None,
     FilmicSrgb,
@@ -579,7 +584,8 @@ pub enum ToneMapMethod {
 }
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum FilterType {
     Box,
     Gaussian,
@@ -597,7 +603,8 @@ pub fn try_bool_from_str(s: &str) -> Result<bool, String> {
 type BoolParam = bool;
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumFromStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Contiguous, EnumString, EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
 pub enum WavelengthSamplingMethod {
     Uniform,
     HeroMIS,
@@ -648,7 +655,7 @@ pub struct RendererParams {
 
     /// Exposure bias
     #[structopt(
-        name = "exposure_bias",
+        name = "exposure-bias",
         short,
         long,
         allow_hyphen_values = true,
@@ -661,7 +668,7 @@ pub struct RendererParams {
     #[structopt(name = "fov", long, global = true)]
     pub fov_y_override: Option<f32>,
 
-    #[structopt(name = "sample_count_log2", short, long, default_value = "8", global = true)]
+    #[structopt(name = "sample-count-log2", short, long, default_value = "8", global = true)]
     pub log2_sample_count: u32,
 
     #[structopt(long, default_value = "sobol", global = true)]
