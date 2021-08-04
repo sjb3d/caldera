@@ -274,6 +274,7 @@ impl App {
                             cmd,
                             trace_pipeline_layout,
                             "compute/trace.comp.spv",
+                            &[],
                             descriptor_set,
                             trace_image_size.div_round_up(16),
                         );

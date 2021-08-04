@@ -198,12 +198,50 @@ enum RayTracingShaderGroup {
     Callable(vk::ShaderModule),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpecializationConstantData {
+    Bool32(vk::Bool32),
+    U32(u32),
+}
+
+impl SpecializationConstantData {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            SpecializationConstantData::Bool32(value) => bytemuck::bytes_of(value),
+            SpecializationConstantData::U32(value) => bytemuck::bytes_of(value),
+        }
+    }
+}
+impl From<bool> for SpecializationConstantData {
+    fn from(value: bool) -> Self {
+        SpecializationConstantData::Bool32(if value { vk::TRUE } else { vk::FALSE })
+    }
+}
+impl From<u32> for SpecializationConstantData {
+    fn from(value: u32) -> Self {
+        SpecializationConstantData::U32(value)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SpecializationConstant {
+    pub id: u32,
+    pub data: SpecializationConstantData,
+}
+
+impl SpecializationConstant {
+    pub fn new(id: u32, data: impl Into<SpecializationConstantData>) -> Self {
+        Self { id, data: data.into() }
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum PipelineCacheKey {
     Compute {
         pipeline_layout: vk::PipelineLayout,
         shader: vk::ShaderModule,
+        constants: Vec<SpecializationConstant>,
     },
     Graphics {
         pipeline_layout: vk::PipelineLayout,
@@ -261,22 +299,43 @@ impl PipelineCache {
         }
     }
 
-    pub fn get_compute(&self, shader_name: &str, pipeline_layout: vk::PipelineLayout) -> vk::Pipeline {
+    pub fn get_compute(
+        &self,
+        shader_name: &str,
+        constants: &[SpecializationConstant],
+        pipeline_layout: vk::PipelineLayout,
+    ) -> vk::Pipeline {
         let shader = self.shader_loader.get_shader(shader_name).unwrap();
         let key = PipelineCacheKey::Compute {
             pipeline_layout,
             shader,
+            constants: constants.to_vec(),
         };
         self.current_pipelines.get(&key).copied().unwrap_or_else(|| {
             // TODO: create pipeline on worker thread, for now we just block on miss
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
+                let mut specialization_map_entries = Vec::new();
+                let mut specialization_data = Vec::new();
+                for constant in constants {
+                    let bytes = constant.data.as_bytes();
+                    specialization_map_entries.push(vk::SpecializationMapEntry {
+                        constant_id: constant.id,
+                        offset: specialization_data.len() as u32,
+                        size: bytes.len(),
+                    });
+                    specialization_data.extend_from_slice(bytes);
+                }
+                let specialization_info = vk::SpecializationInfo::builder()
+                    .p_map_entries(&specialization_map_entries)
+                    .p_data(&specialization_data);
                 let pipeline_create_info = vk::ComputePipelineCreateInfo {
                     stage: vk::PipelineShaderStageCreateInfo {
                         stage: vk::ShaderStageFlags::COMPUTE,
                         module: Some(shader),
                         p_name: shader_entry_name.as_ptr(),
+                        p_specialization_info: &*specialization_info,
                         ..Default::default()
                     },
                     layout: Some(pipeline_layout),

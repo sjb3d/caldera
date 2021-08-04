@@ -630,6 +630,7 @@ impl CommandlineApp {
                                     cmd,
                                     capture_pipeline_layout,
                                     "trace/capture.comp.spv",
+                                    &[],
                                     descriptor_set,
                                     renderer_params.size().div_round_up(16),
                                 );

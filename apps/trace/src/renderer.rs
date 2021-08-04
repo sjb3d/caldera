@@ -2365,6 +2365,7 @@ impl Renderer {
                             cmd,
                             self.filter_pipeline_layout,
                             "trace/filter.comp.spv",
+                            &[],
                             descriptor_set,
                             self.params.size().div_round_up(8),
                         );

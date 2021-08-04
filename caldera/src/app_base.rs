@@ -35,10 +35,11 @@ pub fn dispatch_helper(
     cmd: vk::CommandBuffer,
     pipeline_layout: vk::PipelineLayout,
     shader_name: &str,
+    constants: &[SpecializationConstant],
     descriptor_set: vk::DescriptorSet,
     grid_size: UVec2,
 ) {
-    let pipeline = pipeline_cache.get_compute(shader_name, pipeline_layout);
+    let pipeline = pipeline_cache.get_compute(shader_name, constants, pipeline_layout);
     unsafe {
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
         device.cmd_bind_descriptor_sets(
