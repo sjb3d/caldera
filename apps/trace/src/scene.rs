@@ -43,6 +43,7 @@ pub enum Geometry {
         centre: Vec3,
         radius: f32,
     },
+    #[allow(dead_code)]
     Mandelbulb {
         local_from_bulb: Similarity3,
     },
