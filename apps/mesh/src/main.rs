@@ -59,7 +59,7 @@ struct App {
 
 impl App {
     fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
-        let context = &base.context;
+        let context = SharedContext::clone(&base.context);
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
         let raster_descriptor_set_layout = RasterDescriptorSetLayout::new(descriptor_set_layout_cache);
@@ -80,7 +80,7 @@ impl App {
         });
 
         Self {
-            context: SharedContext::clone(context),
+            context,
             raster_descriptor_set_layout,
             raster_pipeline_layout,
             copy_descriptor_set_layout,
@@ -103,7 +103,7 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
                 let ui = &ui;
-                let context = &base.context;
+                let context = base.context.as_ref();
                 let render_mode = &mut self.render_mode;
                 let is_rotating = &mut self.is_rotating;
                 move || {
@@ -238,7 +238,7 @@ impl App {
                 }
             },
             {
-                let context = &base.context;
+                let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;

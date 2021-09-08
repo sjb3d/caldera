@@ -235,7 +235,7 @@ impl App {
                     );
                 },
                 {
-                    let context = &base.context;
+                    let context = base.context.as_ref();
                     let descriptor_pool = &base.systems.descriptor_pool;
                     let pipeline_cache = &base.systems.pipeline_cache;
                     let trace_images = &self.trace_images;
@@ -307,7 +307,7 @@ impl App {
                 params.add_image(self.trace_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
             },
             {
-                let context = &base.context;
+                let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let trace_images = &self.trace_images;

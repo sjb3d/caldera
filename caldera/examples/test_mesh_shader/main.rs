@@ -1,7 +1,6 @@
 use caldera::prelude::*;
 use imgui::Key;
 use spark::vk;
-use std::sync::Arc;
 use structopt::StructOpt;
 use strum::VariantNames;
 use winit::{
@@ -48,7 +47,7 @@ impl App {
         let main_render_state = RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]);
 
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
-            let context = &base.context;
+            let context = base.context.as_ref();
             let pipeline_cache = &base.systems.pipeline_cache;
             let window = &base.window;
             let ui_platform = &mut base.ui_platform;

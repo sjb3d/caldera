@@ -184,7 +184,7 @@ struct App {
 
 impl App {
     fn new(base: &mut AppBase, scene: Scene, renderer_params: RendererParams) -> Self {
-        let context = &base.context;
+        let context = SharedContext::clone(&base.context);
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
@@ -192,7 +192,7 @@ impl App {
 
         let scene = Arc::new(scene);
         let renderer = Renderer::new(
-            context,
+            &context,
             &scene,
             &mut base.systems.descriptor_set_layout_cache,
             &base.systems.pipeline_cache,
@@ -205,7 +205,7 @@ impl App {
 
         let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), renderer.params.fov_y_override);
         Self {
-            context: SharedContext::clone(context),
+            context,
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             scene,
@@ -313,7 +313,7 @@ impl App {
                 }
             },
             {
-                let context = &base.context;
+                let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
