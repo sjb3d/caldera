@@ -334,7 +334,7 @@ impl App {
                             ],
                         );
                         let pipeline = pipeline_cache.get_graphics(
-                            "mesh/raster.vert.spv",
+                            VertexShaderNames::standard("mesh/raster.vert.spv"),
                             "mesh/raster.frag.spv",
                             raster_pipeline_layout,
                             &state,

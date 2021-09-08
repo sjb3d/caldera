@@ -66,7 +66,12 @@ pub fn draw_helper(
     descriptor_set: vk::DescriptorSet,
     vertex_count: u32,
 ) {
-    let pipeline = pipeline_cache.get_graphics(vertex_shader_name, fragment_shader_name, pipeline_layout, state);
+    let pipeline = pipeline_cache.get_graphics(
+        VertexShaderNames::standard(vertex_shader_name),
+        fragment_shader_name,
+        pipeline_layout,
+        state,
+    );
     unsafe {
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
         device.cmd_bind_descriptor_sets(

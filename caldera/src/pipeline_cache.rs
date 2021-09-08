@@ -3,19 +3,18 @@ use arrayvec::ArrayVec;
 use imgui::Ui;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use spark::{vk, Builder, Device};
-use std::collections::HashMap;
-use std::ffi::CStr;
-use std::fs::File;
-use std::io;
-use std::io::Read;
-use std::mem;
-use std::path::{Path, PathBuf};
-use std::slice;
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    ffi::CStr,
+    fs::File,
+    io::{self, prelude::*},
+    mem,
+    path::{Path, PathBuf},
+    slice,
+    sync::{mpsc, Arc, Mutex},
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
 fn read_file_words(path: &Path) -> io::Result<Vec<u32>> {
     let mut file = File::open(path)?;
@@ -235,6 +234,33 @@ impl SpecializationConstant {
     }
 }
 
+pub enum VertexShaderNames<'a> {
+    Standard {
+        vertex: &'a str,
+        // TODO: tesellation/geometry shader names
+    },
+    Mesh {
+        // TODO: task shader name
+        mesh: &'a str,
+    },
+}
+
+impl<'a> VertexShaderNames<'a> {
+    pub fn standard(vertex: &'a str) -> Self {
+        Self::Standard { vertex }
+    }
+
+    pub fn mesh(mesh: &'a str) -> Self {
+        Self::Mesh { mesh }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum VertexShaderModules {
+    Standard { vertex: vk::ShaderModule },
+    Mesh { mesh: vk::ShaderModule },
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum PipelineCacheKey {
@@ -245,7 +271,7 @@ enum PipelineCacheKey {
     },
     Graphics {
         pipeline_layout: vk::PipelineLayout,
-        vertex_shader: vk::ShaderModule,
+        vertex_shaders: VertexShaderModules,
         fragment_shader: vk::ShaderModule,
         state: GraphicsPipelineState,
     },
@@ -355,16 +381,23 @@ impl PipelineCache {
 
     pub fn get_graphics(
         &self,
-        vertex_shader_name: &str,
+        vertex_shader_names: VertexShaderNames,
         fragment_shader_name: &str,
         pipeline_layout: vk::PipelineLayout,
         state: &GraphicsPipelineState,
     ) -> vk::Pipeline {
-        let vertex_shader = self.shader_loader.get_shader(vertex_shader_name).unwrap();
+        let vertex_shaders = match vertex_shader_names {
+            VertexShaderNames::Standard { vertex } => VertexShaderModules::Standard {
+                vertex: self.shader_loader.get_shader(vertex).unwrap(),
+            },
+            VertexShaderNames::Mesh { mesh } => VertexShaderModules::Mesh {
+                mesh: self.shader_loader.get_shader(mesh).unwrap(),
+            },
+        };
         let fragment_shader = self.shader_loader.get_shader(fragment_shader_name).unwrap();
         let key = PipelineCacheKey::Graphics {
             pipeline_layout,
-            vertex_shader,
+            vertex_shaders,
             fragment_shader,
             state: state.clone(),
         };
@@ -373,20 +406,31 @@ impl PipelineCache {
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let shader_stage_create_info = [
-                    vk::PipelineShaderStageCreateInfo {
-                        stage: vk::ShaderStageFlags::VERTEX,
-                        module: Some(vertex_shader),
-                        p_name: shader_entry_name.as_ptr(),
-                        ..Default::default()
-                    },
-                    vk::PipelineShaderStageCreateInfo {
-                        stage: vk::ShaderStageFlags::FRAGMENT,
-                        module: Some(fragment_shader),
-                        p_name: shader_entry_name.as_ptr(),
-                        ..Default::default()
-                    },
-                ];
+                let mut shader_stage_create_info = ArrayVec::<vk::PipelineShaderStageCreateInfo, 2>::new();
+                match vertex_shaders {
+                    VertexShaderModules::Standard { vertex } => {
+                        shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                            stage: vk::ShaderStageFlags::VERTEX,
+                            module: Some(vertex),
+                            p_name: shader_entry_name.as_ptr(),
+                            ..Default::default()
+                        });
+                    }
+                    VertexShaderModules::Mesh { mesh } => {
+                        shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                            stage: vk::ShaderStageFlags::MESH_NV,
+                            module: Some(mesh),
+                            p_name: shader_entry_name.as_ptr(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                    stage: vk::ShaderStageFlags::FRAGMENT,
+                    module: Some(fragment_shader),
+                    p_name: shader_entry_name.as_ptr(),
+                    ..Default::default()
+                });
 
                 let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder()
                     .p_vertex_attribute_descriptions(&state.vertex_input_attributes)

@@ -110,6 +110,7 @@ pub struct ContextParams {
     pub geometry_shader: ContextFeature,
     pub inline_uniform_block: ContextFeature,
     pub ray_tracing: ContextFeature,
+    pub mesh_shader: ContextFeature,
 }
 
 impl Default for ContextParams {
@@ -122,6 +123,7 @@ impl Default for ContextParams {
             geometry_shader: ContextFeature::Disable,
             inline_uniform_block: ContextFeature::Optional,
             ray_tracing: ContextFeature::Disable,
+            mesh_shader: ContextFeature::Disable,
         }
     }
 }
@@ -197,6 +199,11 @@ impl Context {
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_tracing_pipeline not supported"),
             );
+            params.mesh_shader.apply(
+                || available_extensions.supports_nv_mesh_shader(),
+                || extensions.enable_nv_mesh_shader(),
+                || panic!("NV_mesh_shader not supported"),
+            );
 
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
@@ -249,9 +256,11 @@ impl Context {
             if instance.extensions.supports_khr_get_physical_device_properties2() {
                 let mut rtpp = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
                 let mut msp = vk::PhysicalDeviceMeshShaderPropertiesNV::default();
-                let mut properties2 = vk::PhysicalDeviceProperties2::builder().insert_next(&mut rtpp).insert_next(&mut msp);
+                let mut properties2 = vk::PhysicalDeviceProperties2::builder()
+                    .insert_next(&mut rtpp)
+                    .insert_next(&mut msp);
                 unsafe { instance.get_physical_device_properties2(physical_device, properties2.get_mut()) };
-                (Some(rtpp),Some(msp))
+                (Some(rtpp), Some(msp))
             } else {
                 (None, None)
             };
@@ -329,6 +338,7 @@ impl Context {
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
             let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
             let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
+            let mut mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesNV::default();
 
             if window.is_some() {
                 extensions.enable_khr_swapchain();
@@ -381,6 +391,14 @@ impl Context {
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
             );
+            params.mesh_shader.apply(
+                || available_extensions.supports_nv_mesh_shader(),
+                || {
+                    extensions.enable_nv_mesh_shader();
+                    mesh_shader_features.mesh_shader = vk::TRUE;
+                },
+                || panic!("NV_mesh_shader not supported"),
+            );
 
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
@@ -398,7 +416,8 @@ impl Context {
                 .insert_next(&mut buffer_device_address_features)
                 .insert_next(&mut acceleration_structure_features)
                 .insert_next(&mut ray_tracing_pipeline_features)
-                .insert_next(&mut descriptor_indexing_features);
+                .insert_next(&mut descriptor_indexing_features)
+                .insert_next(&mut mesh_shader_features);
 
             unsafe { instance.create_device(physical_device, &device_create_info, None, params.version) }.unwrap()
         };

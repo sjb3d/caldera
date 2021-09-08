@@ -44,6 +44,8 @@ SRC=\
 	mesh/trace.rchit.glsl \
 	mesh/trace.rgen.glsl \
 	mesh/trace.rmiss.glsl \
+	test_mesh_shader/cluster.frag.glsl \
+	test_mesh_shader/cluster.mesh.glsl \
 	trace/capture.comp.glsl \
 	trace/copy.frag.glsl \
 	trace/copy.vert.glsl \
@@ -58,7 +60,7 @@ SRC=\
 	trace/path_trace.rgen.glsl \
 	trace/sphere.rint.glsl \
 
-APPS=compute mesh trace
+APPS=compute mesh trace test_mesh_shader
 
 SRC_DIR=shaders
 BIN_DIR=spv/bin

@@ -9,15 +9,29 @@ use winit::{
     window::WindowBuilder,
 };
 
+descriptor_set_layout!(ClusterDescriptorSetLayout {});
+
 struct App {
     context: SharedContext,
+
+    cluster_descriptor_set_layout: ClusterDescriptorSetLayout,
+    cluster_pipeline_layout: vk::PipelineLayout,
 }
 
 impl App {
     fn new(base: &mut AppBase) -> Self {
-        let context = Arc::clone(&base.context);
+        let context = SharedContext::clone(&base.context);
+        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
-        Self { context }
+        let cluster_descriptor_set_layout = ClusterDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let cluster_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(cluster_descriptor_set_layout.0);
+
+        Self {
+            context,
+            cluster_descriptor_set_layout,
+            cluster_pipeline_layout,
+        }
     }
 
     fn render(&mut self, base: &mut AppBase) {
@@ -49,11 +63,27 @@ impl App {
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
             let context = base.context.as_ref();
             let pipeline_cache = &base.systems.pipeline_cache;
+            let _cluster_descriptor_set_layout = &self.cluster_descriptor_set_layout;
+            let cluster_pipeline_layout = self.cluster_pipeline_layout;
             let window = &base.window;
             let ui_platform = &mut base.ui_platform;
             let ui_renderer = &mut base.ui_renderer;
             move |_params, cmd, render_pass| {
                 set_viewport_helper(&context.device, cmd, swap_size);
+
+                // draw mesh#
+                let state = GraphicsPipelineState::new(render_pass, vk::SampleCountFlags::N1);
+                let pipeline = pipeline_cache.get_graphics(
+                    VertexShaderNames::mesh("test_mesh_shader/cluster.mesh.spv"),
+                    "test_mesh_shader/cluster.frag.spv",
+                    cluster_pipeline_layout,
+                    &state,
+                );
+                let device = &context.device;
+                unsafe {
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                    device.cmd_draw_mesh_tasks_nv(cmd, 1, 0);
+                }
 
                 // draw imgui
                 ui_platform.prepare_render(&ui, window);
@@ -94,6 +124,7 @@ fn main() {
     let context_params = ContextParams {
         version: app_params.version,
         inline_uniform_block: app_params.inline_uniform_block,
+        mesh_shader: ContextFeature::Require,
         ..Default::default()
     };
 
