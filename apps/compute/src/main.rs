@@ -2,11 +2,9 @@ use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::prelude::*;
 use imgui::im_str;
 use imgui::{Drag, Key, Slider};
-use rand::prelude::*;
-use rand::rngs::SmallRng;
+use rand::{prelude::*, rngs::SmallRng};
 use rayon::prelude::*;
 use spark::vk;
-use std::sync::Arc;
 use structopt::StructOpt;
 use strum::VariantNames;
 use winit::{

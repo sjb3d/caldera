@@ -495,7 +495,7 @@ struct CommandlineApp {
 
 impl CommandlineApp {
     fn new(context_params: &ContextParams, scene: Scene, renderer_params: RendererParams) -> Self {
-        let context = Arc::new(Context::new(None, context_params));
+        let context = Context::new(None, context_params);
         let mut systems = AppSystems::new(&context);
 
         let scene = Arc::new(scene);
