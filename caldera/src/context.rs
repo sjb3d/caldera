@@ -214,7 +214,7 @@ impl Context {
             unsafe { loader.create_instance(&instance_create_info, None) }.unwrap()
         };
 
-        let debug_utils_messenger = if instance.extensions.ext_debug_utils {
+        let debug_utils_messenger = if instance.extensions.supports_ext_debug_utils() {
             let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
                 message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
@@ -245,8 +245,8 @@ impl Context {
         let physical_device_features = unsafe { instance.get_physical_device_features(physical_device) };
         let device_version = physical_device_properties.api_version;
 
-            if instance.extensions.core_version >= vk::Version::from_raw_parts(1, 1, 0) {
         let (physical_device_ray_tracing_pipeline_properties, physical_device_mesh_shader_properties) =
+            if instance.extensions.supports_khr_get_physical_device_properties2() {
                 let mut rtpp = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
                 let mut msp = vk::PhysicalDeviceMeshShaderPropertiesNV::default();
                 let mut properties2 = vk::PhysicalDeviceProperties2::builder().insert_next(&mut rtpp).insert_next(&mut msp);
