@@ -74,7 +74,10 @@ impl App {
                 // draw mesh#
                 let state = GraphicsPipelineState::new(render_pass, vk::SampleCountFlags::N1);
                 let pipeline = pipeline_cache.get_graphics(
-                    VertexShaderNames::mesh("test_mesh_shader/cluster.mesh.spv"),
+                    VertexShaderNames::mesh(
+                        Some("test_mesh_shader/cluster.task.spv"),
+                        "test_mesh_shader/cluster.mesh.spv",
+                    ),
                     "test_mesh_shader/cluster.frag.spv",
                     cluster_pipeline_layout,
                     &state,

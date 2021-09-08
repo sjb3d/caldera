@@ -240,7 +240,7 @@ pub enum VertexShaderNames<'a> {
         // TODO: tesellation/geometry shader names
     },
     Mesh {
-        // TODO: task shader name
+        task: Option<&'a str>,
         mesh: &'a str,
     },
 }
@@ -250,15 +250,20 @@ impl<'a> VertexShaderNames<'a> {
         Self::Standard { vertex }
     }
 
-    pub fn mesh(mesh: &'a str) -> Self {
-        Self::Mesh { mesh }
+    pub fn mesh(task: Option<&'a str>, mesh: &'a str) -> Self {
+        Self::Mesh { task, mesh }
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum VertexShaderModules {
-    Standard { vertex: vk::ShaderModule },
-    Mesh { mesh: vk::ShaderModule },
+    Standard {
+        vertex: vk::ShaderModule,
+    },
+    Mesh {
+        task: Option<vk::ShaderModule>,
+        mesh: vk::ShaderModule,
+    },
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -390,7 +395,8 @@ impl PipelineCache {
             VertexShaderNames::Standard { vertex } => VertexShaderModules::Standard {
                 vertex: self.shader_loader.get_shader(vertex).unwrap(),
             },
-            VertexShaderNames::Mesh { mesh } => VertexShaderModules::Mesh {
+            VertexShaderNames::Mesh { task, mesh } => VertexShaderModules::Mesh {
+                task: task.map(|task| self.shader_loader.get_shader(task).unwrap()),
                 mesh: self.shader_loader.get_shader(mesh).unwrap(),
             },
         };
@@ -406,7 +412,7 @@ impl PipelineCache {
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let mut shader_stage_create_info = ArrayVec::<vk::PipelineShaderStageCreateInfo, 2>::new();
+                let mut shader_stage_create_info = ArrayVec::<vk::PipelineShaderStageCreateInfo, 3>::new();
                 match vertex_shaders {
                     VertexShaderModules::Standard { vertex } => {
                         shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
@@ -416,7 +422,15 @@ impl PipelineCache {
                             ..Default::default()
                         });
                     }
-                    VertexShaderModules::Mesh { mesh } => {
+                    VertexShaderModules::Mesh { task, mesh } => {
+                        if let Some(task) = task {
+                            shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                                stage: vk::ShaderStageFlags::TASK_NV,
+                                module: Some(task),
+                                p_name: shader_entry_name.as_ptr(),
+                                ..Default::default()
+                            });
+                        }
                         shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
                             stage: vk::ShaderStageFlags::MESH_NV,
                             module: Some(mesh),

@@ -46,6 +46,7 @@ SRC=\
 	mesh/trace.rmiss.glsl \
 	test_mesh_shader/cluster.frag.glsl \
 	test_mesh_shader/cluster.mesh.glsl \
+	test_mesh_shader/cluster.task.glsl \
 	trace/capture.comp.glsl \
 	trace/copy.frag.glsl \
 	trace/copy.vert.glsl \

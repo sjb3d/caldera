@@ -395,6 +395,7 @@ impl Context {
                 || available_extensions.supports_nv_mesh_shader(),
                 || {
                     extensions.enable_nv_mesh_shader();
+                    mesh_shader_features.task_shader = vk::TRUE;
                     mesh_shader_features.mesh_shader = vk::TRUE;
                 },
                 || panic!("NV_mesh_shader not supported"),

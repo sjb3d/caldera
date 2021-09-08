@@ -3,15 +3,29 @@
 #extension GL_NV_mesh_shader : require
 
 layout(local_size_x = 1) in;
+
+taskNV in Task {
+    uint id[3];
+} i_task;
+
 layout(triangles, max_vertices = 3, max_primitives = 1) out;
 
 layout(location = 0) out vec3 v_color[];
 
 void main()
 {
-    gl_MeshVerticesNV[0].gl_Position = vec4( 0.5,  0.5, 0.0, 1.0);
-    gl_MeshVerticesNV[1].gl_Position = vec4( 0.0, -0.5, 0.0, 1.0);
-    gl_MeshVerticesNV[2].gl_Position = vec4(-0.5,  0.5, 0.0, 1.0);
+    uint id = i_task.id[gl_WorkGroupID.x];
+    vec2 offset;
+    switch (id) {
+        case 0: offset = vec2( 0.5,  0.5); break;
+        case 1: offset = vec2( 0.0, -0.5); break;
+        default:
+        case 2: offset = vec2(-0.5,  0.5); break;
+    }
+
+    gl_MeshVerticesNV[0].gl_Position = vec4(offset + vec2( 0.5,  0.5), 0.0, 1.0);
+    gl_MeshVerticesNV[1].gl_Position = vec4(offset + vec2( 0.0, -0.5), 0.0, 1.0);
+    gl_MeshVerticesNV[2].gl_Position = vec4(offset + vec2(-0.5,  0.5), 0.0, 1.0);
 
     v_color[0] = vec3(1.0, 0.0, 0.0);
     v_color[1] = vec3(0.0, 1.0, 0.0);
