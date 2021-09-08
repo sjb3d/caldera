@@ -371,7 +371,7 @@ impl AccelInfo {
             shader_binding_hit_region,
             shader_binding_table_size,
         ) = {
-            let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+            let rtpp = context.physical_device_ray_tracing_pipeline_properties.as_ref().unwrap();
 
             let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
 
@@ -420,7 +420,7 @@ impl AccelInfo {
         resource_loader.async_load({
             let context = SharedContext::clone(context);
             move |allocator| {
-                let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
+                let rtpp = context.physical_device_ray_tracing_pipeline_properties.as_ref().unwrap();
                 let shader_group_count = 3;
                 let handle_size = rtpp.shader_group_handle_size as usize;
                 let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];

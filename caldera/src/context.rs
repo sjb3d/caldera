@@ -126,12 +126,6 @@ impl Default for ContextParams {
     }
 }
 
-pub struct ContextRayTracingPipelineProperties {
-    pub shader_group_handle_size: u32,
-    pub shader_group_base_alignment: u32,
-    pub shader_group_handle_alignment: u32,
-}
-
 pub struct Context {
     pub instance: Instance,
     pub debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
@@ -139,7 +133,8 @@ pub struct Context {
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
-    pub ray_tracing_pipeline_properties: Option<ContextRayTracingPipelineProperties>,
+    pub physical_device_ray_tracing_pipeline_properties: Option<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>,
+    pub physical_device_mesh_shader_properties: Option<vk::PhysicalDeviceMeshShaderPropertiesNV>,
     pub enable_buffer_device_addresses: bool,
     pub queue_family_index: u32,
     pub queue_family_properties: vk::QueueFamilyProperties,
@@ -245,18 +240,15 @@ impl Context {
         let physical_device_features = unsafe { instance.get_physical_device_features(physical_device) };
         let device_version = physical_device_properties.api_version;
 
-        let ray_tracing_pipeline_properties =
             if instance.extensions.core_version >= vk::Version::from_raw_parts(1, 1, 0) {
+        let (physical_device_ray_tracing_pipeline_properties, physical_device_mesh_shader_properties) =
                 let mut rtpp = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
-                let mut properties2 = vk::PhysicalDeviceProperties2::builder().insert_next(&mut rtpp);
+                let mut msp = vk::PhysicalDeviceMeshShaderPropertiesNV::default();
+                let mut properties2 = vk::PhysicalDeviceProperties2::builder().insert_next(&mut rtpp).insert_next(&mut msp);
                 unsafe { instance.get_physical_device_properties2(physical_device, properties2.get_mut()) };
-                Some(ContextRayTracingPipelineProperties {
-                    shader_group_handle_size: rtpp.shader_group_handle_size,
-                    shader_group_base_alignment: rtpp.shader_group_base_alignment,
-                    shader_group_handle_alignment: rtpp.shader_group_handle_alignment,
-                })
+                (Some(rtpp),Some(msp))
             } else {
-                None
+                (None, None)
             };
 
         let physical_device_memory_properties =
@@ -415,7 +407,8 @@ impl Context {
             physical_device,
             physical_device_properties,
             physical_device_memory_properties,
-            ray_tracing_pipeline_properties,
+            physical_device_ray_tracing_pipeline_properties,
+            physical_device_mesh_shader_properties,
             enable_buffer_device_addresses,
             queue_family_index,
             queue_family_properties,
