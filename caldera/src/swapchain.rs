@@ -1,13 +1,9 @@
-use crate::context::*;
-use crate::maths::*;
+use crate::{context::*, maths::*};
 use spark::{vk, Builder};
-use std::cmp;
-use std::slice;
-use std::sync::Arc;
-use std::u64;
+use std::{cmp, slice};
 
 pub struct Swapchain {
-    context: Arc<Context>,
+    context: SharedContext,
     swapchain: vk::SwapchainKHR,
     surface_format: vk::SurfaceFormatKHR,
     size: UVec2,
@@ -86,14 +82,14 @@ impl Swapchain {
         (swapchain, surface_format, UVec2::new(extent.width, extent.height))
     }
 
-    pub fn new(context: &Arc<Context>, usage: vk::ImageUsageFlags) -> Self {
+    pub fn new(context: &SharedContext, usage: vk::ImageUsageFlags) -> Self {
         let (swapchain, surface_format, size) = Swapchain::create(context, usage, None);
 
         let images = unsafe { context.device.get_swapchain_images_khr_to_vec(swapchain) }.unwrap();
         let uid = context.allocate_handle_uid();
 
         Swapchain {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             swapchain,
             surface_format,
             size,

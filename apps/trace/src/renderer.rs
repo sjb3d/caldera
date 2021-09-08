@@ -461,7 +461,7 @@ struct ShaderBindingData {
 }
 
 struct TextureBindingSet {
-    context: Arc<Context>,
+    context: SharedContext,
     linear_sampler: vk::Sampler,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
@@ -471,7 +471,7 @@ struct TextureBindingSet {
 }
 
 impl TextureBindingSet {
-    fn new(context: &Arc<Context>, images: Vec<StaticImageHandle>) -> Self {
+    fn new(context: &SharedContext, images: Vec<StaticImageHandle>) -> Self {
         // create a separate descriptor pool for bindless textures
         let linear_sampler = {
             let create_info = vk::SamplerCreateInfo {
@@ -515,7 +515,7 @@ impl TextureBindingSet {
         };
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             linear_sampler,
             descriptor_set_layout,
             descriptor_pool,
@@ -801,7 +801,7 @@ impl Iterator for AliasTableIterator {
 }
 
 pub struct Renderer {
-    context: Arc<Context>,
+    context: SharedContext,
     scene: Arc<Scene>,
     accel: SceneAccel,
 
@@ -844,7 +844,7 @@ impl Renderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        context: &Arc<Context>,
+        context: &SharedContext,
         scene: &Arc<Scene>,
         descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
         pipeline_cache: &PipelineCache,
@@ -1437,7 +1437,7 @@ impl Renderer {
         };
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             scene: Arc::clone(scene),
             accel,
             path_trace_descriptor_set_layout,

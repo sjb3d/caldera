@@ -66,7 +66,7 @@ unsafe impl Send for ResourceStagingMapping {}
 unsafe impl Sync for ResourceStagingMapping {}
 
 struct ResourceLoaderShared {
-    context: Arc<Context>,
+    context: SharedContext,
     exit_signal: AtomicBool,
     buffers: Mutex<ResourceVec<StaticBufferResource>>,
     images: Mutex<ResourceVec<StaticImageResource>>,
@@ -128,7 +128,7 @@ pub struct ResourceLoader {
 }
 
 impl ResourceLoader {
-    pub fn new(context: &Arc<Context>, allocator: &mut Allocator, staging_size: u32) -> Self {
+    pub fn new(context: &SharedContext, allocator: &mut Allocator, staging_size: u32) -> Self {
         let mut resource_cache = ResourceCache::new(context);
 
         let (staging_buffer, staging_mapping) = {
@@ -150,7 +150,7 @@ impl ResourceLoader {
         };
 
         let shared = Arc::new(ResourceLoaderShared {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             exit_signal: AtomicBool::new(false),
             buffers: Mutex::new(ResourceVec::new()),
             images: Mutex::new(ResourceVec::new()),

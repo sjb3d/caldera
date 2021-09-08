@@ -2,7 +2,7 @@ use crate::prelude::*;
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};
-use std::{collections::HashMap, slice, sync::Arc};
+use std::{collections::HashMap, slice};
 
 pub trait FormatExt {
     fn bits_per_element(&self) -> usize;
@@ -227,7 +227,7 @@ struct FramebufferKey {
 }
 
 pub(crate) struct ResourceCache {
-    context: Arc<Context>,
+    context: SharedContext,
     buffer_info: HashMap<BufferInfoKey, BufferInfo>,
     buffer: HashMap<BufferKey, UniqueBuffer>,
     image_info: HashMap<ImageInfoKey, ImageInfo>,
@@ -236,15 +236,15 @@ pub(crate) struct ResourceCache {
 }
 
 pub(crate) struct RenderCache {
-    context: Arc<Context>,
+    context: SharedContext,
     render_pass: HashMap<RenderPassKey, UniqueRenderPass>,
     framebuffer: HashMap<FramebufferKey, UniqueFramebuffer>,
 }
 
 impl ResourceCache {
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             buffer_info: HashMap::new(),
             buffer: HashMap::new(),
             image_info: HashMap::new(),
@@ -381,9 +381,9 @@ impl ResourceCache {
 impl RenderCache {
     pub const MAX_ATTACHMENTS: usize = 3;
 
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             render_pass: HashMap::new(),
             framebuffer: HashMap::new(),
         }

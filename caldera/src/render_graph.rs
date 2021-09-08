@@ -2,7 +2,7 @@ use crate::{prelude::*, resource::*};
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};
-use std::{ffi::CStr, mem, sync::Arc};
+use std::{ffi::CStr, mem};
 
 /*
     The goal is to manage:
@@ -186,7 +186,7 @@ struct ResourceSet {
 }
 
 impl ResourceSet {
-    fn new(context: &Arc<Context>, chunk_size: u32) -> Self {
+    fn new(context: &SharedContext, chunk_size: u32) -> Self {
         Self {
             allocator: Allocator::new(context, chunk_size),
             buffers: Vec::new(),
@@ -217,7 +217,7 @@ pub struct RenderGraph {
 }
 
 impl RenderGraph {
-    pub fn new(context: &Arc<Context>, temp_chunk_size: u32, ping_pong_chunk_size: u32) -> Self {
+    pub fn new(context: &SharedContext, temp_chunk_size: u32, ping_pong_chunk_size: u32) -> Self {
         Self {
             resource_cache: ResourceCache::new(context),
             render_cache: RenderCache::new(context),

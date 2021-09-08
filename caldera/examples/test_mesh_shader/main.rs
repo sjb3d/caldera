@@ -11,7 +11,7 @@ use winit::{
 };
 
 struct App {
-    context: Arc<Context>,
+    context: SharedContext,
 }
 
 impl App {

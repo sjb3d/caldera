@@ -1,12 +1,8 @@
-use crate::command_buffer::*;
-use crate::context::*;
+use crate::{command_buffer::*, context::*};
 use arrayvec::ArrayVec;
-use imgui::im_str;
-use imgui::Ui;
+use imgui::{im_str, Ui};
 use spark::{vk, Device};
-use std::ffi::CStr;
-use std::mem;
-use std::sync::Arc;
+use std::{ffi::CStr, mem};
 
 #[macro_export]
 macro_rules! command_name {
@@ -43,7 +39,7 @@ impl QuerySet {
 }
 
 pub struct QueryPool {
-    context: Arc<Context>,
+    context: SharedContext,
     sets: [QuerySet; Self::COUNT],
     last_us: ArrayVec<(&'static CStr, f32), { QuerySet::MAX_PER_FRAME as usize }>,
     timestamp_valid_mask: u64,
@@ -55,13 +51,13 @@ pub struct QueryPool {
 impl QueryPool {
     const COUNT: usize = CommandBufferPool::COUNT;
 
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         let mut sets = ArrayVec::new();
         for _ in 0..Self::COUNT {
             sets.push(QuerySet::new(&context.device));
         }
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             sets: sets.into_inner().unwrap(),
             last_us: ArrayVec::new(),
             timestamp_valid_mask: 1u64

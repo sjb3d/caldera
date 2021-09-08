@@ -62,7 +62,7 @@ enum ToneMapMethod {
 }
 
 struct App {
-    context: Arc<Context>,
+    context: SharedContext,
 
     trace_descriptor_set_layout: TraceDescriptorSetLayout,
     trace_pipeline_layout: vk::PipelineLayout,
@@ -138,7 +138,7 @@ impl App {
         };
 
         Self {
-            context: Arc::clone(&base.context),
+            context: SharedContext::clone(&base.context),
 
             trace_descriptor_set_layout,
             trace_pipeline_layout,

@@ -6,6 +6,7 @@ use std::{
     os::raw::c_void,
     slice,
     sync::atomic::{AtomicU64, Ordering},
+    sync::Arc,
 };
 use strum::{EnumString, EnumVariantNames};
 use winit::window::Window;
@@ -147,8 +148,10 @@ pub struct Context {
     pub next_handle_uid: AtomicU64,
 }
 
+pub type SharedContext = Arc<Context>;
+
 impl Context {
-    pub fn new(window: Option<&Window>, params: &ContextParams) -> Self {
+    pub fn new(window: Option<&Window>, params: &ContextParams) -> SharedContext {
         let instance = {
             let loader = Loader::new().unwrap();
             let instance_version = unsafe { loader.enumerate_instance_version() }.unwrap();
@@ -405,7 +408,7 @@ impl Context {
 
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
-        Self {
+        SharedContext::new(Self {
             instance,
             debug_utils_messenger,
             surface,
@@ -419,7 +422,7 @@ impl Context {
             queue,
             device,
             next_handle_uid: AtomicU64::new(0),
-        }
+        })
     }
 
     pub fn allocate_handle_uid(&self) -> u64 {

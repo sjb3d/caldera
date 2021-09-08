@@ -169,7 +169,7 @@ impl ViewAdjust {
 }
 
 struct App {
-    context: Arc<Context>,
+    context: SharedContext,
 
     copy_descriptor_set_layout: CopyDescriptorSetLayout,
     copy_pipeline_layout: vk::PipelineLayout,
@@ -205,7 +205,7 @@ impl App {
 
         let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), renderer.params.fov_y_override);
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             copy_descriptor_set_layout,
             copy_pipeline_layout,
             scene,
@@ -395,7 +395,7 @@ impl App {
 }
 
 struct CaptureBuffer {
-    context: Arc<Context>,
+    context: SharedContext,
     size: u32,
     mem: vk::DeviceMemory,
     buffer: UniqueBuffer,
@@ -403,7 +403,7 @@ struct CaptureBuffer {
 }
 
 impl CaptureBuffer {
-    fn new(context: &Arc<Context>, size: u32) -> Self {
+    fn new(context: &SharedContext, size: u32) -> Self {
         let buffer = {
             let create_info = vk::BufferCreateInfo {
                 size: size as vk::DeviceSize,
@@ -445,7 +445,7 @@ impl CaptureBuffer {
         .unwrap();
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             size,
             mem,
             buffer: Unique::new(buffer, context.allocate_handle_uid()),
@@ -482,7 +482,7 @@ impl Drop for CaptureBuffer {
 }
 
 struct CommandlineApp {
-    context: Arc<Context>,
+    context: SharedContext,
     systems: AppSystems,
     scene: Arc<Scene>,
     renderer: Renderer,

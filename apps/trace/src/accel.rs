@@ -166,7 +166,7 @@ struct TopLevelAccel {
 }
 
 pub struct SceneAccel {
-    context: Arc<Context>,
+    context: SharedContext,
     scene: Arc<Scene>,
     clusters: Arc<SceneClusters>,
     geometry_accel_data: Vec<Option<GeometryAccelData>>,
@@ -208,7 +208,7 @@ impl SceneAccel {
         self.geometry_accel_data[geometry_ref.0 as usize].as_ref()
     }
 
-    pub fn new(context: &Arc<Context>, scene: &Arc<Scene>, resource_loader: &mut ResourceLoader) -> Self {
+    pub fn new(context: &SharedContext, scene: &Arc<Scene>, resource_loader: &mut ResourceLoader) -> Self {
         let clusters = Arc::new(SceneClusters::new(scene));
 
         // make vertex/index buffers for each referenced geometry
@@ -352,7 +352,7 @@ impl SceneAccel {
         }
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             scene: Arc::clone(scene),
             clusters,
             geometry_accel_data,

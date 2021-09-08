@@ -1,7 +1,6 @@
 use crate::context::*;
 use imgui::Ui;
 use spark::{vk, Builder};
-use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Alloc {
@@ -10,7 +9,7 @@ pub struct Alloc {
 }
 
 struct Chunk {
-    context: Arc<Context>,
+    context: SharedContext,
     memory_type_index: u32,
     mem: vk::DeviceMemory,
     size: u32,
@@ -18,7 +17,7 @@ struct Chunk {
 }
 
 impl Chunk {
-    pub fn new(context: &Arc<Context>, memory_type_index: u32, size: u32) -> Self {
+    pub fn new(context: &SharedContext, memory_type_index: u32, size: u32) -> Self {
         let mem = {
             let mut flags_info = vk::MemoryAllocateFlagsInfo {
                 flags: if context.enable_buffer_device_addresses {
@@ -35,7 +34,7 @@ impl Chunk {
             unsafe { context.device.allocate_memory(&memory_allocate_info, None) }.unwrap()
         };
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             memory_type_index,
             mem,
             size,
@@ -73,15 +72,15 @@ impl Drop for Chunk {
 }
 
 pub struct Allocator {
-    context: Arc<Context>,
+    context: SharedContext,
     chunks: Vec<Chunk>,
     chunk_size: u32,
 }
 
 impl Allocator {
-    pub fn new(context: &Arc<Context>, chunk_size: u32) -> Self {
+    pub fn new(context: &SharedContext, chunk_size: u32) -> Self {
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             chunks: Vec::new(),
             chunk_size,
         }

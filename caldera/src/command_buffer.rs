@@ -1,7 +1,6 @@
 use crate::context::*;
 use spark::{vk, Builder};
 use std::slice;
-use std::sync::Arc;
 
 struct CommandBufferSemaphores {
     image_available: vk::Semaphore,
@@ -87,7 +86,7 @@ impl CommandBufferSet {
 }
 
 pub struct CommandBufferPool {
-    context: Arc<Context>,
+    context: SharedContext,
     sets: [CommandBufferSet; Self::COUNT],
     index: usize,
 }
@@ -95,9 +94,9 @@ pub struct CommandBufferPool {
 impl CommandBufferPool {
     pub const COUNT: usize = 2;
 
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             sets: [CommandBufferSet::new(context), CommandBufferSet::new(context)],
             index: 0,
         }

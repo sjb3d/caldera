@@ -2,7 +2,7 @@ use crate::prelude::*;
 use imgui::im_str;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use spark::{vk, Device};
-use std::{slice, sync::Arc, time::Instant};
+use std::{slice, time::Instant};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopWindowTarget},
@@ -101,7 +101,7 @@ pub struct AppSystems {
 pub struct AppBase {
     pub window: Window,
     pub exit_requested: bool,
-    pub context: Arc<Context>,
+    pub context: SharedContext,
     pub display: AppDisplay,
     pub last_instant: Instant,
     pub ui_context: imgui::Context,
@@ -113,7 +113,7 @@ pub struct AppBase {
 impl AppDisplay {
     pub const SWAPCHAIN_USAGE: vk::ImageUsageFlags = vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         let swapchain = Swapchain::new(context, Self::SWAPCHAIN_USAGE);
 
         Self {
@@ -145,7 +145,7 @@ impl AppDisplay {
 }
 
 impl AppSystems {
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         let descriptor_set_layout_cache = DescriptorSetLayoutCache::new(context);
         let descriptor_pool = DescriptorPool::new(context);
         let pipeline_cache = PipelineCache::new(context, "spv/bin");
@@ -223,7 +223,7 @@ pub enum AppEventResult {
 
 impl AppBase {
     pub fn new(window: Window, params: &ContextParams) -> Self {
-        let context = Arc::new(Context::new(Some(&window), params));
+        let context = Context::new(Some(&window), params);
         let display = AppDisplay::new(&context);
 
         let mut ui_context = imgui::Context::create();

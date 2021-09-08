@@ -42,7 +42,7 @@ enum RenderMode {
 }
 
 struct App {
-    context: Arc<Context>,
+    context: SharedContext,
 
     raster_descriptor_set_layout: RasterDescriptorSetLayout,
     raster_pipeline_layout: vk::PipelineLayout,
@@ -80,7 +80,7 @@ impl App {
         });
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             raster_descriptor_set_layout,
             raster_pipeline_layout,
             copy_descriptor_set_layout,

@@ -1,14 +1,11 @@
 use crate::command_buffer::CommandBufferPool;
-use crate::context::Context;
+use crate::context::SharedContext;
 use arrayvec::ArrayVec;
 use imgui::{ProgressBar, Ui};
 use spark::{vk, Builder};
 use std::{
     slice,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 fn align_up(x: u32, alignment: u32) -> u32 {
@@ -16,7 +13,7 @@ fn align_up(x: u32, alignment: u32) -> u32 {
 }
 
 struct UniformDataPool {
-    context: Arc<Context>,
+    context: SharedContext,
     min_alignment: u32,
     atom_size: u32,
     size_per_frame: u32,
@@ -31,7 +28,7 @@ struct UniformDataPool {
 impl UniformDataPool {
     const COUNT: usize = CommandBufferPool::COUNT;
 
-    pub fn new(context: &Arc<Context>, size_per_frame: u32) -> Self {
+    pub fn new(context: &SharedContext, size_per_frame: u32) -> Self {
         let min_alignment = context
             .physical_device_properties
             .limits
@@ -81,7 +78,7 @@ impl UniformDataPool {
         let mapping = unsafe { context.device.map_memory(mem, 0, vk::WHOLE_SIZE, Default::default()) }.unwrap();
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             min_alignment,
             atom_size,
             size_per_frame,
@@ -191,17 +188,17 @@ pub enum DescriptorSetBindingData<'a> {
 }
 
 pub struct DescriptorSetLayoutCache {
-    context: Arc<Context>,
+    context: SharedContext,
     use_inline_uniform_block: bool,
     descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pipeline_layouts: Vec<vk::PipelineLayout>,
 }
 
 impl DescriptorSetLayoutCache {
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         let use_inline_uniform_block = context.device.extensions.supports_ext_inline_uniform_block();
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             use_inline_uniform_block,
             descriptor_set_layouts: Vec::new(),
             pipeline_layouts: Vec::new(),
@@ -304,7 +301,7 @@ impl Drop for DescriptorSetLayoutCache {
 }
 
 pub struct DescriptorPool {
-    context: Arc<Context>,
+    context: SharedContext,
     pools: [vk::DescriptorPool; Self::COUNT],
     pool_index: usize,
     uniform_data_pool: Option<UniformDataPool>,
@@ -321,7 +318,7 @@ impl DescriptorPool {
     const MAX_UNIFORM_DATA_PER_SET: usize = 2 * 1024;
     const MAX_DESCRIPTORS_PER_SET: usize = 16;
 
-    pub fn new(context: &Arc<Context>) -> Self {
+    pub fn new(context: &SharedContext) -> Self {
         let use_inline_uniform_block = context.device.extensions.supports_ext_inline_uniform_block();
         if use_inline_uniform_block {
             println!("using inline uniform block for uniform data");
@@ -385,7 +382,7 @@ impl DescriptorPool {
             pools.into_inner().unwrap()
         };
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             pools,
             pool_index: 0,
             uniform_data_pool: if use_inline_uniform_block {

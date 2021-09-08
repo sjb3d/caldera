@@ -1,4 +1,4 @@
-use crate::context::Context;
+use crate::context::SharedContext;
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
@@ -43,7 +43,7 @@ struct ShaderReloader {
 }
 
 struct ShaderLoader {
-    context: Arc<Context>,
+    context: SharedContext,
     base_path: PathBuf,
     reloader: Option<ShaderReloader>,
     current_shaders: HashMap<PathBuf, vk::ShaderModule>,
@@ -51,7 +51,7 @@ struct ShaderLoader {
 }
 
 impl ShaderLoader {
-    pub fn new<P: AsRef<Path>>(context: &Arc<Context>, base_path: P) -> Self {
+    pub fn new<P: AsRef<Path>>(context: &SharedContext, base_path: P) -> Self {
         let base_path = base_path.as_ref().to_owned();
 
         let (tx, rx) = mpsc::channel();
@@ -62,7 +62,7 @@ impl ShaderLoader {
         let new_shaders = Arc::new(Mutex::new(HashMap::new()));
 
         let join_handle = thread::spawn({
-            let context = Arc::clone(context);
+            let context = SharedContext::clone(context);
             let new_shaders = Arc::clone(&new_shaders);
             let short_base_path = base_path.clone();
             let full_base_path = base_path.canonicalize().unwrap();
@@ -88,7 +88,7 @@ impl ShaderLoader {
         });
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             base_path,
             reloader: Some(ShaderReloader { watcher, join_handle }),
             current_shaders,
@@ -260,7 +260,7 @@ enum PipelineCacheKey {
 }
 
 pub struct PipelineCache {
-    context: Arc<Context>,
+    context: SharedContext,
     shader_loader: ShaderLoader,
     pipeline_cache: vk::PipelineCache,
     current_pipelines: HashMap<PipelineCacheKey, vk::Pipeline>,
@@ -268,7 +268,7 @@ pub struct PipelineCache {
 }
 
 impl PipelineCache {
-    pub fn new<P: AsRef<Path>>(context: &Arc<Context>, path: P) -> Self {
+    pub fn new<P: AsRef<Path>>(context: &SharedContext, path: P) -> Self {
         let pipeline_cache = {
             // TODO: load from file
             let create_info = vk::PipelineCacheCreateInfo {
@@ -282,7 +282,7 @@ impl PipelineCache {
             unsafe { context.device.create_pipeline_cache(&create_info, None) }.unwrap()
         };
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             shader_loader: ShaderLoader::new(context, path),
             pipeline_cache,
             current_pipelines: HashMap::new(),

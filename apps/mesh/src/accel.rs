@@ -36,14 +36,14 @@ struct AccelerationStructureInstance {
 }
 
 struct AccelLevel {
-    context: Arc<Context>,
+    context: SharedContext,
     accel: vk::AccelerationStructureKHR,
     buffer: BufferHandle,
 }
 
 impl AccelLevel {
     fn new_bottom_level<'a>(
-        context: &'a Arc<Context>,
+        context: &'a SharedContext,
         mesh_info: &MeshInfo,
         resource_loader: &ResourceLoader,
         global_allocator: &mut Allocator,
@@ -170,14 +170,14 @@ impl AccelLevel {
         );
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             accel,
             buffer,
         }
     }
 
     fn new_top_level<'a>(
-        context: &'a Arc<Context>,
+        context: &'a SharedContext,
         bottom_level_buffer: BufferHandle,
         instance_buffer: vk::Buffer,
         global_allocator: &mut Allocator,
@@ -287,7 +287,7 @@ impl AccelLevel {
         );
 
         Self {
-            context: Arc::clone(context),
+            context: SharedContext::clone(context),
             accel,
             buffer,
         }
@@ -333,7 +333,7 @@ pub struct AccelInfo {
 
 impl AccelInfo {
     pub fn new<'a>(
-        context: &'a Arc<Context>,
+        context: &'a SharedContext,
         descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
@@ -418,7 +418,7 @@ impl AccelInfo {
 
         let shader_binding_table = resource_loader.create_buffer();
         resource_loader.async_load({
-            let context = Arc::clone(context);
+            let context = SharedContext::clone(context);
             move |allocator| {
                 let rtpp = context.ray_tracing_pipeline_properties.as_ref().unwrap();
                 let shader_group_count = 3;
@@ -514,7 +514,7 @@ impl AccelInfo {
 
     pub fn update<'a>(
         &mut self,
-        context: &'a Arc<Context>,
+        context: &'a SharedContext,
         resource_loader: &ResourceLoader,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
