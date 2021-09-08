@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 caldera = { path = "../../caldera" }
-spark = { git = "https://github.com/sjb3d/spark/" }
+spark = { path = "../../../spark/spark/" }
 bytemuck = { version = "1.5", features = ["derive"] }
 winit = "0.24"
 imgui = "0.7"
