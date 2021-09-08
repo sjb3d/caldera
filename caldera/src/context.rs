@@ -176,6 +176,11 @@ impl Context {
                 || extensions.enable_ext_debug_utils(),
                 || panic!("EXT_debug_utils not supported"),
             );
+            params.scalar_block_layout.apply(
+                || available_extensions.supports_ext_scalar_block_layout(),
+                || extensions.enable_ext_scalar_block_layout(),
+                || panic!("EXT_scalar_block_layout not supported"),
+            );
             params.inline_uniform_block.apply(
                 || available_extensions.supports_ext_inline_uniform_block(),
                 || extensions.enable_ext_inline_uniform_block(),
