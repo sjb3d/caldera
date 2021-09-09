@@ -171,6 +171,7 @@ dependencies = [
  "imgui",
  "imgui-winit-support",
  "notify",
+ "ply-rs",
  "raw-window-handle",
  "spark",
  "spark-imgui",

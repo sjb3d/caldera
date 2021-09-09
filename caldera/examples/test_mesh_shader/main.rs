@@ -1,6 +1,11 @@
+mod cluster;
+mod loader;
+
+use crate::{cluster::*, loader::*};
 use caldera::prelude::*;
 use imgui::Key;
 use spark::vk;
+use std::path::PathBuf;
 use structopt::StructOpt;
 use strum::VariantNames;
 use winit::{
@@ -14,12 +19,14 @@ descriptor_set_layout!(ClusterDescriptorSetLayout {});
 struct App {
     context: SharedContext,
 
+    mesh: Mesh,
+
     cluster_descriptor_set_layout: ClusterDescriptorSetLayout,
     cluster_pipeline_layout: vk::PipelineLayout,
 }
 
 impl App {
-    fn new(base: &mut AppBase) -> Self {
+    fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
         let context = SharedContext::clone(&base.context);
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
 
@@ -27,8 +34,13 @@ impl App {
         let cluster_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(cluster_descriptor_set_layout.0);
 
+        // TODO: load + process the mesh on a thread
+        let mesh = load_ply_mesh(&mesh_file_name);
+        println!("loaded mesh: {} vertices, {} triangles", mesh.positions.len(), mesh.indices.len());
+
         Self {
             context,
+            mesh,
             cluster_descriptor_set_layout,
             cluster_pipeline_layout,
         }
@@ -71,7 +83,7 @@ impl App {
             move |_params, cmd, render_pass| {
                 set_viewport_helper(&context.device, cmd, swap_size);
 
-                // draw mesh#
+                // draw mesh
                 let state = GraphicsPipelineState::new(render_pass, vk::SampleCountFlags::N1);
                 let pipeline = pipeline_cache.get_graphics(
                     VertexShaderNames::mesh(
@@ -120,6 +132,9 @@ struct AppParams {
     /// Whether to use EXT_inline_uniform_block
     #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
     inline_uniform_block: ContextFeature,
+
+    /// The PLY file to load
+    mesh_file_name: PathBuf,
 }
 
 fn main() {
@@ -140,7 +155,7 @@ fn main() {
         .unwrap();
 
     let mut base = AppBase::new(window, &context_params);
-    let app = App::new(&mut base);
+    let app = App::new(&mut base, app_params.mesh_file_name);
 
     let mut apps = Some((base, app));
     event_loop.run(move |event, target, control_flow| {
