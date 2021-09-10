@@ -40,6 +40,23 @@ impl AsFloat for UVec2 {
     }
 }
 
+pub trait MapMut {
+    type Component;
+    fn map_mut<F>(&self, f: F) -> Self
+    where
+        F: FnMut(Self::Component) -> Self::Component;
+}
+
+impl MapMut for UVec3 {
+    type Component = u32;
+    fn map_mut<F>(&self, mut f: F) -> Self
+    where
+        F: FnMut(Self::Component) -> Self::Component,
+    {
+        UVec3::new(f(self.x), f(self.y), f(self.z))
+    }
+}
+
 pub trait IsNan {
     fn is_nan(&self) -> bool;
 }
