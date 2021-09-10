@@ -10,7 +10,7 @@ use std::{
     io::{self, prelude::*},
     mem,
     path::{Path, PathBuf},
-    slice,
+    ptr, slice,
     sync::{mpsc, Arc, Mutex},
     thread::{self, JoinHandle},
     time::Duration,
@@ -234,34 +234,76 @@ impl SpecializationConstant {
     }
 }
 
-pub enum VertexShaderNames<'a> {
+struct SpecializationData {
+    map_entries: Vec<vk::SpecializationMapEntry>,
+    store: Vec<u8>,
+}
+
+impl SpecializationData {
+    fn new(constants: &[SpecializationConstant]) -> Self {
+        let mut map_entries = Vec::new();
+        let mut store = Vec::new();
+        for constant in constants {
+            let bytes = constant.data.as_bytes();
+            map_entries.push(vk::SpecializationMapEntry {
+                constant_id: constant.id,
+                offset: store.len() as u32,
+                size: bytes.len(),
+            });
+            store.extend_from_slice(bytes);
+        }
+        Self { map_entries, store }
+    }
+
+    fn info(&self) -> <vk::SpecializationInfo as Builder>::Type {
+        vk::SpecializationInfo::builder()
+            .p_map_entries(&self.map_entries)
+            .p_data(&self.store)
+    }
+}
+
+pub enum VertexShaderDesc<'a> {
     Standard {
         vertex: &'a str,
         // TODO: tesellation/geometry shader names
     },
     Mesh {
-        task: Option<&'a str>,
+        task: &'a str,
+        task_constants: &'a [SpecializationConstant],
+        task_subgroup_size: Option<u32>,
         mesh: &'a str,
     },
 }
 
-impl<'a> VertexShaderNames<'a> {
+impl<'a> VertexShaderDesc<'a> {
     pub fn standard(vertex: &'a str) -> Self {
         Self::Standard { vertex }
     }
 
-    pub fn mesh(task: Option<&'a str>, mesh: &'a str) -> Self {
-        Self::Mesh { task, mesh }
+    pub fn mesh(
+        task: &'a str,
+        task_constants: &'a [SpecializationConstant],
+        task_subgroup_size: Option<u32>,
+        mesh: &'a str,
+    ) -> Self {
+        Self::Mesh {
+            task,
+            task_constants,
+            task_subgroup_size,
+            mesh,
+        }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum VertexShaderModules {
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum VertexShaderKey {
     Standard {
         vertex: vk::ShaderModule,
     },
     Mesh {
-        task: Option<vk::ShaderModule>,
+        task: vk::ShaderModule,
+        task_constants: Vec<SpecializationConstant>,
+        task_subgroup_size: Option<u32>,
         mesh: vk::ShaderModule,
     },
 }
@@ -276,7 +318,7 @@ enum PipelineCacheKey {
     },
     Graphics {
         pipeline_layout: vk::PipelineLayout,
-        vertex_shaders: VertexShaderModules,
+        vertex_shader: VertexShaderKey,
         fragment_shader: vk::ShaderModule,
         state: GraphicsPipelineState,
     },
@@ -347,20 +389,10 @@ impl PipelineCache {
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let mut specialization_map_entries = Vec::new();
-                let mut specialization_data = Vec::new();
-                for constant in constants {
-                    let bytes = constant.data.as_bytes();
-                    specialization_map_entries.push(vk::SpecializationMapEntry {
-                        constant_id: constant.id,
-                        offset: specialization_data.len() as u32,
-                        size: bytes.len(),
-                    });
-                    specialization_data.extend_from_slice(bytes);
-                }
+                let specialization_data = SpecializationData::new(constants);
                 let specialization_info = vk::SpecializationInfo::builder()
-                    .p_map_entries(&specialization_map_entries)
-                    .p_data(&specialization_data);
+                    .p_map_entries(&specialization_data.map_entries)
+                    .p_data(&specialization_data.store);
                 let pipeline_create_info = vk::ComputePipelineCreateInfo {
                     stage: vk::PipelineShaderStageCreateInfo {
                         stage: vk::ShaderStageFlags::COMPUTE,
@@ -386,24 +418,31 @@ impl PipelineCache {
 
     pub fn get_graphics(
         &self,
-        vertex_shader_names: VertexShaderNames,
+        vertex_shader_desc: VertexShaderDesc,
         fragment_shader_name: &str,
         pipeline_layout: vk::PipelineLayout,
         state: &GraphicsPipelineState,
     ) -> vk::Pipeline {
-        let vertex_shaders = match vertex_shader_names {
-            VertexShaderNames::Standard { vertex } => VertexShaderModules::Standard {
+        let vertex_shader = match vertex_shader_desc {
+            VertexShaderDesc::Standard { vertex } => VertexShaderKey::Standard {
                 vertex: self.shader_loader.get_shader(vertex).unwrap(),
             },
-            VertexShaderNames::Mesh { task, mesh } => VertexShaderModules::Mesh {
-                task: task.map(|task| self.shader_loader.get_shader(task).unwrap()),
+            VertexShaderDesc::Mesh {
+                task,
+                task_constants,
+                task_subgroup_size,
+                mesh,
+            } => VertexShaderKey::Mesh {
+                task: self.shader_loader.get_shader(task).unwrap(),
+                task_constants: task_constants.to_vec(),
+                task_subgroup_size,
                 mesh: self.shader_loader.get_shader(mesh).unwrap(),
             },
         };
         let fragment_shader = self.shader_loader.get_shader(fragment_shader_name).unwrap();
         let key = PipelineCacheKey::Graphics {
             pipeline_layout,
-            vertex_shaders,
+            vertex_shader: vertex_shader.clone(),
             fragment_shader,
             state: state.clone(),
         };
@@ -412,9 +451,13 @@ impl PipelineCache {
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
+                let mut specialization_data = ArrayVec::<SpecializationData, 1>::new();
+                let mut specialization_info = ArrayVec::<vk::SpecializationInfo, 1>::new();
+                let mut required_subgroup_size_create_info =
+                    ArrayVec::<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT, 1>::new();
                 let mut shader_stage_create_info = ArrayVec::<vk::PipelineShaderStageCreateInfo, 3>::new();
-                match vertex_shaders {
-                    VertexShaderModules::Standard { vertex } => {
+                match vertex_shader {
+                    VertexShaderKey::Standard { vertex } => {
                         shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
                             stage: vk::ShaderStageFlags::VERTEX,
                             module: Some(vertex),
@@ -422,15 +465,41 @@ impl PipelineCache {
                             ..Default::default()
                         });
                     }
-                    VertexShaderModules::Mesh { task, mesh } => {
-                        if let Some(task) = task {
-                            shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                    VertexShaderKey::Mesh {
+                        task,
+                        task_constants,
+                        task_subgroup_size,
+                        mesh,
+                    } => {
+                        shader_stage_create_info.push({
+                            specialization_data.push(SpecializationData::new(&task_constants));
+                            specialization_info.push(*specialization_data.last().unwrap().info());
+                            let p_next = if let Some(task_subgroup_size) = task_subgroup_size {
+                                required_subgroup_size_create_info.push(
+                                    vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT {
+                                        required_subgroup_size: task_subgroup_size,
+                                        ..Default::default()
+                                    },
+                                );
+                                required_subgroup_size_create_info.last().unwrap() as *const _ as *const _
+                            } else {
+                                ptr::null()
+                            };
+                            let flags = if task_subgroup_size.is_some() {
+                                vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS_EXT
+                            } else {
+                                vk::PipelineShaderStageCreateFlags::empty()
+                            };
+                            vk::PipelineShaderStageCreateInfo {
+                                p_next,
+                                flags,
                                 stage: vk::ShaderStageFlags::TASK_NV,
                                 module: Some(task),
                                 p_name: shader_entry_name.as_ptr(),
+                                p_specialization_info: specialization_info.last().unwrap(),
                                 ..Default::default()
-                            });
-                        }
+                            }
+                        });
                         shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
                             stage: vk::ShaderStageFlags::MESH_NV,
                             module: Some(mesh),

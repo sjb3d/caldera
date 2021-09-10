@@ -111,6 +111,7 @@ pub struct ContextParams {
     pub inline_uniform_block: ContextFeature,
     pub ray_tracing: ContextFeature,
     pub mesh_shader: ContextFeature,
+    pub subgroup_size_control: ContextFeature,
 }
 
 impl Default for ContextParams {
@@ -124,8 +125,15 @@ impl Default for ContextParams {
             inline_uniform_block: ContextFeature::Optional,
             ray_tracing: ContextFeature::Disable,
             mesh_shader: ContextFeature::Disable,
+            subgroup_size_control: ContextFeature::Disable,
         }
     }
+}
+
+pub struct PhysicalDeviceExtraProperties {
+    pub ray_tracing_pipeline: vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
+    pub mesh_shader: vk::PhysicalDeviceMeshShaderPropertiesNV,
+    pub subgroup_size_control: vk::PhysicalDeviceSubgroupSizeControlPropertiesEXT,
 }
 
 pub struct Context {
@@ -135,8 +143,7 @@ pub struct Context {
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
-    pub physical_device_ray_tracing_pipeline_properties: Option<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>,
-    pub physical_device_mesh_shader_properties: Option<vk::PhysicalDeviceMeshShaderPropertiesNV>,
+    pub physical_device_extra_properties: Option<PhysicalDeviceExtraProperties>,
     pub enable_buffer_device_addresses: bool,
     pub queue_family_index: u32,
     pub queue_family_properties: vk::QueueFamilyProperties,
@@ -204,6 +211,11 @@ impl Context {
                 || extensions.enable_nv_mesh_shader(),
                 || panic!("NV_mesh_shader not supported"),
             );
+            params.subgroup_size_control.apply(
+                || available_extensions.supports_khr_get_physical_device_properties2(),
+                || extensions.enable_khr_get_physical_device_properties2(),
+                || panic!("KHR_get_physical_device_properties2 not supported"),
+            );
 
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
@@ -252,18 +264,23 @@ impl Context {
         let physical_device_features = unsafe { instance.get_physical_device_features(physical_device) };
         let device_version = physical_device_properties.api_version;
 
-        let (physical_device_ray_tracing_pipeline_properties, physical_device_mesh_shader_properties) =
-            if instance.extensions.supports_khr_get_physical_device_properties2() {
-                let mut rtpp = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
-                let mut msp = vk::PhysicalDeviceMeshShaderPropertiesNV::default();
-                let mut properties2 = vk::PhysicalDeviceProperties2::builder()
-                    .insert_next(&mut rtpp)
-                    .insert_next(&mut msp);
-                unsafe { instance.get_physical_device_properties2(physical_device, properties2.get_mut()) };
-                (Some(rtpp), Some(msp))
-            } else {
-                (None, None)
-            };
+        let physical_device_extra_properties = if instance.extensions.supports_khr_get_physical_device_properties2() {
+            let mut ray_tracing_pipeline = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
+            let mut mesh_shader = vk::PhysicalDeviceMeshShaderPropertiesNV::default();
+            let mut subgroup_size_control = vk::PhysicalDeviceSubgroupSizeControlPropertiesEXT::default();
+            let mut properties2 = vk::PhysicalDeviceProperties2::builder()
+                .insert_next(&mut ray_tracing_pipeline)
+                .insert_next(&mut mesh_shader)
+                .insert_next(&mut subgroup_size_control);
+            unsafe { instance.get_physical_device_properties2(physical_device, properties2.get_mut()) };
+            Some(PhysicalDeviceExtraProperties {
+                ray_tracing_pipeline,
+                mesh_shader,
+                subgroup_size_control,
+            })
+        } else {
+            None
+        };
 
         let physical_device_memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
@@ -400,6 +417,11 @@ impl Context {
                 },
                 || panic!("NV_mesh_shader not supported"),
             );
+            params.subgroup_size_control.apply(
+                || available_extensions.supports_ext_subgroup_size_control(),
+                || extensions.enable_ext_subgroup_size_control(),
+                || panic!("EXT_subgroup_size_control not supported"),
+            );
 
             let extension_names = extensions.to_name_vec();
             for &name in extension_names.iter() {
@@ -432,8 +454,7 @@ impl Context {
             physical_device,
             physical_device_properties,
             physical_device_memory_properties,
-            physical_device_ray_tracing_pipeline_properties,
-            physical_device_mesh_shader_properties,
+            physical_device_extra_properties,
             enable_buffer_device_addresses,
             queue_family_index,
             queue_family_properties,

@@ -67,7 +67,7 @@ pub fn draw_helper(
     vertex_count: u32,
 ) {
     let pipeline = pipeline_cache.get_graphics(
-        VertexShaderNames::standard(vertex_shader_name),
+        VertexShaderDesc::standard(vertex_shader_name),
         fragment_shader_name,
         pipeline_layout,
         state,

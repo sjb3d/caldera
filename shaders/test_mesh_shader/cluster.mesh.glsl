@@ -2,11 +2,12 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_NV_mesh_shader : require
 
+#extension GL_GOOGLE_include_directive : require
+#include "cluster_common.glsl"
+
 layout(local_size_x = 1) in;
 
-taskNV in Task {
-    uint id[3];
-} i_task;
+CLUSTER_TASK(in, i_task);
 
 layout(triangles, max_vertices = 3, max_primitives = 1) out;
 

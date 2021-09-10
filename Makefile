@@ -1,5 +1,6 @@
 GLSLC=glslangValidator
 GLSLCFLAGS_COMMON=-V -Ishaders/common
+GLSLCFLAGS_MESH=--target-env spirv1.3
 GLSLCFLAGS_RAYS=--target-env spirv1.4
 
 DISASM=spirv-dis
@@ -12,6 +13,7 @@ INC=\
 	common/normal_pack.glsl \
 	common/sampler.glsl \
 	common/tone_map.glsl \
+	test_mesh_shader/cluster_common.glsl \
 	trace/bsdf_common.glsl \
 	trace/diffuse_bsdf.glsl \
 	trace/disc_light.glsl \
@@ -99,6 +101,9 @@ $(BIN_DIR)/%.rint.spv: $(SRC_DIR)/%.rint.glsl $(INCLUDES) Makefile
 
 $(BIN_DIR)/%.rmiss.spv: $(SRC_DIR)/%.rmiss.glsl $(INCLUDES) Makefile
 	$(GLSLC) $(GLSLCFLAGS_COMMON) $(GLSLCFLAGS_RAYS) -o $@ $<
+
+$(BIN_DIR)/%.task.spv: $(SRC_DIR)/%.task.glsl $(INCLUDES) Makefile
+	$(GLSLC) $(GLSLCFLAGS_COMMON) $(GLSLCFLAGS_MESH) -o $@ $<
 
 $(BIN_DIR)/%.spv: $(SRC_DIR)/%.glsl $(INCLUDES) Makefile
 	$(GLSLC) $(GLSLCFLAGS_COMMON) -o $@ $<

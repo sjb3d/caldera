@@ -1532,11 +1532,12 @@ impl Renderer {
         }
 
         // grab the shader group handles
-        let rtpp = self
+        let rtpp = &self
             .context
-            .physical_device_ray_tracing_pipeline_properties
+            .physical_device_extra_properties
             .as_ref()
-            .unwrap();
+            .unwrap()
+            .ray_tracing_pipeline;
         let handle_size = rtpp.shader_group_handle_size as usize;
         let shader_group_count = 1 + ShaderGroup::MAX_VALUE;
         let mut shader_group_handle_data = vec![0u8; shader_group_count * handle_size];
@@ -1568,11 +1569,12 @@ impl Renderer {
         let total_light_count = external_light_end;
 
         // figure out the layout
-        let rtpp = self
+        let rtpp = &self
             .context
-            .physical_device_ray_tracing_pipeline_properties
+            .physical_device_extra_properties
             .as_ref()
-            .unwrap();
+            .unwrap()
+            .ray_tracing_pipeline;
 
         let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
         let mut next_offset = 0;

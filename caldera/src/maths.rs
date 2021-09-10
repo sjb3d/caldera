@@ -81,6 +81,11 @@ pub trait DivRoundUp {
     fn div_round_up(&self, divisor: u32) -> Self;
 }
 
+impl DivRoundUp for u32 {
+    fn div_round_up(&self, divisor: u32) -> Self {
+        (*self + (divisor - 1)) / divisor
+    }
+}
 impl DivRoundUp for UVec2 {
     fn div_round_up(&self, divisor: u32) -> Self {
         (*self + Self::broadcast(divisor - 1)) / divisor

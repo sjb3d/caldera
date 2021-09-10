@@ -2,6 +2,7 @@ mod cluster;
 mod loader;
 
 use crate::{cluster::*, loader::*};
+use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
 use imgui::Key;
 use spark::vk;
@@ -14,13 +15,20 @@ use winit::{
     window::WindowBuilder,
 };
 
-descriptor_set_layout!(ClusterDescriptorSetLayout {});
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct ClusterUniforms {
+    task_count: u32,
+}
+
+descriptor_set_layout!(ClusterDescriptorSetLayout {
+    cluster_uniforms: UniformData<ClusterUniforms>,
+});
 
 struct App {
     context: SharedContext,
 
-    mesh: Mesh,
-
+    task_group_size: u32,
     cluster_descriptor_set_layout: ClusterDescriptorSetLayout,
     cluster_pipeline_layout: vk::PipelineLayout,
 }
@@ -34,6 +42,14 @@ impl App {
         let cluster_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(cluster_descriptor_set_layout.0);
 
+        let task_group_size = context
+            .physical_device_extra_properties
+            .as_ref()
+            .unwrap()
+            .subgroup_size_control
+            .max_subgroup_size;
+        println!("task group size: {}", task_group_size);
+
         // TODO: load + process the mesh on a thread
         let mesh = load_ply_mesh(&mesh_file_name);
         println!(
@@ -45,7 +61,7 @@ impl App {
 
         Self {
             context,
-            mesh,
+            task_group_size,
             cluster_descriptor_set_layout,
             cluster_pipeline_layout,
         }
@@ -79,8 +95,10 @@ impl App {
 
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
             let context = base.context.as_ref();
+            let descriptor_pool = &mut base.systems.descriptor_pool;
             let pipeline_cache = &base.systems.pipeline_cache;
-            let _cluster_descriptor_set_layout = &self.cluster_descriptor_set_layout;
+            let task_group_size = self.task_group_size;
+            let cluster_descriptor_set_layout = &self.cluster_descriptor_set_layout;
             let cluster_pipeline_layout = self.cluster_pipeline_layout;
             let window = &base.window;
             let ui_platform = &mut base.ui_platform;
@@ -89,10 +107,18 @@ impl App {
                 set_viewport_helper(&context.device, cmd, swap_size);
 
                 // draw mesh
+                let task_count = 3;
+                let cluster_descriptor_set = cluster_descriptor_set_layout
+                    .write(descriptor_pool, |buf: &mut ClusterUniforms| {
+                        *buf = ClusterUniforms { task_count }
+                    });
+
                 let state = GraphicsPipelineState::new(render_pass, vk::SampleCountFlags::N1);
                 let pipeline = pipeline_cache.get_graphics(
-                    VertexShaderNames::mesh(
-                        Some("test_mesh_shader/cluster.task.spv"),
+                    VertexShaderDesc::mesh(
+                        "test_mesh_shader/cluster.task.spv",
+                        &[SpecializationConstant::new(0, task_group_size)],
+                        Some(task_group_size),
                         "test_mesh_shader/cluster.mesh.spv",
                     ),
                     "test_mesh_shader/cluster.frag.spv",
@@ -102,7 +128,15 @@ impl App {
                 let device = &context.device;
                 unsafe {
                     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                    device.cmd_draw_mesh_tasks_nv(cmd, 1, 0);
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        cluster_pipeline_layout,
+                        0,
+                        &[cluster_descriptor_set],
+                        &[],
+                    );
+                    device.cmd_draw_mesh_tasks_nv(cmd, task_count.div_round_up(task_group_size), 0);
                 }
 
                 // draw imgui
@@ -131,7 +165,7 @@ impl App {
 #[structopt(no_version)]
 struct AppParams {
     /// Core Vulkan version to load
-    #[structopt(short, long, parse(try_from_str=try_version_from_str), default_value="1.0")]
+    #[structopt(short, long, parse(try_from_str=try_version_from_str), default_value="1.1")]
     version: vk::Version,
 
     /// Whether to use EXT_inline_uniform_block
@@ -148,6 +182,7 @@ fn main() {
         version: app_params.version,
         inline_uniform_block: app_params.inline_uniform_block,
         mesh_shader: ContextFeature::Require,
+        subgroup_size_control: ContextFeature::Require,
         ..Default::default()
     };
 
