@@ -48,7 +48,7 @@ pub fn load_ply_mesh(file_name: &Path) -> Mesh {
     Mesh {
         positions: vertices.drain(..).map(|v| v.pos).collect(),
         normals,
-        indices: faces.drain(..).map(|f| f.indices).collect(),
+        triangles: faces.drain(..).map(|f| f.indices).collect(),
     }
 }
 

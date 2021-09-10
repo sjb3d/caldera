@@ -36,7 +36,12 @@ impl App {
 
         // TODO: load + process the mesh on a thread
         let mesh = load_ply_mesh(&mesh_file_name);
-        println!("loaded mesh: {} vertices, {} triangles", mesh.positions.len(), mesh.indices.len());
+        println!(
+            "loaded mesh: {} vertices, {} triangles",
+            mesh.positions.len(),
+            mesh.triangles.len()
+        );
+        let _clusters = build_clusters(&mesh);
 
         Self {
             context,
