@@ -128,7 +128,7 @@ impl MeshInfo {
             )
             .unwrap();
         self.min = Vec3::broadcast(f32::MAX);
-        self.max = Vec3::broadcast(-f32::MAX);
+        self.max = Vec3::broadcast(f32::MIN);
         for &pos in &mesh.positions {
             writer.write(&pos);
             self.min = self.min.min_by_component(pos);

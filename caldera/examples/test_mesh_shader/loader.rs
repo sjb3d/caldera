@@ -26,17 +26,21 @@ pub fn load_ply_mesh(file_name: &Path) -> Mesh {
     }
 
     let mut normals = vec![Vec3::zero(); vertices.len()];
+    let mut face_normals = Vec::new();
     for src in faces.iter() {
         let v0 = vertices[src.indices[0] as usize].pos;
         let v1 = vertices[src.indices[1] as usize].pos;
         let v2 = vertices[src.indices[2] as usize].pos;
-        let normal = (v2 - v1).cross(v0 - v1).normalized();
-        if !normal.is_nan() {
+        let face_normal = (v2 - v1).cross(v0 - v1).normalized();
+        face_normals.push(if face_normal.is_nan() {
+            Vec3::zero()
+        } else {
             // TODO: weight by angle at vertex?
-            normals[src.indices[0] as usize] += normal;
-            normals[src.indices[1] as usize] += normal;
-            normals[src.indices[2] as usize] += normal;
-        }
+            normals[src.indices[0] as usize] += face_normal;
+            normals[src.indices[1] as usize] += face_normal;
+            normals[src.indices[2] as usize] += face_normal;
+            face_normal
+        });
     }
     for n in normals.iter_mut() {
         let u = n.normalized();
@@ -49,6 +53,7 @@ pub fn load_ply_mesh(file_name: &Path) -> Mesh {
         positions: vertices.drain(..).map(|v| v.pos).collect(),
         normals,
         triangles: faces.drain(..).map(|f| f.indices).collect(),
+        face_normals,
     }
 }
 

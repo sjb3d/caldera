@@ -134,7 +134,7 @@ impl MeshInfo {
             )
             .unwrap();
         let mut min = Vec3::broadcast(f32::MAX);
-        let mut max = Vec3::broadcast(-f32::MAX);
+        let mut max = Vec3::broadcast(f32::MIN);
         for src in vertices.iter() {
             let v = src.pos;
             writer.write(&v);

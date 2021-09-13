@@ -8,19 +8,46 @@ pub struct Mesh {
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub triangles: Vec<UVec3>,
+    pub face_normals: Vec<Vec3>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Bounds3 {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+impl Bounds3 {
+    pub fn new() -> Self {
+        Self {
+            min: Vec3::broadcast(f32::MAX),
+            max: Vec3::broadcast(f32::MIN),
+        }
+    }
+
+    pub fn union_with_point(&mut self, p: Vec3) {
+        self.min = self.min.min_by_component(p);
+        self.max = self.max.max_by_component(p);
+    }
 }
 
 #[derive(Debug)]
 pub struct Cluster {
+    pub position_bounds: Bounds3,
+    pub face_normal_bounds: Bounds3,
     pub mesh_vertices: Vec<u32>,
     pub triangles: Vec<UVec3>,
+    pub mesh_triangles: Vec<u32>,
 }
 
 impl Cluster {
     fn new() -> Self {
         Self {
+            position_bounds: Bounds3::new(),
+            face_normal_bounds: Bounds3::new(),
             mesh_vertices: Vec::new(),
             triangles: Vec::new(),
+            mesh_triangles: Vec::new(),
         }
     }
 }
@@ -72,31 +99,43 @@ impl TriangleListPerVertex {
     }
 }
 
-struct ClusterVertexRemap(Vec<u8>);
+struct ClusterVertexRemap<'m> {
+    mesh_positions: &'m [Vec3],
+    position_bounds: Bounds3,
+    cluster_vertices: Vec<u8>,
+}
 
-impl ClusterVertexRemap {
-    fn new(mesh: &Mesh) -> Self {
-        Self(vec![u8::MAX; mesh.positions.len()])
+impl<'m> ClusterVertexRemap<'m> {
+    fn new(mesh: &'m Mesh) -> Self {
+        Self {
+            mesh_positions: &mesh.positions,
+            position_bounds: Bounds3::new(),
+            cluster_vertices: vec![u8::MAX; mesh.positions.len()],
+        }
     }
 
     fn get_or_insert(&mut self, mesh_vertex: u32, cluster: &mut Cluster) -> u32 {
-        let mut cluster_vertex = self.0[mesh_vertex as usize];
+        let mut cluster_vertex = self.cluster_vertices[mesh_vertex as usize];
         if cluster_vertex == u8::MAX {
             cluster_vertex = cluster.mesh_vertices.len() as u8;
             cluster.mesh_vertices.push(mesh_vertex);
-            self.0[mesh_vertex as usize] = cluster_vertex as u8;
+            self.position_bounds
+                .union_with_point(self.mesh_positions[mesh_vertex as usize]);
+            self.cluster_vertices[mesh_vertex as usize] = cluster_vertex as u8;
         }
         cluster_vertex as u32
     }
 
     fn contains(&self, mesh_vertex: u32) -> bool {
-        self.0[mesh_vertex as usize] != u8::MAX
+        self.cluster_vertices[mesh_vertex as usize] != u8::MAX
     }
 
-    fn reset(&mut self, cluster: &Cluster) {
+    fn finish(&mut self, cluster: &mut Cluster) {
         for &mesh_vertex in &cluster.mesh_vertices {
-            self.0[mesh_vertex as usize] = u8::MAX;
+            self.cluster_vertices[mesh_vertex as usize] = u8::MAX;
         }
+        cluster.position_bounds = self.position_bounds;
+        self.position_bounds = Bounds3::new();
     }
 }
 
@@ -104,7 +143,7 @@ struct ClusterBuilder<'m> {
     mesh: &'m Mesh,
     triangle_list_per_vertex: TriangleListPerVertex,
     available_triangles: BitVec,
-    vertex_remap: ClusterVertexRemap,
+    vertex_remap: ClusterVertexRemap<'m>,
 }
 
 impl<'m> ClusterBuilder<'m> {
@@ -117,26 +156,20 @@ impl<'m> ClusterBuilder<'m> {
         }
     }
 
-    fn add_next_available_triangle(&mut self, cluster: &mut Cluster) -> bool {
-        assert!(cluster.mesh_vertices.len() + 3 <= MAX_VERTICES_PER_CLUSTER);
-        assert!(cluster.triangles.len() + 1 <= MAX_TRIANGLES_PER_CLUSTER);
-        if let Some(triangle_index) = self.available_triangles.first_one() {
-            let triangle = self.mesh.triangles[triangle_index]
-                .map_mut(|mesh_vertex| self.vertex_remap.get_or_insert(mesh_vertex, cluster));
-            cluster.triangles.push(triangle);
-            self.available_triangles.set(triangle_index, false);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn find_best_adjacent_triangle(&self, cluster: &Cluster) -> Option<u32> {
+    fn find_next_triangle(&self, cluster: &Cluster) -> Option<u32> {
         // early out if full
         if cluster.mesh_vertices.len() == MAX_VERTICES_PER_CLUSTER
             || cluster.triangles.len() == MAX_TRIANGLES_PER_CLUSTER
         {
             return None;
+        }
+
+        // select any triangle if the cluster is empty
+        if cluster.triangles.is_empty() {
+            return self
+                .available_triangles
+                .first_one()
+                .map(|triangle_index| triangle_index as u32);
         }
 
         // HACK: just return the first one for now
@@ -163,16 +196,20 @@ impl<'m> ClusterBuilder<'m> {
         let mut clusters = Vec::new();
         loop {
             let mut cluster = Cluster::new();
-            if !self.add_next_available_triangle(&mut cluster) {
-                break;
-            }
-            while let Some(triangle_index) = self.find_best_adjacent_triangle(&cluster) {
+            while let Some(triangle_index) = self.find_next_triangle(&cluster) {
                 let triangle = self.mesh.triangles[triangle_index as usize]
                     .map_mut(|mesh_vertex| self.vertex_remap.get_or_insert(mesh_vertex, &mut cluster));
                 cluster.triangles.push(triangle);
+                cluster.mesh_triangles.push(triangle_index);
+                cluster
+                    .face_normal_bounds
+                    .union_with_point(self.mesh.face_normals[triangle_index as usize]);
                 self.available_triangles.set(triangle_index as usize, false);
             }
-            self.vertex_remap.reset(&cluster);
+            if cluster.triangles.is_empty() {
+                break;
+            }
+            self.vertex_remap.finish(&mut cluster);
             clusters.push(cluster);
         }
         clusters
@@ -182,6 +219,7 @@ impl<'m> ClusterBuilder<'m> {
 pub fn build_clusters(mut mesh: Mesh) -> (Mesh, Vec<Cluster>) {
     let mut clusters = ClusterBuilder::new(&mesh).build();
 
+    // re-order vertices and triangles to appear in the order they are referenced by cluster triangles
     let mut new_vertex_from_old = vec![u32::MAX; mesh.positions.len()];
     let mut positions = Vec::new();
     let mut normals = Vec::new();
@@ -198,12 +236,12 @@ pub fn build_clusters(mut mesh: Mesh) -> (Mesh, Vec<Cluster>) {
             }
             *mesh_vertex = new_vertex;
         }
-        mesh.triangles.extend(
-            cluster
-                .triangles
-                .iter()
-                .map(|&triangle| triangle.map_mut(|cluster_vertex| cluster.mesh_vertices[cluster_vertex as usize])),
-        );
+        cluster.mesh_triangles.clear();
+        for &triangle in &cluster.triangles {
+            cluster.mesh_triangles.push(mesh.triangles.len() as u32);
+            mesh.triangles
+                .push(triangle.map_mut(|cluster_vertex| cluster.mesh_vertices[cluster_vertex as usize]));
+        }
     }
     mesh.positions = positions;
     mesh.normals = normals;
