@@ -1,23 +1,7 @@
+use bytemuck::Contiguous;
 use spark::{vk, Device};
 use std::ops::{BitOr, BitOrAssign};
 use std::slice;
-
-struct SetBitIterator(u32);
-
-impl Iterator for SetBitIterator {
-    type Item = u32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pos = self.0.trailing_zeros();
-        if pos < 32 {
-            let bit = 1 << pos;
-            self.0 &= !bit;
-            Some(bit)
-        } else {
-            None
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccessCategory(u32);
@@ -49,141 +33,195 @@ impl BitOrAssign for AccessCategory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BufferUsage(u32);
+macro_rules! usage_impl {
+    ($usage:ident, $usage_bit:ident, $usage_bit_iter:ident; $($i:ident),+ $(,)*) => {
+        #[repr(u32)]
+        #[derive(Clone, Copy, Contiguous)]
+        #[allow(non_camel_case_types)]
+        enum $usage_bit {
+            $($i),+
+        }
 
-impl BufferUsage {
-    pub const TRANSFER_WRITE: BufferUsage = BufferUsage(0x1);
-    pub const COMPUTE_STORAGE_READ: BufferUsage = BufferUsage(0x2);
-    pub const COMPUTE_STORAGE_WRITE: BufferUsage = BufferUsage(0x4);
-    pub const VERTEX_BUFFER: BufferUsage = BufferUsage(0x8);
-    pub const INDEX_BUFFER: BufferUsage = BufferUsage(0x10);
-    pub const ACCELERATION_STRUCTURE_BUILD_INPUT: BufferUsage = BufferUsage(0x20);
-    pub const ACCELERATION_STRUCTURE_BUILD_SCRATCH: BufferUsage = BufferUsage(0x40);
-    pub const ACCELERATION_STRUCTURE_READ: BufferUsage = BufferUsage(0x80);
-    pub const ACCELERATION_STRUCTURE_WRITE: BufferUsage = BufferUsage(0x100);
-    pub const RAY_TRACING_ACCELERATION_STRUCTURE: BufferUsage = BufferUsage(0x200);
-    pub const RAY_TRACING_SHADER_BINDING_TABLE: BufferUsage = BufferUsage(0x400);
-    pub const RAY_TRACING_STORAGE_READ: BufferUsage = BufferUsage(0x800);
-    pub const HOST_READ: BufferUsage = BufferUsage(0x1000);
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct $usage(u32);
 
-    pub fn empty() -> Self {
-        Self(0)
-    }
+        impl $usage {
+            $(pub const $i: $usage = $usage(1 << ($usage_bit::$i as u32));)+
 
-    pub fn contains(self, other: Self) -> bool {
-        (self.0 & other.0) == other.0
-    }
+            pub fn empty() -> Self {
+                Self(0)
+            }
+
+            pub fn contains(self, other: Self) -> bool {
+                (self.0 & other.0) == other.0
+            }
+
+            fn iter_set_bits(self) -> $usage_bit_iter {
+                $usage_bit_iter(self)
+            }
+        }
+
+        impl BitOr for $usage {
+            type Output = Self;
+            fn bitor(self, rhs: Self) -> Self {
+                Self(self.0 | rhs.0)
+            }
+        }
+
+        impl BitOrAssign for $usage {
+            fn bitor_assign(&mut self, rhs: Self) {
+                self.0 |= rhs.0;
+            }
+        }
+
+        struct $usage_bit_iter($usage);
+
+        impl Iterator for $usage_bit_iter {
+            type Item = $usage_bit;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                let pos = self.0.0.trailing_zeros();
+                if pos < 32 {
+                    let bit = 1 << pos;
+                    self.0.0 &= !bit;
+                    Some($usage_bit::from_integer(pos).unwrap())
+                } else {
+                    None
+                }
+            }
+        }
+    };
 }
 
-impl BitOr for BufferUsage {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl BitOrAssign for BufferUsage {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
+usage_impl! {
+    BufferUsage, BufferUsageBit, BufferUsageBitIterator;
+    TRANSFER_WRITE,
+    COMPUTE_STORAGE_READ,
+    COMPUTE_STORAGE_WRITE,
+    VERTEX_BUFFER,
+    VERTEX_STORAGE_READ,
+    INDEX_BUFFER,
+    ACCELERATION_STRUCTURE_BUILD_INPUT,
+    ACCELERATION_STRUCTURE_BUILD_SCRATCH,
+    ACCELERATION_STRUCTURE_READ,
+    ACCELERATION_STRUCTURE_WRITE,
+    RAY_TRACING_ACCELERATION_STRUCTURE,
+    RAY_TRACING_SHADER_BINDING_TABLE,
+    RAY_TRACING_STORAGE_READ,
+    TASK_STORAGE_READ,
+    MESH_STORAGE_READ,
+    HOST_READ,
 }
 
 impl BufferUsage {
     pub fn as_flags(self) -> vk::BufferUsageFlags {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => vk::BufferUsageFlags::TRANSFER_DST,
-                Self::COMPUTE_STORAGE_READ => vk::BufferUsageFlags::STORAGE_BUFFER,
-                Self::COMPUTE_STORAGE_WRITE => vk::BufferUsageFlags::STORAGE_BUFFER,
-                Self::VERTEX_BUFFER => vk::BufferUsageFlags::VERTEX_BUFFER,
-                Self::INDEX_BUFFER => vk::BufferUsageFlags::INDEX_BUFFER,
-                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => {
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                BufferUsageBit::TRANSFER_WRITE => vk::BufferUsageFlags::TRANSFER_DST,
+                BufferUsageBit::COMPUTE_STORAGE_READ => vk::BufferUsageFlags::STORAGE_BUFFER,
+                BufferUsageBit::COMPUTE_STORAGE_WRITE => vk::BufferUsageFlags::STORAGE_BUFFER,
+                BufferUsageBit::VERTEX_BUFFER => vk::BufferUsageFlags::VERTEX_BUFFER,
+                BufferUsageBit::VERTEX_STORAGE_READ => vk::BufferUsageFlags::STORAGE_BUFFER,
+                BufferUsageBit::INDEX_BUFFER => vk::BufferUsageFlags::INDEX_BUFFER,
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_INPUT => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
                 }
-                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::STORAGE_BUFFER
                 }
-                Self::ACCELERATION_STRUCTURE_READ
-                | Self::ACCELERATION_STRUCTURE_WRITE
-                | Self::RAY_TRACING_ACCELERATION_STRUCTURE => {
+                BufferUsageBit::ACCELERATION_STRUCTURE_READ
+                | BufferUsageBit::ACCELERATION_STRUCTURE_WRITE
+                | BufferUsageBit::RAY_TRACING_ACCELERATION_STRUCTURE => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
                 }
-                Self::RAY_TRACING_SHADER_BINDING_TABLE => {
+                BufferUsageBit::RAY_TRACING_SHADER_BINDING_TABLE => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
                 }
-                Self::RAY_TRACING_STORAGE_READ => {
+                BufferUsageBit::RAY_TRACING_STORAGE_READ => {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR | vk::BufferUsageFlags::STORAGE_BUFFER
                 }
-                Self::HOST_READ => vk::BufferUsageFlags::empty(),
-                _ => unimplemented!(),
+                BufferUsageBit::TASK_STORAGE_READ => vk::BufferUsageFlags::STORAGE_BUFFER,
+                BufferUsageBit::MESH_STORAGE_READ => vk::BufferUsageFlags::STORAGE_BUFFER,
+                BufferUsageBit::HOST_READ => vk::BufferUsageFlags::empty(),
             })
             .fold(vk::BufferUsageFlags::empty(), |m, u| m | u)
     }
 
     pub fn as_stage_mask(self) -> vk::PipelineStageFlags {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => vk::PipelineStageFlags::TRANSFER,
-                Self::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
-                Self::COMPUTE_STORAGE_WRITE => vk::PipelineStageFlags::COMPUTE_SHADER,
-                Self::VERTEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
-                Self::INDEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
-                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-                Self::ACCELERATION_STRUCTURE_READ => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-                Self::ACCELERATION_STRUCTURE_WRITE => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-                Self::RAY_TRACING_ACCELERATION_STRUCTURE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
-                Self::RAY_TRACING_SHADER_BINDING_TABLE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
-                Self::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
-                Self::HOST_READ => vk::PipelineStageFlags::HOST,
-                _ => unimplemented!(),
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                BufferUsageBit::TRANSFER_WRITE => vk::PipelineStageFlags::TRANSFER,
+                BufferUsageBit::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
+                BufferUsageBit::COMPUTE_STORAGE_WRITE => vk::PipelineStageFlags::COMPUTE_SHADER,
+                BufferUsageBit::VERTEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
+                BufferUsageBit::VERTEX_STORAGE_READ => vk::PipelineStageFlags::VERTEX_SHADER,
+                BufferUsageBit::INDEX_BUFFER => vk::PipelineStageFlags::VERTEX_INPUT,
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_INPUT => {
+                    vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR
+                }
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
+                    vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR
+                }
+                BufferUsageBit::ACCELERATION_STRUCTURE_READ => vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                BufferUsageBit::ACCELERATION_STRUCTURE_WRITE => {
+                    vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR
+                }
+                BufferUsageBit::RAY_TRACING_ACCELERATION_STRUCTURE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                BufferUsageBit::RAY_TRACING_SHADER_BINDING_TABLE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                BufferUsageBit::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                BufferUsageBit::TASK_STORAGE_READ => vk::PipelineStageFlags::TASK_SHADER_NV,
+                BufferUsageBit::MESH_STORAGE_READ => vk::PipelineStageFlags::MESH_SHADER_NV,
+                BufferUsageBit::HOST_READ => vk::PipelineStageFlags::HOST,
             })
             .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
     }
 
     pub fn as_access_mask(self) -> vk::AccessFlags {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => vk::AccessFlags::TRANSFER_WRITE,
-                Self::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
-                Self::COMPUTE_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
-                Self::VERTEX_BUFFER => vk::AccessFlags::VERTEX_ATTRIBUTE_READ,
-                Self::INDEX_BUFFER => vk::AccessFlags::INDEX_READ,
-                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::AccessFlags::SHADER_READ,
-                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                BufferUsageBit::TRANSFER_WRITE => vk::AccessFlags::TRANSFER_WRITE,
+                BufferUsageBit::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                BufferUsageBit::COMPUTE_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
+                BufferUsageBit::VERTEX_BUFFER => vk::AccessFlags::VERTEX_ATTRIBUTE_READ,
+                BufferUsageBit::VERTEX_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                BufferUsageBit::INDEX_BUFFER => vk::AccessFlags::INDEX_READ,
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_INPUT => vk::AccessFlags::SHADER_READ,
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_SCRATCH => {
                     vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR | vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR
                 }
-                Self::ACCELERATION_STRUCTURE_READ => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
-                Self::ACCELERATION_STRUCTURE_WRITE => vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
-                Self::RAY_TRACING_ACCELERATION_STRUCTURE => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
-                Self::RAY_TRACING_SHADER_BINDING_TABLE => vk::AccessFlags::SHADER_READ,
-                Self::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
-                Self::HOST_READ => vk::AccessFlags::HOST_READ,
-                _ => unimplemented!(),
+                BufferUsageBit::ACCELERATION_STRUCTURE_READ => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
+                BufferUsageBit::ACCELERATION_STRUCTURE_WRITE => vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
+                BufferUsageBit::RAY_TRACING_ACCELERATION_STRUCTURE => vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
+                BufferUsageBit::RAY_TRACING_SHADER_BINDING_TABLE => vk::AccessFlags::SHADER_READ,
+                BufferUsageBit::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                BufferUsageBit::TASK_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                BufferUsageBit::MESH_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                BufferUsageBit::HOST_READ => vk::AccessFlags::HOST_READ,
             })
             .fold(vk::AccessFlags::empty(), |m, u| m | u)
     }
 
     pub fn as_access_category(self) -> AccessCategory {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => AccessCategory::WRITE,
-                Self::COMPUTE_STORAGE_READ => AccessCategory::READ,
-                Self::COMPUTE_STORAGE_WRITE => AccessCategory::WRITE,
-                Self::VERTEX_BUFFER => AccessCategory::READ,
-                Self::INDEX_BUFFER => AccessCategory::READ,
-                Self::ACCELERATION_STRUCTURE_BUILD_INPUT => AccessCategory::READ,
-                Self::ACCELERATION_STRUCTURE_BUILD_SCRATCH => AccessCategory::READ | AccessCategory::WRITE,
-                Self::ACCELERATION_STRUCTURE_READ => AccessCategory::READ,
-                Self::ACCELERATION_STRUCTURE_WRITE => AccessCategory::WRITE,
-                Self::RAY_TRACING_ACCELERATION_STRUCTURE => AccessCategory::READ,
-                Self::RAY_TRACING_SHADER_BINDING_TABLE => AccessCategory::READ,
-                Self::RAY_TRACING_STORAGE_READ => AccessCategory::READ,
-                Self::HOST_READ => AccessCategory::READ,
-                _ => unimplemented!(),
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                BufferUsageBit::TRANSFER_WRITE => AccessCategory::WRITE,
+                BufferUsageBit::COMPUTE_STORAGE_READ => AccessCategory::READ,
+                BufferUsageBit::COMPUTE_STORAGE_WRITE => AccessCategory::WRITE,
+                BufferUsageBit::VERTEX_BUFFER => AccessCategory::READ,
+                BufferUsageBit::VERTEX_STORAGE_READ => AccessCategory::READ,
+                BufferUsageBit::INDEX_BUFFER => AccessCategory::READ,
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_INPUT => AccessCategory::READ,
+                BufferUsageBit::ACCELERATION_STRUCTURE_BUILD_SCRATCH => AccessCategory::READ | AccessCategory::WRITE,
+                BufferUsageBit::ACCELERATION_STRUCTURE_READ => AccessCategory::READ,
+                BufferUsageBit::ACCELERATION_STRUCTURE_WRITE => AccessCategory::WRITE,
+                BufferUsageBit::RAY_TRACING_ACCELERATION_STRUCTURE => AccessCategory::READ,
+                BufferUsageBit::RAY_TRACING_SHADER_BINDING_TABLE => AccessCategory::READ,
+                BufferUsageBit::RAY_TRACING_STORAGE_READ => AccessCategory::READ,
+                BufferUsageBit::TASK_STORAGE_READ => AccessCategory::READ,
+                BufferUsageBit::MESH_STORAGE_READ => AccessCategory::READ,
+                BufferUsageBit::HOST_READ => AccessCategory::READ,
             })
             .fold(AccessCategory::empty(), |m, u| m | u)
     }
@@ -229,128 +267,107 @@ pub fn emit_buffer_barrier(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImageUsage(u32);
-
-impl ImageUsage {
-    pub const TRANSFER_WRITE: ImageUsage = ImageUsage(0x1);
-    pub const SWAPCHAIN: ImageUsage = ImageUsage(0x2);
-    pub const COLOR_ATTACHMENT_WRITE: ImageUsage = ImageUsage(0x4);
-    pub const FRAGMENT_STORAGE_READ: ImageUsage = ImageUsage(0x8);
-    pub const FRAGMENT_SAMPLED: ImageUsage = ImageUsage(0x10);
-    pub const COMPUTE_STORAGE_READ: ImageUsage = ImageUsage(0x20);
-    pub const COMPUTE_STORAGE_WRITE: ImageUsage = ImageUsage(0x40);
-    pub const COMPUTE_SAMPLED: ImageUsage = ImageUsage(0x80);
-    pub const TRANSIENT_COLOR_ATTACHMENT: ImageUsage = ImageUsage(0x100);
-    pub const TRANSIENT_DEPTH_ATTACHMENT: ImageUsage = ImageUsage(0x200);
-    pub const RAY_TRACING_STORAGE_READ: ImageUsage = ImageUsage(0x400);
-    pub const RAY_TRACING_STORAGE_WRITE: ImageUsage = ImageUsage(0x800);
-    pub const RAY_TRACING_SAMPLED: ImageUsage = ImageUsage(0x1000);
-
-    pub fn empty() -> Self {
-        Self(0)
-    }
-
-    pub fn contains(self, other: Self) -> bool {
-        (self.0 & other.0) == other.0
-    }
-}
-
-impl BitOr for ImageUsage {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl BitOrAssign for ImageUsage {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
+usage_impl! {
+    ImageUsage, ImageUsageBit, ImageUsageBitIterator;
+    TRANSFER_WRITE,
+    SWAPCHAIN,
+    COLOR_ATTACHMENT_WRITE,
+    FRAGMENT_STORAGE_READ,
+    FRAGMENT_SAMPLED,
+    COMPUTE_STORAGE_READ,
+    COMPUTE_STORAGE_WRITE,
+    COMPUTE_SAMPLED,
+    TRANSIENT_COLOR_ATTACHMENT,
+    TRANSIENT_DEPTH_ATTACHMENT,
+    RAY_TRACING_STORAGE_READ,
+    RAY_TRACING_STORAGE_WRITE,
+    RAY_TRACING_SAMPLED,
 }
 
 impl ImageUsage {
     pub fn as_flags(self) -> vk::ImageUsageFlags {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => vk::ImageUsageFlags::TRANSFER_DST,
-                Self::SWAPCHAIN => vk::ImageUsageFlags::empty(),
-                Self::COLOR_ATTACHMENT_WRITE => vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                Self::FRAGMENT_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
-                Self::FRAGMENT_SAMPLED => vk::ImageUsageFlags::SAMPLED,
-                Self::COMPUTE_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
-                Self::COMPUTE_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
-                Self::COMPUTE_SAMPLED => vk::ImageUsageFlags::SAMPLED,
-                Self::TRANSIENT_COLOR_ATTACHMENT => {
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                ImageUsageBit::TRANSFER_WRITE => vk::ImageUsageFlags::TRANSFER_DST,
+                ImageUsageBit::SWAPCHAIN => vk::ImageUsageFlags::empty(),
+                ImageUsageBit::COLOR_ATTACHMENT_WRITE => vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                ImageUsageBit::FRAGMENT_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
+                ImageUsageBit::FRAGMENT_SAMPLED => vk::ImageUsageFlags::SAMPLED,
+                ImageUsageBit::COMPUTE_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
+                ImageUsageBit::COMPUTE_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
+                ImageUsageBit::COMPUTE_SAMPLED => vk::ImageUsageFlags::SAMPLED,
+                ImageUsageBit::TRANSIENT_COLOR_ATTACHMENT => {
                     vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT
                 }
-                Self::TRANSIENT_DEPTH_ATTACHMENT => {
+                ImageUsageBit::TRANSIENT_DEPTH_ATTACHMENT => {
                     vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
                 }
-                Self::RAY_TRACING_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
-                Self::RAY_TRACING_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
-                Self::RAY_TRACING_SAMPLED => vk::ImageUsageFlags::SAMPLED,
-                _ => unimplemented!(),
+                ImageUsageBit::RAY_TRACING_STORAGE_READ => vk::ImageUsageFlags::STORAGE,
+                ImageUsageBit::RAY_TRACING_STORAGE_WRITE => vk::ImageUsageFlags::STORAGE,
+                ImageUsageBit::RAY_TRACING_SAMPLED => vk::ImageUsageFlags::SAMPLED,
             })
             .fold(vk::ImageUsageFlags::empty(), |m, u| m | u)
     }
 
     pub fn as_stage_mask(self) -> vk::PipelineStageFlags {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => vk::PipelineStageFlags::TRANSFER,
-                Self::SWAPCHAIN => vk::PipelineStageFlags::empty(),
-                Self::COLOR_ATTACHMENT_WRITE => vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                Self::FRAGMENT_STORAGE_READ => vk::PipelineStageFlags::FRAGMENT_SHADER,
-                Self::FRAGMENT_SAMPLED => vk::PipelineStageFlags::FRAGMENT_SHADER,
-                Self::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
-                Self::COMPUTE_STORAGE_WRITE => vk::PipelineStageFlags::COMPUTE_SHADER,
-                Self::COMPUTE_SAMPLED => vk::PipelineStageFlags::COMPUTE_SHADER,
-                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::PipelineStageFlags::empty(),
-                Self::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
-                Self::RAY_TRACING_STORAGE_WRITE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
-                Self::RAY_TRACING_SAMPLED => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
-                _ => unimplemented!(),
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                ImageUsageBit::TRANSFER_WRITE => vk::PipelineStageFlags::TRANSFER,
+                ImageUsageBit::SWAPCHAIN => vk::PipelineStageFlags::empty(),
+                ImageUsageBit::COLOR_ATTACHMENT_WRITE => vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ImageUsageBit::FRAGMENT_STORAGE_READ => vk::PipelineStageFlags::FRAGMENT_SHADER,
+                ImageUsageBit::FRAGMENT_SAMPLED => vk::PipelineStageFlags::FRAGMENT_SHADER,
+                ImageUsageBit::COMPUTE_STORAGE_READ => vk::PipelineStageFlags::COMPUTE_SHADER,
+                ImageUsageBit::COMPUTE_STORAGE_WRITE => vk::PipelineStageFlags::COMPUTE_SHADER,
+                ImageUsageBit::COMPUTE_SAMPLED => vk::PipelineStageFlags::COMPUTE_SHADER,
+                ImageUsageBit::TRANSIENT_COLOR_ATTACHMENT | ImageUsageBit::TRANSIENT_DEPTH_ATTACHMENT => {
+                    vk::PipelineStageFlags::empty()
+                }
+                ImageUsageBit::RAY_TRACING_STORAGE_READ => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                ImageUsageBit::RAY_TRACING_STORAGE_WRITE => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
+                ImageUsageBit::RAY_TRACING_SAMPLED => vk::PipelineStageFlags::RAY_TRACING_SHADER_KHR,
             })
             .fold(vk::PipelineStageFlags::empty(), |m, u| m | u)
     }
 
     pub fn as_access_mask(self) -> vk::AccessFlags {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => vk::AccessFlags::TRANSFER_WRITE,
-                Self::SWAPCHAIN => vk::AccessFlags::empty(),
-                Self::COLOR_ATTACHMENT_WRITE => vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                Self::FRAGMENT_STORAGE_READ => vk::AccessFlags::SHADER_READ,
-                Self::FRAGMENT_SAMPLED => vk::AccessFlags::SHADER_READ,
-                Self::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
-                Self::COMPUTE_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
-                Self::COMPUTE_SAMPLED => vk::AccessFlags::SHADER_READ,
-                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::AccessFlags::empty(),
-                Self::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
-                Self::RAY_TRACING_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
-                Self::RAY_TRACING_SAMPLED => vk::AccessFlags::SHADER_READ,
-                _ => unimplemented!(),
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                ImageUsageBit::TRANSFER_WRITE => vk::AccessFlags::TRANSFER_WRITE,
+                ImageUsageBit::SWAPCHAIN => vk::AccessFlags::empty(),
+                ImageUsageBit::COLOR_ATTACHMENT_WRITE => vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                ImageUsageBit::FRAGMENT_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                ImageUsageBit::FRAGMENT_SAMPLED => vk::AccessFlags::SHADER_READ,
+                ImageUsageBit::COMPUTE_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                ImageUsageBit::COMPUTE_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
+                ImageUsageBit::COMPUTE_SAMPLED => vk::AccessFlags::SHADER_READ,
+                ImageUsageBit::TRANSIENT_COLOR_ATTACHMENT | ImageUsageBit::TRANSIENT_DEPTH_ATTACHMENT => {
+                    vk::AccessFlags::empty()
+                }
+                ImageUsageBit::RAY_TRACING_STORAGE_READ => vk::AccessFlags::SHADER_READ,
+                ImageUsageBit::RAY_TRACING_STORAGE_WRITE => vk::AccessFlags::SHADER_WRITE,
+                ImageUsageBit::RAY_TRACING_SAMPLED => vk::AccessFlags::SHADER_READ,
             })
             .fold(vk::AccessFlags::empty(), |m, u| m | u)
     }
 
     pub fn as_image_layout(self) -> vk::ImageLayout {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                Self::SWAPCHAIN => vk::ImageLayout::PRESENT_SRC_KHR,
-                Self::COLOR_ATTACHMENT_WRITE => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                Self::FRAGMENT_STORAGE_READ => vk::ImageLayout::GENERAL,
-                Self::FRAGMENT_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                Self::COMPUTE_STORAGE_READ => vk::ImageLayout::GENERAL,
-                Self::COMPUTE_STORAGE_WRITE => vk::ImageLayout::GENERAL,
-                Self::COMPUTE_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => vk::ImageLayout::UNDEFINED,
-                Self::RAY_TRACING_STORAGE_READ => vk::ImageLayout::GENERAL,
-                Self::RAY_TRACING_STORAGE_WRITE => vk::ImageLayout::GENERAL,
-                Self::RAY_TRACING_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                _ => unimplemented!(),
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                ImageUsageBit::TRANSFER_WRITE => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                ImageUsageBit::SWAPCHAIN => vk::ImageLayout::PRESENT_SRC_KHR,
+                ImageUsageBit::COLOR_ATTACHMENT_WRITE => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                ImageUsageBit::FRAGMENT_STORAGE_READ => vk::ImageLayout::GENERAL,
+                ImageUsageBit::FRAGMENT_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                ImageUsageBit::COMPUTE_STORAGE_READ => vk::ImageLayout::GENERAL,
+                ImageUsageBit::COMPUTE_STORAGE_WRITE => vk::ImageLayout::GENERAL,
+                ImageUsageBit::COMPUTE_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                ImageUsageBit::TRANSIENT_COLOR_ATTACHMENT | ImageUsageBit::TRANSIENT_DEPTH_ATTACHMENT => {
+                    vk::ImageLayout::UNDEFINED
+                }
+                ImageUsageBit::RAY_TRACING_STORAGE_READ => vk::ImageLayout::GENERAL,
+                ImageUsageBit::RAY_TRACING_STORAGE_WRITE => vk::ImageLayout::GENERAL,
+                ImageUsageBit::RAY_TRACING_SAMPLED => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             })
             .fold(vk::ImageLayout::UNDEFINED, |m, u| {
                 if m == u {
@@ -364,23 +381,22 @@ impl ImageUsage {
     }
 
     pub fn as_access_category(self) -> AccessCategory {
-        SetBitIterator(self.0)
-            .map(|bit| match Self(bit) {
-                Self::TRANSFER_WRITE => AccessCategory::WRITE,
-                Self::SWAPCHAIN => AccessCategory::READ,
-                Self::COLOR_ATTACHMENT_WRITE => AccessCategory::WRITE,
-                Self::FRAGMENT_STORAGE_READ => AccessCategory::READ,
-                Self::FRAGMENT_SAMPLED => AccessCategory::READ,
-                Self::COMPUTE_STORAGE_READ => AccessCategory::READ,
-                Self::COMPUTE_STORAGE_WRITE => AccessCategory::WRITE,
-                Self::COMPUTE_SAMPLED => AccessCategory::READ,
-                Self::TRANSIENT_COLOR_ATTACHMENT | Self::TRANSIENT_DEPTH_ATTACHMENT => {
+        self.iter_set_bits()
+            .map(|bit| match bit {
+                ImageUsageBit::TRANSFER_WRITE => AccessCategory::WRITE,
+                ImageUsageBit::SWAPCHAIN => AccessCategory::READ,
+                ImageUsageBit::COLOR_ATTACHMENT_WRITE => AccessCategory::WRITE,
+                ImageUsageBit::FRAGMENT_STORAGE_READ => AccessCategory::READ,
+                ImageUsageBit::FRAGMENT_SAMPLED => AccessCategory::READ,
+                ImageUsageBit::COMPUTE_STORAGE_READ => AccessCategory::READ,
+                ImageUsageBit::COMPUTE_STORAGE_WRITE => AccessCategory::WRITE,
+                ImageUsageBit::COMPUTE_SAMPLED => AccessCategory::READ,
+                ImageUsageBit::TRANSIENT_COLOR_ATTACHMENT | ImageUsageBit::TRANSIENT_DEPTH_ATTACHMENT => {
                     AccessCategory::READ | AccessCategory::WRITE
                 }
-                Self::RAY_TRACING_STORAGE_READ => AccessCategory::READ,
-                Self::RAY_TRACING_STORAGE_WRITE => AccessCategory::WRITE,
-                Self::RAY_TRACING_SAMPLED => AccessCategory::READ,
-                _ => unimplemented!(),
+                ImageUsageBit::RAY_TRACING_STORAGE_READ => AccessCategory::READ,
+                ImageUsageBit::RAY_TRACING_STORAGE_WRITE => AccessCategory::WRITE,
+                ImageUsageBit::RAY_TRACING_SAMPLED => AccessCategory::READ,
             })
             .fold(AccessCategory::empty(), |m, u| m | u)
     }
