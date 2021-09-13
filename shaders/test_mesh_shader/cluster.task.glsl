@@ -6,8 +6,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "cluster_common.glsl"
 
-layout(constant_id = 0) const int group_size = 1;
-layout(local_size_x_id = 0) in;
+layout(local_size_x_id = TASK_GROUP_SIZE_ID) in;
 
 CLUSTER_TASK(out, o_task);
 

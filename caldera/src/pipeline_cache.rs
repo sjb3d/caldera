@@ -272,6 +272,7 @@ pub enum VertexShaderDesc<'a> {
         task_constants: &'a [SpecializationConstant],
         task_subgroup_size: Option<u32>,
         mesh: &'a str,
+        mesh_constants: &'a [SpecializationConstant],
     },
 }
 
@@ -285,12 +286,14 @@ impl<'a> VertexShaderDesc<'a> {
         task_constants: &'a [SpecializationConstant],
         task_subgroup_size: Option<u32>,
         mesh: &'a str,
+        mesh_constants: &'a [SpecializationConstant],
     ) -> Self {
         Self::Mesh {
             task,
             task_constants,
             task_subgroup_size,
             mesh,
+            mesh_constants,
         }
     }
 }
@@ -305,6 +308,7 @@ enum VertexShaderKey {
         task_constants: Vec<SpecializationConstant>,
         task_subgroup_size: Option<u32>,
         mesh: vk::ShaderModule,
+        mesh_constants: Vec<SpecializationConstant>,
     },
 }
 
@@ -432,11 +436,13 @@ impl PipelineCache {
                 task_constants,
                 task_subgroup_size,
                 mesh,
+                mesh_constants,
             } => VertexShaderKey::Mesh {
                 task: self.shader_loader.get_shader(task).unwrap(),
                 task_constants: task_constants.to_vec(),
                 task_subgroup_size,
                 mesh: self.shader_loader.get_shader(mesh).unwrap(),
+                mesh_constants: mesh_constants.to_vec(),
             },
         };
         let fragment_shader = self.shader_loader.get_shader(fragment_shader_name).unwrap();
@@ -451,8 +457,8 @@ impl PipelineCache {
             let mut new_pipelines = self.new_pipelines.lock().unwrap();
             *new_pipelines.entry(key).or_insert_with(|| {
                 let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let mut specialization_data = ArrayVec::<SpecializationData, 1>::new();
-                let mut specialization_info = ArrayVec::<vk::SpecializationInfo, 1>::new();
+                let mut specialization_data = ArrayVec::<SpecializationData, 2>::new();
+                let mut specialization_info = ArrayVec::<vk::SpecializationInfo, 2>::new();
                 let mut required_subgroup_size_create_info =
                     ArrayVec::<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT, 1>::new();
                 let mut shader_stage_create_info = ArrayVec::<vk::PipelineShaderStageCreateInfo, 3>::new();
@@ -470,25 +476,22 @@ impl PipelineCache {
                         task_constants,
                         task_subgroup_size,
                         mesh,
+                        mesh_constants,
                     } => {
                         shader_stage_create_info.push({
                             specialization_data.push(SpecializationData::new(&task_constants));
                             specialization_info.push(*specialization_data.last().unwrap().info());
-                            let p_next = if let Some(task_subgroup_size) = task_subgroup_size {
+                            let mut p_next = ptr::null();
+                            let mut flags = vk::PipelineShaderStageCreateFlags::empty();
+                            if let Some(task_subgroup_size) = task_subgroup_size {
                                 required_subgroup_size_create_info.push(
                                     vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT {
                                         required_subgroup_size: task_subgroup_size,
                                         ..Default::default()
                                     },
                                 );
-                                required_subgroup_size_create_info.last().unwrap() as *const _ as *const _
-                            } else {
-                                ptr::null()
-                            };
-                            let flags = if task_subgroup_size.is_some() {
-                                vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS_EXT
-                            } else {
-                                vk::PipelineShaderStageCreateFlags::empty()
+                                p_next = required_subgroup_size_create_info.last().unwrap() as *const _ as *const _;
+                                flags |= vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS_EXT;
                             };
                             vk::PipelineShaderStageCreateInfo {
                                 p_next,
@@ -500,11 +503,16 @@ impl PipelineCache {
                                 ..Default::default()
                             }
                         });
-                        shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
-                            stage: vk::ShaderStageFlags::MESH_NV,
-                            module: Some(mesh),
-                            p_name: shader_entry_name.as_ptr(),
-                            ..Default::default()
+                        shader_stage_create_info.push({
+                            specialization_data.push(SpecializationData::new(&mesh_constants));
+                            specialization_info.push(*specialization_data.last().unwrap().info());
+                            vk::PipelineShaderStageCreateInfo {
+                                stage: vk::ShaderStageFlags::MESH_NV,
+                                module: Some(mesh),
+                                p_name: shader_entry_name.as_ptr(),
+                                p_specialization_info: specialization_info.last().unwrap(),
+                                ..Default::default()
+                            }
                         });
                     }
                 }
