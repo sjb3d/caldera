@@ -1,4 +1,5 @@
 use bitvec::prelude::*;
+use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
 
 pub const MAX_VERTICES_PER_CLUSTER: usize = 64;
@@ -11,13 +12,14 @@ pub struct Mesh {
     pub face_normals: Vec<Vec3>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Bounds3 {
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct BoxBounds {
     pub min: Vec3,
     pub max: Vec3,
 }
 
-impl Bounds3 {
+impl BoxBounds {
     pub fn new() -> Self {
         Self {
             min: Vec3::broadcast(f32::MAX),
@@ -29,12 +31,62 @@ impl Bounds3 {
         self.min = self.min.min_by_component(p);
         self.max = self.max.max_by_component(p);
     }
+
+    pub fn centre(&self) -> Vec3 {
+        0.5 * (self.max + self.min)
+    }
+    pub fn half_extent(&self) -> Vec3 {
+        0.5 * (self.max - self.min)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct SphereBounds {
+    pub centre: Vec3,
+    pub radius: f32,
+}
+
+impl SphereBounds {
+    pub fn from_box(aabb: BoxBounds) -> Self {
+        Self {
+            centre: aabb.centre(),
+            radius: aabb.half_extent().mag(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct ConeBounds {
+    pub dir: Vec3,
+    pub cos_angle: f32,
+}
+
+impl ConeBounds {
+    pub fn from_box(aabb: BoxBounds) -> Self {
+        // construct a cone that bounds the sphere
+        let sphere = SphereBounds::from_box(aabb);
+        let centre_dist = sphere.centre.mag();
+        let sin_theta = sphere.radius / centre_dist;
+        if sin_theta < 0.999 {
+            Self {
+                dir: sphere.centre.normalized(),
+                cos_angle: (1.0 - sin_theta * sin_theta).max(0.0).sqrt(),
+            }
+        } else {
+            Self {
+                dir: Vec3::unit_x(),
+                cos_angle: -1.0, // whole sphere
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Cluster {
-    pub position_bounds: Bounds3,
-    pub face_normal_bounds: Bounds3,
+    pub position_bounds: BoxBounds,
+    pub face_normal_bounds: BoxBounds,
     pub mesh_vertices: Vec<u32>,
     pub triangles: Vec<UVec3>,
     pub mesh_triangles: Vec<u32>,
@@ -43,8 +95,8 @@ pub struct Cluster {
 impl Cluster {
     fn new() -> Self {
         Self {
-            position_bounds: Bounds3::new(),
-            face_normal_bounds: Bounds3::new(),
+            position_bounds: BoxBounds::new(),
+            face_normal_bounds: BoxBounds::new(),
             mesh_vertices: Vec::new(),
             triangles: Vec::new(),
             mesh_triangles: Vec::new(),
@@ -101,7 +153,7 @@ impl TriangleListPerVertex {
 
 struct ClusterVertexRemap<'m> {
     mesh_positions: &'m [Vec3],
-    position_bounds: Bounds3,
+    position_bounds: BoxBounds,
     cluster_vertices: Vec<u8>,
 }
 
@@ -109,7 +161,7 @@ impl<'m> ClusterVertexRemap<'m> {
     fn new(mesh: &'m Mesh) -> Self {
         Self {
             mesh_positions: &mesh.positions,
-            position_bounds: Bounds3::new(),
+            position_bounds: BoxBounds::new(),
             cluster_vertices: vec![u8::MAX; mesh.positions.len()],
         }
     }
@@ -135,7 +187,7 @@ impl<'m> ClusterVertexRemap<'m> {
             self.cluster_vertices[mesh_vertex as usize] = u8::MAX;
         }
         cluster.position_bounds = self.position_bounds;
-        self.position_bounds = Bounds3::new();
+        self.position_bounds = BoxBounds::new();
     }
 }
 

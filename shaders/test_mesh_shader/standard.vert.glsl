@@ -16,5 +16,5 @@ layout(location = 0) out vec3 v_color;
 void main()
 {
     gl_Position = g_standard.proj_from_local * vec4(a_pos, 1.f);
-    v_color = 0.5*a_normal + 0.5;
+    v_color = 0.5f*a_normal + 0.5f;
 }

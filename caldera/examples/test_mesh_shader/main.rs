@@ -35,6 +35,8 @@ const MAX_PACKED_INDICES_PER_CLUSTER: usize = (MAX_TRIANGLES_PER_CLUSTER * 3) / 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ClusterDesc {
+    position_sphere: SphereBounds,
+    face_normal_cone: ConeBounds,
     vertex_count: u32,
     triangle_count: u32,
     vertices: [u32; MAX_VERTICES_PER_CLUSTER],
@@ -45,12 +47,16 @@ struct ClusterDesc {
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ClusterUniforms {
     proj_from_local: Mat4,
+    view_from_local: Mat4,
+    view_from_local_rotflip: Mat3,
+    view_from_local_scale: f32,
     task_count: u32,
 }
 
 descriptor_set_layout!(ClusterDescriptorSetLayout {
     cluster_uniforms: UniformData<ClusterUniforms>,
     position: StorageBuffer,
+    normal: StorageBuffer,
     cluster_desc: StorageBuffer,
 });
 
@@ -137,7 +143,11 @@ impl MeshInfo {
 
         let normal_buffer_desc = BufferDesc::new(mesh.normals.len() * mem::size_of::<Vec3>());
         let mut writer = allocator
-            .map_buffer(self.normal_buffer, &normal_buffer_desc, BufferUsage::VERTEX_BUFFER)
+            .map_buffer(
+                self.normal_buffer,
+                &normal_buffer_desc,
+                BufferUsage::VERTEX_BUFFER | BufferUsage::MESH_STORAGE_READ,
+            )
             .unwrap();
         for &normal in &mesh.normals {
             writer.write(&normal);
@@ -162,6 +172,8 @@ impl MeshInfo {
             .unwrap();
         for cluster in &clusters {
             let mut desc = ClusterDesc {
+                position_sphere: SphereBounds::from_box(cluster.position_bounds),
+                face_normal_cone: ConeBounds::from_box(cluster.face_normal_bounds),
                 vertex_count: cluster.mesh_vertices.len() as u32,
                 triangle_count: cluster.triangles.len() as u32,
                 vertices: [0u32; MAX_VERTICES_PER_CLUSTER],
@@ -296,15 +308,16 @@ impl App {
         let mesh_buffers = mesh_info.get_buffers(&base.systems.resource_loader);
 
         let world_from_local = mesh_info.get_world_from_local();
-        let view_from_world = Isometry3::new(
+        let view_from_world = Similarity3::new(
             Vec3::new(0.0, 0.0, -3.0),
             Rotor3::from_rotation_yz(0.5) * Rotor3::from_rotation_xz(self.angle),
+            1.0,
         );
         let vertical_fov = PI / 7.0;
         let aspect_ratio = (swap_size.x as f32) / (swap_size.y as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
-        let proj_from_local =
-            proj_from_view * view_from_world.into_homogeneous_matrix() * world_from_local.into_homogeneous_matrix();
+        let view_from_local = view_from_world * world_from_local;
+        let proj_from_local = proj_from_view * view_from_local.into_homogeneous_matrix();
 
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
             let context = base.context.as_ref();
@@ -397,10 +410,15 @@ impl App {
                                 |buf: &mut ClusterUniforms| {
                                     *buf = ClusterUniforms {
                                         proj_from_local,
+                                        view_from_local: view_from_local.into_homogeneous_matrix(),
+                                        view_from_local_rotflip: view_from_local.rotation.into_matrix()
+                                            * Mat3::from_scale_homogeneous(1.0f32.copysign(view_from_local.scale)),
+                                        view_from_local_scale: view_from_local.scale,
                                         task_count,
                                     }
                                 },
                                 mesh_buffers.position,
+                                mesh_buffers.normal,
                                 mesh_buffers.cluster,
                             );
 
