@@ -15,7 +15,7 @@ winit = "0.24"
 raw-window-handle = "0.3"
 imgui = "0.7"
 imgui-winit-support = "0.7"
-bytemuck = { version = "1.7", features = ["derive"] }
+bytemuck = { version = "1.7", features = ["derive", "min_const_generics"] }
 ultraviolet = { version = "0.8.1", features = ["int", "bytemuck"] }
 bitvec = "0.22"
 structopt = "0.3"

@@ -1,5 +1,6 @@
 use caldera::prelude::*;
 use ply_rs::{parser, ply};
+use spark::vk;
 use std::{fs, io, mem, path::Path};
 
 #[derive(Clone, Copy)]
@@ -49,13 +50,21 @@ pub type InstanceData = TransposedTransform3;
 
 #[derive(Clone, Copy)]
 pub struct MeshInfo {
-    pub position_buffer: StaticBufferHandle,
-    pub attribute_buffer: StaticBufferHandle,
-    pub index_buffer: StaticBufferHandle,
-    pub instances: [Similarity3; Self::INSTANCE_COUNT],
-    pub instance_buffer: StaticBufferHandle,
     pub vertex_count: u32,
     pub triangle_count: u32,
+    pub instances: [Similarity3; Self::INSTANCE_COUNT],
+    position_buffer: StaticBufferHandle,
+    attribute_buffer: StaticBufferHandle,
+    index_buffer: StaticBufferHandle,
+    instance_buffer: StaticBufferHandle,
+}
+
+#[derive(Clone, Copy)]
+pub struct MeshBuffers {
+    pub position: vk::Buffer,
+    pub attribute: vk::Buffer,
+    pub index: vk::Buffer,
+    pub instance: vk::Buffer,
 }
 
 impl MeshInfo {
@@ -63,14 +72,30 @@ impl MeshInfo {
 
     pub fn new(resource_loader: &mut ResourceLoader) -> Self {
         Self {
+            vertex_count: 0,
+            triangle_count: 0,
+            instances: [Similarity3::identity(); Self::INSTANCE_COUNT],
             position_buffer: resource_loader.create_buffer(),
             attribute_buffer: resource_loader.create_buffer(),
             index_buffer: resource_loader.create_buffer(),
-            instances: [Similarity3::identity(); Self::INSTANCE_COUNT],
             instance_buffer: resource_loader.create_buffer(),
-            vertex_count: 0,
-            triangle_count: 0,
         }
+    }
+
+    pub fn get_buffers(&self, resource_loader: &ResourceLoader) -> Option<MeshBuffers> {
+        if self.triangle_count == 0 {
+            return None;
+        }
+        let position = resource_loader.get_buffer(self.position_buffer)?;
+        let attribute = resource_loader.get_buffer(self.attribute_buffer)?;
+        let index = resource_loader.get_buffer(self.index_buffer)?;
+        let instance = resource_loader.get_buffer(self.instance_buffer)?;
+        Some(MeshBuffers {
+            position,
+            attribute,
+            index,
+            instance,
+        })
     }
 
     pub fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &Path, with_ray_tracing: bool) {

@@ -6,7 +6,12 @@ use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
 use imgui::Key;
 use spark::vk;
-use std::path::PathBuf;
+use std::{
+    mem,
+    path::{Path, PathBuf},
+    slice,
+    sync::{Arc, Mutex},
+};
 use structopt::StructOpt;
 use strum::VariantNames;
 use winit::{
@@ -14,6 +19,27 @@ use winit::{
     event_loop::EventLoop,
     window::WindowBuilder,
 };
+
+const MAX_PACKED_INDICES_PER_CLUSTER: usize = (MAX_TRIANGLES_PER_CLUSTER * 3) / 4;
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct StandardUniforms {
+    proj_from_local: Mat4,
+}
+
+descriptor_set_layout!(StandardDescriptorSetLayout {
+    standard_uniforms: UniformData<StandardUniforms>,
+});
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
+struct ClusterDesc {
+    vertex_count: u32,
+    triangle_count: u32,
+    vertices: [u32; MAX_VERTICES_PER_CLUSTER],
+    packed_indices: [u32; MAX_PACKED_INDICES_PER_CLUSTER],
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
@@ -25,18 +51,116 @@ descriptor_set_layout!(ClusterDescriptorSetLayout {
     cluster_uniforms: UniformData<ClusterUniforms>,
 });
 
+#[derive(Clone, Copy)]
+struct MeshInfo {
+    triangle_count: u32,
+    min: Vec3,
+    max: Vec3,
+    position_buffer: StaticBufferHandle,
+    normal_buffer: StaticBufferHandle,
+    index_buffer: StaticBufferHandle,
+}
+
+#[derive(Clone, Copy)]
+struct MeshBuffers {
+    position: vk::Buffer,
+    normal: vk::Buffer,
+    index: vk::Buffer,
+}
+
+impl MeshInfo {
+    fn new(resource_loader: &mut ResourceLoader) -> Self {
+        Self {
+            triangle_count: 0,
+            min: Vec3::zero(),
+            max: Vec3::one(),
+            position_buffer: resource_loader.create_buffer(),
+            normal_buffer: resource_loader.create_buffer(),
+            index_buffer: resource_loader.create_buffer(),
+        }
+    }
+
+    fn get_world_from_local(&self) -> Similarity3 {
+        let scale = 0.9 / (self.max - self.min).component_max();
+        let offset = (-0.5 * scale) * (self.max + self.min);
+        Similarity3::new(offset, Rotor3::identity(), scale)
+    }
+
+    fn get_buffers(&self, resource_loader: &ResourceLoader) -> Option<MeshBuffers> {
+        if self.triangle_count == 0 {
+            return None;
+        }
+        let position = resource_loader.get_buffer(self.position_buffer)?;
+        let normal = resource_loader.get_buffer(self.normal_buffer)?;
+        let index = resource_loader.get_buffer(self.index_buffer)?;
+        Some(MeshBuffers {
+            position,
+            normal,
+            index,
+        })
+    }
+
+    fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &Path) {
+        let mesh = load_ply_mesh(&mesh_file_name);
+        println!(
+            "loaded mesh: {} vertices, {} triangles",
+            mesh.positions.len(),
+            mesh.triangles.len()
+        );
+        let clusters = build_clusters(&mesh);
+
+        let position_buffer_desc = BufferDesc::new(mesh.positions.len() * mem::size_of::<Vec3>());
+        let mut writer = allocator
+            .map_buffer(self.position_buffer, &position_buffer_desc, BufferUsage::VERTEX_BUFFER)
+            .unwrap();
+        self.min = Vec3::broadcast(f32::MAX);
+        self.max = Vec3::broadcast(-f32::MAX);
+        for &pos in &mesh.positions {
+            writer.write(&pos);
+            self.min = self.min.min_by_component(pos);
+            self.max = self.max.max_by_component(pos);
+        }
+
+        let normal_buffer_desc = BufferDesc::new(mesh.normals.len() * mem::size_of::<Vec3>());
+        let mut writer = allocator
+            .map_buffer(self.normal_buffer, &normal_buffer_desc, BufferUsage::VERTEX_BUFFER)
+            .unwrap();
+        for &normal in &mesh.normals {
+            writer.write(&normal);
+        }
+
+        let index_buffer_desc = BufferDesc::new(mesh.triangles.len() * mem::size_of::<UVec3>());
+        let mut writer = allocator
+            .map_buffer(self.index_buffer, &index_buffer_desc, BufferUsage::INDEX_BUFFER)
+            .unwrap();
+        for &tri in &mesh.triangles {
+            writer.write(&tri);
+        }
+        self.triangle_count = mesh.triangles.len() as u32;
+    }
+}
+
 struct App {
     context: SharedContext,
 
-    task_group_size: u32,
+    standard_descriptor_set_layout: StandardDescriptorSetLayout,
+    standard_pipeline_layout: vk::PipelineLayout,
     cluster_descriptor_set_layout: ClusterDescriptorSetLayout,
     cluster_pipeline_layout: vk::PipelineLayout,
+
+    task_group_size: u32,
+    mesh_info: Arc<Mutex<MeshInfo>>,
+    angle: f32,
 }
 
 impl App {
     fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
         let context = SharedContext::clone(&base.context);
         let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
+
+        let standard_descriptor_set_layout = StandardDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let standard_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(standard_descriptor_set_layout.0);
 
         let cluster_descriptor_set_layout = ClusterDescriptorSetLayout::new(descriptor_set_layout_cache);
         let cluster_pipeline_layout =
@@ -50,20 +174,25 @@ impl App {
             .max_subgroup_size;
         println!("task group size: {}", task_group_size);
 
-        // TODO: load + process the mesh on a thread
-        let mesh = load_ply_mesh(&mesh_file_name);
-        println!(
-            "loaded mesh: {} vertices, {} triangles",
-            mesh.positions.len(),
-            mesh.triangles.len()
-        );
-        let _clusters = build_clusters(&mesh);
+        let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
+        base.systems.resource_loader.async_load({
+            let mesh_info = Arc::clone(&mesh_info);
+            move |allocator| {
+                let mut mesh_info_clone = *mesh_info.lock().unwrap();
+                mesh_info_clone.load(allocator, &mesh_file_name);
+                *mesh_info.lock().unwrap() = mesh_info_clone;
+            }
+        });
 
         Self {
             context,
-            task_group_size,
+            standard_descriptor_set_layout,
+            standard_pipeline_layout,
             cluster_descriptor_set_layout,
             cluster_pipeline_layout,
+            task_group_size,
+            mesh_info,
+            angle: 0.0,
         }
     }
 
@@ -91,13 +220,32 @@ impl App {
             ImageUsage::empty(),
             ImageUsage::SWAPCHAIN,
         );
-        let main_render_state = RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]);
+
+        let main_sample_count = vk::SampleCountFlags::N1;
+        let depth_image_desc = ImageDesc::new_2d(swap_size, vk::Format::D32_SFLOAT, vk::ImageAspectFlags::DEPTH);
+        let depth_image = schedule.describe_image(&depth_image_desc);
+        let main_render_state =
+            RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]).with_depth_temp(depth_image);
+
+        let mesh_info = *self.mesh_info.lock().unwrap();
+        let mesh_buffers = mesh_info.get_buffers(&base.systems.resource_loader);
+
+        let world_from_local = mesh_info.get_world_from_local();
+        let view_from_world = Isometry3::new(
+            Vec3::new(0.0, 0.0, -3.0),
+            Rotor3::from_rotation_yz(0.5) * Rotor3::from_rotation_xz(self.angle),
+        );
+        let vertical_fov = PI / 7.0;
+        let aspect_ratio = (swap_size.x as f32) / (swap_size.y as f32);
+        let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
             let context = base.context.as_ref();
             let descriptor_pool = &mut base.systems.descriptor_pool;
             let pipeline_cache = &base.systems.pipeline_cache;
             let task_group_size = self.task_group_size;
+            let standard_descriptor_set_layout = &self.standard_descriptor_set_layout;
+            let standard_pipeline_layout = self.standard_pipeline_layout;
             let cluster_descriptor_set_layout = &self.cluster_descriptor_set_layout;
             let cluster_pipeline_layout = self.cluster_pipeline_layout;
             let window = &base.window;
@@ -106,14 +254,85 @@ impl App {
             move |_params, cmd, render_pass| {
                 set_viewport_helper(&context.device, cmd, swap_size);
 
-                // draw mesh
+                if let Some(mesh_buffers) = mesh_buffers {
+                    let standard_descriptor_set = standard_descriptor_set_layout.write(descriptor_pool, |buf| {
+                        *buf = StandardUniforms {
+                            proj_from_local: proj_from_view
+                                * view_from_world.into_homogeneous_matrix()
+                                * world_from_local.into_homogeneous_matrix(),
+                        }
+                    });
+
+                    let state = GraphicsPipelineState::new(render_pass, main_sample_count).with_vertex_inputs(
+                        &[
+                            vk::VertexInputBindingDescription {
+                                binding: 0,
+                                stride: mem::size_of::<Vec3>() as u32,
+                                input_rate: vk::VertexInputRate::VERTEX,
+                            },
+                            vk::VertexInputBindingDescription {
+                                binding: 1,
+                                stride: mem::size_of::<Vec3>() as u32,
+                                input_rate: vk::VertexInputRate::VERTEX,
+                            },
+                        ],
+                        &[
+                            vk::VertexInputAttributeDescription {
+                                location: 0,
+                                binding: 0,
+                                format: vk::Format::R32G32B32_SFLOAT,
+                                offset: 0,
+                            },
+                            vk::VertexInputAttributeDescription {
+                                location: 1,
+                                binding: 1,
+                                format: vk::Format::R32G32B32_SFLOAT,
+                                offset: 0,
+                            },
+                        ],
+                    );
+
+                    let pipeline = pipeline_cache.get_graphics(
+                        VertexShaderDesc::standard("test_mesh_shader/standard.vert.spv"),
+                        "test_mesh_shader/test.frag.spv",
+                        standard_pipeline_layout,
+                        &state,
+                    );
+                    unsafe {
+                        context
+                            .device
+                            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                        context.device.cmd_bind_descriptor_sets(
+                            cmd,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            standard_pipeline_layout,
+                            0,
+                            slice::from_ref(&standard_descriptor_set),
+                            &[],
+                        );
+                        context.device.cmd_bind_vertex_buffers(
+                            cmd,
+                            0,
+                            &[mesh_buffers.position, mesh_buffers.normal],
+                            &[0, 0],
+                        );
+                        context
+                            .device
+                            .cmd_bind_index_buffer(cmd, mesh_buffers.index, 0, vk::IndexType::UINT32);
+                        context
+                            .device
+                            .cmd_draw_indexed(cmd, mesh_info.triangle_count * 3, 1, 0, 0, 0);
+                    }
+                }
+
+                // draw cluster test
                 let task_count = 3;
                 let cluster_descriptor_set = cluster_descriptor_set_layout
                     .write(descriptor_pool, |buf: &mut ClusterUniforms| {
                         *buf = ClusterUniforms { task_count }
                     });
 
-                let state = GraphicsPipelineState::new(render_pass, vk::SampleCountFlags::N1);
+                let state = GraphicsPipelineState::new(render_pass, main_sample_count);
                 let pipeline = pipeline_cache.get_graphics(
                     VertexShaderDesc::mesh(
                         "test_mesh_shader/cluster.task.spv",
@@ -121,7 +340,7 @@ impl App {
                         Some(task_group_size),
                         "test_mesh_shader/cluster.mesh.spv",
                     ),
-                    "test_mesh_shader/cluster.frag.spv",
+                    "test_mesh_shader/test.frag.spv",
                     cluster_pipeline_layout,
                     &state,
                 );
@@ -142,7 +361,7 @@ impl App {
                 // draw imgui
                 ui_platform.prepare_render(&ui, window);
 
-                let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, vk::SampleCountFlags::N1);
+                let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
                 ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
             }
         });
@@ -158,6 +377,8 @@ impl App {
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
         base.display
             .present(swap_vk_image, rendering_finished_semaphore.unwrap());
+
+        self.angle += base.ui_context.io().delta_time;
     }
 }
 

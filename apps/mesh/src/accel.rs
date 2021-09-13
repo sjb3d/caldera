@@ -44,15 +44,12 @@ impl AccelLevel {
     fn new_bottom_level<'a>(
         context: &'a SharedContext,
         mesh_info: &MeshInfo,
-        resource_loader: &ResourceLoader,
+        mesh_buffers: &MeshBuffers,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> AccelLevel {
-        let position_buffer = resource_loader.get_buffer(mesh_info.position_buffer).unwrap();
-        let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
-
-        let vertex_buffer_address = unsafe { context.device.get_buffer_device_address_helper(position_buffer) };
-        let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
+        let vertex_buffer_address = unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.position) };
+        let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.index) };
 
         let geometry_triangles_data = vk::AccelerationStructureGeometryTrianglesDataKHR {
             vertex_format: vk::Format::R32G32B32_SFLOAT,
@@ -337,18 +334,17 @@ impl AccelInfo {
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
         mesh_info: &'a MeshInfo,
+        mesh_buffers: &'a MeshBuffers,
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> Self {
         let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(descriptor_set_layout_cache);
         let trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(trace_descriptor_set_layout.0);
 
-        let index_buffer = resource_loader.get_buffer(mesh_info.index_buffer).unwrap();
-        let index_buffer_device_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
-
-        let attribute_buffer = resource_loader.get_buffer(mesh_info.attribute_buffer).unwrap();
+        let index_buffer_device_address =
+            unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.index) };
         let attribute_buffer_device_address =
-            unsafe { context.device.get_buffer_device_address_helper(attribute_buffer) };
+            unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.attribute) };
 
         // TODO: figure out live reload, needs to regenerate SBT!
         let trace_pipeline = pipeline_cache.get_ray_tracing(
@@ -472,8 +468,7 @@ impl AccelInfo {
             }
         });
 
-        let bottom_level =
-            AccelLevel::new_bottom_level(context, mesh_info, resource_loader, global_allocator, schedule);
+        let bottom_level = AccelLevel::new_bottom_level(context, mesh_info, mesh_buffers, global_allocator, schedule);
 
         let bottom_level_device_address = {
             let info = vk::AccelerationStructureDeviceAddressInfoKHR {

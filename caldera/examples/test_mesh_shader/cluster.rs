@@ -1,6 +1,9 @@
 use bitvec::prelude::*;
 use caldera::prelude::*;
 
+pub const MAX_VERTICES_PER_CLUSTER: usize = 64;
+pub const MAX_TRIANGLES_PER_CLUSTER: usize = 124;
+
 pub struct Mesh {
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
@@ -101,9 +104,6 @@ struct ClusterBuilder<'m> {
 }
 
 impl<'m> ClusterBuilder<'m> {
-    const MAX_VERTICES: usize = 64;
-    const MAX_TRIANGLES: usize = 126;
-
     fn new(mesh: &'m Mesh) -> Self {
         Self {
             mesh,
@@ -114,8 +114,8 @@ impl<'m> ClusterBuilder<'m> {
     }
 
     fn add_next_available_triangle(&mut self, cluster: &mut Cluster) -> bool {
-        assert!(cluster.mesh_vertices.len() + 3 <= Self::MAX_VERTICES);
-        assert!(cluster.triangles.len() + 1 <= Self::MAX_TRIANGLES);
+        assert!(cluster.mesh_vertices.len() + 3 <= MAX_VERTICES_PER_CLUSTER);
+        assert!(cluster.triangles.len() + 1 <= MAX_TRIANGLES_PER_CLUSTER);
         if let Some(triangle_index) = self.available_triangles.first_one() {
             let triangle = self.mesh.triangles[triangle_index]
                 .map_mut(|mesh_vertex| self.vertex_remap.get_or_insert(mesh_vertex, cluster));
@@ -130,7 +130,9 @@ impl<'m> ClusterBuilder<'m> {
     fn find_best_adjacent_triangle(&self, cluster: &Cluster) -> Option<u32> {
         // HACK: if we cannot add 2 new vertices then just bail
         // TODO: minimal check, check budget vs each candidate triangle
-        if cluster.mesh_vertices.len() + 2 > Self::MAX_VERTICES || cluster.triangles.len() + 1 > Self::MAX_TRIANGLES {
+        if cluster.mesh_vertices.len() + 2 > MAX_VERTICES_PER_CLUSTER
+            || cluster.triangles.len() + 1 > MAX_TRIANGLES_PER_CLUSTER
+        {
             return None;
         }
 

@@ -160,10 +160,7 @@ impl App {
         }
 
         let mesh_info = *self.mesh_info.lock().unwrap();
-        let position_buffer = base.systems.resource_loader.get_buffer(mesh_info.position_buffer);
-        let attribute_buffer = base.systems.resource_loader.get_buffer(mesh_info.attribute_buffer);
-        let index_buffer = base.systems.resource_loader.get_buffer(mesh_info.index_buffer);
-        let instance_buffer = base.systems.resource_loader.get_buffer(mesh_info.instance_buffer);
+        let mesh_buffers = mesh_info.get_buffers(&base.systems.resource_loader);
 
         let view_from_world = Isometry3::new(
             Vec3::new(0.0, 0.0, -6.0),
@@ -174,21 +171,19 @@ impl App {
         let aspect_ratio = (swap_size.x as f32) / (swap_size.y as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
-        if base.context.device.extensions.supports_khr_acceleration_structure()
-            && self.accel_info.is_none()
-            && position_buffer.is_some()
-            && attribute_buffer.is_some()
-            && index_buffer.is_some()
-        {
-            self.accel_info = Some(AccelInfo::new(
-                &base.context,
-                &mut base.systems.descriptor_set_layout_cache,
-                &base.systems.pipeline_cache,
-                &mut base.systems.resource_loader,
-                &mesh_info,
-                &mut base.systems.global_allocator,
-                &mut schedule,
-            ));
+        if let Some(mesh_buffers) = mesh_buffers.as_ref() {
+            if base.context.device.extensions.supports_khr_acceleration_structure() && self.accel_info.is_none() {
+                self.accel_info = Some(AccelInfo::new(
+                    &base.context,
+                    &mut base.systems.descriptor_set_layout_cache,
+                    &base.systems.pipeline_cache,
+                    &mut base.systems.resource_loader,
+                    &mesh_info,
+                    &mesh_buffers,
+                    &mut base.systems.global_allocator,
+                    &mut schedule,
+                ));
+            }
         }
         if let Some(accel_info) = self.accel_info.as_mut() {
             accel_info.update(
@@ -269,13 +264,7 @@ impl App {
                             copy_descriptor_set,
                             3,
                         );
-                    } else if let (
-                        Some(position_buffer),
-                        Some(attribute_buffer),
-                        Some(index_buffer),
-                        Some(instance_buffer),
-                    ) = (position_buffer, attribute_buffer, index_buffer, instance_buffer)
-                    {
+                    } else if let Some(mesh_buffers) = mesh_buffers {
                         let raster_descriptor_set = raster_descriptor_set_layout.write(descriptor_pool, |buf| {
                             *buf = RasterData {
                                 proj_from_world: proj_from_view * view_from_world.into_homogeneous_matrix(),
@@ -354,12 +343,12 @@ impl App {
                             context.device.cmd_bind_vertex_buffers(
                                 cmd,
                                 0,
-                                &[position_buffer, attribute_buffer, instance_buffer],
+                                &[mesh_buffers.position, mesh_buffers.attribute, mesh_buffers.instance],
                                 &[0, 0, 0],
                             );
                             context
                                 .device
-                                .cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
+                                .cmd_bind_index_buffer(cmd, mesh_buffers.index, 0, vk::IndexType::UINT32);
                             context.device.cmd_draw_indexed(
                                 cmd,
                                 mesh_info.triangle_count * 3,
