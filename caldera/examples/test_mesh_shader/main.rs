@@ -117,7 +117,7 @@ impl MeshInfo {
             mesh.positions.len(),
             mesh.triangles.len()
         );
-        let clusters = build_clusters(&mesh);
+        let (mesh, clusters) = build_clusters(mesh);
 
         let position_buffer_desc = BufferDesc::new(mesh.positions.len() * mem::size_of::<Vec3>());
         let mut writer = allocator

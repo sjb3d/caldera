@@ -72,9 +72,9 @@ impl TriangleListPerVertex {
     }
 }
 
-struct VertexRemap(Vec<u8>);
+struct ClusterVertexRemap(Vec<u8>);
 
-impl VertexRemap {
+impl ClusterVertexRemap {
     fn new(mesh: &Mesh) -> Self {
         Self(vec![u8::MAX; mesh.positions.len()])
     }
@@ -89,6 +89,10 @@ impl VertexRemap {
         cluster_vertex as u32
     }
 
+    fn contains(&self, mesh_vertex: u32) -> bool {
+        self.0[mesh_vertex as usize] != u8::MAX
+    }
+
     fn reset(&mut self, cluster: &Cluster) {
         for &mesh_vertex in &cluster.mesh_vertices {
             self.0[mesh_vertex as usize] = u8::MAX;
@@ -100,7 +104,7 @@ struct ClusterBuilder<'m> {
     mesh: &'m Mesh,
     triangle_list_per_vertex: TriangleListPerVertex,
     available_triangles: BitVec,
-    vertex_remap: VertexRemap,
+    vertex_remap: ClusterVertexRemap,
 }
 
 impl<'m> ClusterBuilder<'m> {
@@ -109,7 +113,7 @@ impl<'m> ClusterBuilder<'m> {
             mesh,
             triangle_list_per_vertex: TriangleListPerVertex::new(mesh),
             available_triangles: bitvec![1; mesh.triangles.len()],
-            vertex_remap: VertexRemap::new(mesh),
+            vertex_remap: ClusterVertexRemap::new(mesh),
         }
     }
 
@@ -128,10 +132,9 @@ impl<'m> ClusterBuilder<'m> {
     }
 
     fn find_best_adjacent_triangle(&self, cluster: &Cluster) -> Option<u32> {
-        // HACK: if we cannot add 2 new vertices then just bail
-        // TODO: minimal check, check budget vs each candidate triangle
-        if cluster.mesh_vertices.len() + 2 > MAX_VERTICES_PER_CLUSTER
-            || cluster.triangles.len() + 1 > MAX_TRIANGLES_PER_CLUSTER
+        // early out if full
+        if cluster.mesh_vertices.len() == MAX_VERTICES_PER_CLUSTER
+            || cluster.triangles.len() == MAX_TRIANGLES_PER_CLUSTER
         {
             return None;
         }
@@ -144,6 +147,15 @@ impl<'m> ClusterBuilder<'m> {
             .flat_map(|&vertex| self.triangle_list_per_vertex.triangle_indices_for_vertex(vertex))
             .copied()
             .filter(|&triangle_index| self.available_triangles[triangle_index as usize])
+            .filter(|&triangle_index| {
+                let new_vertex_count = self.mesh.triangles[triangle_index as usize]
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .filter(|&vertex| !self.vertex_remap.contains(vertex))
+                    .count();
+                cluster.mesh_vertices.len() + new_vertex_count <= MAX_VERTICES_PER_CLUSTER
+            })
             .next()
     }
 
@@ -167,6 +179,34 @@ impl<'m> ClusterBuilder<'m> {
     }
 }
 
-pub fn build_clusters(mesh: &Mesh) -> Vec<Cluster> {
-    ClusterBuilder::new(mesh).build()
+pub fn build_clusters(mut mesh: Mesh) -> (Mesh, Vec<Cluster>) {
+    let mut clusters = ClusterBuilder::new(&mesh).build();
+
+    let mut new_vertex_from_old = vec![u32::MAX; mesh.positions.len()];
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    mesh.triangles.clear();
+    for cluster in clusters.iter_mut() {
+        for mesh_vertex in cluster.mesh_vertices.iter_mut() {
+            let old_vertex = *mesh_vertex;
+            let mut new_vertex = new_vertex_from_old[old_vertex as usize];
+            if new_vertex == u32::MAX {
+                new_vertex = positions.len() as u32;
+                new_vertex_from_old[old_vertex as usize] = new_vertex;
+                positions.push(mesh.positions[old_vertex as usize]);
+                normals.push(mesh.normals[old_vertex as usize]);
+            }
+            *mesh_vertex = new_vertex;
+        }
+        mesh.triangles.extend(
+            cluster
+                .triangles
+                .iter()
+                .map(|&triangle| triangle.map_mut(|cluster_vertex| cluster.mesh_vertices[cluster_vertex as usize])),
+        );
+    }
+    mesh.positions = positions;
+    mesh.normals = normals;
+
+    (mesh, clusters)
 }
