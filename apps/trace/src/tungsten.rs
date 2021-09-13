@@ -40,6 +40,7 @@ enum BsdfType {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(clippy::upper_case_acronyms)]
 enum Distribution {
     Beckmann,
     #[serde(rename = "ggx")]

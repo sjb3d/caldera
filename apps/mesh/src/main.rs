@@ -179,7 +179,7 @@ impl App {
                     &base.systems.pipeline_cache,
                     &mut base.systems.resource_loader,
                     &mesh_info,
-                    &mesh_buffers,
+                    mesh_buffers,
                     &mut base.systems.global_allocator,
                     &mut schedule,
                 ));
