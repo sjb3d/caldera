@@ -1,6 +1,6 @@
 # path_tracer
 
-This is an [caldera](https://github.com/sjb3d/caldera) example that implements a spectral path tracer that makes use of Vulkan ray tracing extensions.
+This is an implementation of a spectral path tracer that makes use of Vulkan ray tracing extensions via [caldera](https://github.com/sjb3d/caldera).
 
 ## Features
 
