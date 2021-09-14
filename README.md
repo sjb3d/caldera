@@ -28,10 +28,10 @@ Please follow the link in the name of each example to show a more information ab
 
 Screenshot | Description
 --- | ---
-[![compute image](images/test_compute.jpg)](examples/test_compute) | [**test_compute**](examples/test_compute)<br/>Initial test for synchronisation between compute and graphics.  Implements a toy path tracer in a single compute shader, reads the result during rasterization of the UI.
-[![ray_tracing image](images/test_ray_tracing.jpg)](examples/test_ray_tracing) | [**test_ray_tracing**](examples/test_ray_tracing)<br/>Test of the `VK_KHR_acceleration_structure` and `VK_KHR_ray_tracing_pipeline` extensions.  Loads a PLY format mesh and draws a few instances using either rasterization or ray tracing.
-[![mesh_shader image](images/test_ray_tracing.jpg)](examples/test_mesh_shader) | [**test_mesh_shader**](examples/test_mesh_shader)<br/>Test of the `NV_mesh_shader` extension.  Loads a PLY format mesh, makes some clusters, then draws the result using either the standard vertex pipeline or mesh imagesshaders.
-[![living-room-2 image](images/path_tracer.jpg)](examples/path_tracer) | [**path_tracer**](examples/path_tracer)<br/>A spectral path tracer built on Vulkan ray tracing with support for several different surfaces and light types. The [README](examples/path_tracer) for this example contains many more details. The scene shown is from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
+[![compute image](images/test_compute.jpg)](caldera/examples/test_compute) | [**test_compute**](caldera/examples/test_compute)<br/>Initial test for synchronisation between compute and graphics.  Implements a toy path tracer in a single compute shader, reads the result during rasterization of the UI.
+[![ray_tracing image](images/test_ray_tracing.jpg)](caldera/examples/test_ray_tracing) | [**test_ray_tracing**](caldera/examples/test_ray_tracing)<br/>Test of the `VK_KHR_acceleration_structure` and `VK_KHR_ray_tracing_pipeline` extensions.  Loads a PLY format mesh and draws a few instances using either rasterization or ray tracing.
+[![mesh_shader image](images/test_ray_tracing.jpg)](caldera/examples/test_mesh_shader) | [**test_mesh_shader**](caldera/examples/test_mesh_shader)<br/>Test of the `NV_mesh_shader` extension.  Loads a PLY format mesh, makes some clusters, then draws the result using either the standard vertex pipeline or mesh imagesshaders.
+[![living-room-2 image](images/path_tracer.jpg)](caldera/examples/path_tracer) | [**path_tracer**](caldera/examples/path_tracer)<br/>A spectral path tracer built on Vulkan ray tracing with support for several different surfaces and light types. The [README](examples/path_tracer) for this example contains many more details. The scene shown is from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
 
 ## Procedural Macro for Descriptor Set Layout
 
@@ -75,5 +75,5 @@ This helps to cut down on boilerplate code for descriptor sets that can be decla
 
 TODO
 
-[ ] Buffer views?
-[ ] Use futures for async loading
+- [ ] Buffer views?
+- [ ] Use futures for async loading
