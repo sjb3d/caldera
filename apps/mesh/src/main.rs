@@ -68,13 +68,13 @@ impl App {
         let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
         let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
 
+        let has_ray_tracing = context.device.extensions.supports_khr_acceleration_structure();
         let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
         base.systems.resource_loader.async_load({
             let mesh_info = Arc::clone(&mesh_info);
-            let with_ray_tracing = context.device.extensions.supports_khr_acceleration_structure();
             move |allocator| {
                 let mut mesh_info_clone = *mesh_info.lock().unwrap();
-                mesh_info_clone.load(allocator, &mesh_file_name, with_ray_tracing);
+                mesh_info_clone.load(allocator, &mesh_file_name, has_ray_tracing);
                 *mesh_info.lock().unwrap() = mesh_info_clone;
             }
         });
@@ -87,7 +87,11 @@ impl App {
             copy_pipeline_layout,
             mesh_info,
             accel_info: None,
-            render_mode: RenderMode::Raster,
+            render_mode: if has_ray_tracing {
+                RenderMode::RayTrace
+            } else {
+                RenderMode::Raster
+            },
             is_rotating: false,
             angle: PI / 8.0,
         }

@@ -134,7 +134,13 @@ impl MeshInfo {
         })
     }
 
-    fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &Path) {
+    fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &Path, with_mesh_shader: bool) {
+        let mesh_buffer_usage = if with_mesh_shader {
+            BufferUsage::MESH_STORAGE_READ
+        } else {
+            BufferUsage::VERTEX_STORAGE_READ // just something non-empty
+        };
+
         let mesh = load_ply_mesh(&mesh_file_name);
         println!(
             "loaded mesh: {} vertices, {} triangles",
@@ -148,7 +154,7 @@ impl MeshInfo {
             .map_buffer(
                 self.position_buffer,
                 &position_buffer_desc,
-                BufferUsage::VERTEX_BUFFER | BufferUsage::MESH_STORAGE_READ,
+                BufferUsage::VERTEX_BUFFER | mesh_buffer_usage,
             )
             .unwrap();
         self.min = Vec3::broadcast(f32::MAX);
@@ -164,7 +170,7 @@ impl MeshInfo {
             .map_buffer(
                 self.normal_buffer,
                 &normal_buffer_desc,
-                BufferUsage::VERTEX_BUFFER | BufferUsage::MESH_STORAGE_READ,
+                BufferUsage::VERTEX_BUFFER | mesh_buffer_usage,
             )
             .unwrap();
         for &normal in &mesh.normals {
@@ -182,11 +188,7 @@ impl MeshInfo {
 
         let cluster_buffer_desc = BufferDesc::new(clusters.len() * mem::size_of::<ClusterDesc>());
         let mut writer = allocator
-            .map_buffer(
-                self.cluster_buffer,
-                &cluster_buffer_desc,
-                BufferUsage::MESH_STORAGE_READ,
-            )
+            .map_buffer(self.cluster_buffer, &cluster_buffer_desc, mesh_buffer_usage)
             .unwrap();
         for cluster in &clusters {
             let mut desc = ClusterDesc {
@@ -229,6 +231,7 @@ struct App {
     cluster_descriptor_set_layout: ClusterDescriptorSetLayout,
     cluster_pipeline_layout: vk::PipelineLayout,
 
+    has_mesh_shader: bool,
     task_group_size: u32,
     mesh_info: Arc<Mutex<MeshInfo>>,
     render_mode: RenderMode,
@@ -250,6 +253,8 @@ impl App {
         let cluster_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(cluster_descriptor_set_layout.0);
 
+        let has_mesh_shader = context.device.extensions.supports_nv_mesh_shader()
+            && context.device.extensions.supports_ext_subgroup_size_control();
         let task_group_size = context
             .physical_device_extra_properties
             .as_ref()
@@ -263,7 +268,7 @@ impl App {
             let mesh_info = Arc::clone(&mesh_info);
             move |allocator| {
                 let mut mesh_info_clone = *mesh_info.lock().unwrap();
-                mesh_info_clone.load(allocator, &mesh_file_name);
+                mesh_info_clone.load(allocator, &mesh_file_name, has_mesh_shader);
                 *mesh_info.lock().unwrap() = mesh_info_clone;
             }
         });
@@ -274,9 +279,14 @@ impl App {
             standard_pipeline_layout,
             cluster_descriptor_set_layout,
             cluster_pipeline_layout,
+            has_mesh_shader,
             task_group_size,
             mesh_info,
-            render_mode: RenderMode::Clusters,
+            render_mode: if has_mesh_shader {
+                RenderMode::Clusters
+            } else {
+                RenderMode::Standard
+            },
             do_backface_culling: true,
             is_rotating: false,
             angle: 0.0,
@@ -293,6 +303,7 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
                 let ui = &ui;
+                let has_mesh_shader = self.has_mesh_shader;
                 let render_mode = &mut self.render_mode;
                 let do_backface_culling = &mut self.do_backface_culling;
                 let is_rotating = &mut self.is_rotating;
@@ -300,7 +311,11 @@ impl App {
                     ui.checkbox(im_str!("Rotate"), is_rotating);
                     ui.text("Render Mode:");
                     ui.radio_button(im_str!("Standard"), render_mode, RenderMode::Standard);
-                    ui.radio_button(im_str!("Clusters"), render_mode, RenderMode::Clusters);
+                    if has_mesh_shader {
+                        ui.radio_button(im_str!("Clusters"), render_mode, RenderMode::Clusters);
+                    } else {
+                        ui.text_disabled("Mesh Shaders Not Supported!");
+                    }
                     ui.text("Cluster Settings:");
                     ui.checkbox(im_str!("Backface Culling"), do_backface_culling);
                 }
@@ -518,6 +533,10 @@ struct AppParams {
     #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
     inline_uniform_block: ContextFeature,
 
+    /// Whether to use NV_mesh_shader
+    #[structopt(long, possible_values=&ContextFeature::VARIANTS, default_value="optional")]
+    mesh_shader: ContextFeature,
+
     /// The PLY file to load
     mesh_file_name: PathBuf,
 }
@@ -527,8 +546,8 @@ fn main() {
     let context_params = ContextParams {
         version: app_params.version,
         inline_uniform_block: app_params.inline_uniform_block,
-        mesh_shader: ContextFeature::Require,
-        subgroup_size_control: ContextFeature::Require,
+        mesh_shader: app_params.mesh_shader,
+        subgroup_size_control: app_params.mesh_shader,
         ..Default::default()
     };
 

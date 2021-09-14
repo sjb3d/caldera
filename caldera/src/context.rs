@@ -67,7 +67,7 @@ pub type UniqueImageView = Unique<vk::ImageView>;
 pub type UniqueRenderPass = Unique<vk::RenderPass>;
 pub type UniqueFramebuffer = Unique<vk::Framebuffer>;
 
-#[derive(Debug, EnumString, EnumVariantNames)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, EnumVariantNames)]
 #[strum(serialize_all = "kebab_case")]
 pub enum ContextFeature {
     Disable,
