@@ -13,6 +13,7 @@ INC=\
 	common/normal_pack.glsl \
 	common/sampler.glsl \
 	common/tone_map.glsl \
+	common/transform.glsl \
 	test_mesh_shader/cluster_common.glsl \
 	trace/bsdf_common.glsl \
 	trace/diffuse_bsdf.glsl \

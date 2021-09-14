@@ -13,6 +13,8 @@ CLUSTER_TASK(in, i_task);
 layout(triangles, max_vertices = MAX_VERTICES_PER_CLUSTER, max_primitives = MAX_TRIANGLES_PER_CLUSTER) out;
 
 layout(location = 0) out vec3 v_color[];
+layout(location = 1) out vec3 v_normal_viewspace[];
+layout(location = 2) out vec3 v_pos_viewspace[];
 
 void main()
 {
@@ -22,11 +24,14 @@ void main()
 
     for (uint index = gl_LocalInvocationID.x; index < vertex_count; index += gl_WorkGroupSize.x) {
         uint vertex = g_cluster_desc.arr[task_index].vertices[index];
-        vec3 pos = g_position.arr[vertex];
-        vec3 normal = g_normal.arr[vertex];
-        gl_MeshVerticesNV[index].gl_Position = g_cluster.proj_from_local * vec4(pos, 1.0f);
-        vec3 debug_color = unpackUnorm4x8(hash(task_index)).xyz;
-        v_color[index] = debug_color + 0.01f*(0.5f*normal + 0.5f);
+        vec3 pos_localspace = g_position.arr[vertex];
+        vec3 normal_localspace = g_normal.arr[vertex];
+        vec3 pos_viewspace = transform_point(g_cluster.view_from_local, pos_localspace);
+        vec3 normal_viewspace = transform_unit(g_cluster.view_from_local, normal_localspace);
+        gl_MeshVerticesNV[index].gl_Position = g_cluster.proj_from_view * vec4(pos_viewspace, 1.f);
+        v_color[index] = 0.2f + 0.8f*unpackUnorm4x8(hash(task_index)).xyz;
+        v_normal_viewspace[index] = normal_viewspace;
+        v_pos_viewspace[index] = pos_viewspace;
     }
 
     uint packed_index_count = ((triangle_count * 3) + 3) / 4;

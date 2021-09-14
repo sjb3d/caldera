@@ -144,7 +144,7 @@ void main()
 
             if (hit == HIT_LIGHT) {
                 const uvec2 hit_bits = floatBitsToUint(hit_pos.xy - vec2(4.f, 3.f));
-                float light_scale = 1.0f;
+                float light_scale = 1.f;
                 vec3 light_value;
                 if (((hit_bits.y >> 20) & 0x3) == ((hit_bits.x >> 21) & 0x3)) {
                     light_value = light_scale*vec3(1.f, 1.f, .5f);

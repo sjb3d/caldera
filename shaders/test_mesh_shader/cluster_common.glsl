@@ -1,3 +1,4 @@
+#include "transform.glsl"
 
 const uint MAX_VERTICES_PER_CLUSTER = 64;
 const uint MAX_TRIANGLES_PER_CLUSTER = 124;
@@ -21,10 +22,9 @@ layout(constant_id = TASK_GROUP_SIZE_ID) const int task_group_size = 1;
 } NAME;
 
 layout(set = 0, binding = 0, scalar) uniform ClusterUniforms {
-    mat4 proj_from_local;
-    mat4 view_from_local;
-    mat3 view_from_local_rotflip;
-    float view_from_local_scale;
+    mat4 proj_from_view;
+    PackedTransform view_from_local;
+    uint do_backface_culling;
     uint task_count;
 } g_cluster;
 

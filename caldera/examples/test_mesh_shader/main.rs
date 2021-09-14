@@ -22,8 +22,27 @@ use winit::{
 
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
+struct PackedTransform {
+    translation: Vec3,
+    scale: f32,
+    rotation_quat: [f32; 4],
+}
+
+impl From<Similarity3> for PackedTransform {
+    fn from(s: Similarity3) -> Self {
+        Self {
+            translation: s.translation,
+            scale: s.scale,
+            rotation_quat: s.rotation.into_quaternion_array(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod)]
 struct StandardUniforms {
-    proj_from_local: Mat4,
+    proj_from_view: Mat4,
+    view_from_local: PackedTransform,
 }
 
 descriptor_set_layout!(StandardDescriptorSetLayout {
@@ -46,10 +65,9 @@ struct ClusterDesc {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod)]
 struct ClusterUniforms {
-    proj_from_local: Mat4,
-    view_from_local: Mat4,
-    view_from_local_rotflip: Mat3,
-    view_from_local_scale: f32,
+    proj_from_view: Mat4,
+    view_from_local: PackedTransform,
+    do_backface_culling: u32,
     task_count: u32,
 }
 
@@ -214,6 +232,8 @@ struct App {
     task_group_size: u32,
     mesh_info: Arc<Mutex<MeshInfo>>,
     render_mode: RenderMode,
+    do_backface_culling: bool,
+    is_rotating: bool,
     angle: f32,
 }
 
@@ -257,6 +277,8 @@ impl App {
             task_group_size,
             mesh_info,
             render_mode: RenderMode::Clusters,
+            do_backface_culling: true,
+            is_rotating: false,
             angle: 0.0,
         }
     }
@@ -272,10 +294,15 @@ impl App {
             .build(&ui, {
                 let ui = &ui;
                 let render_mode = &mut self.render_mode;
+                let do_backface_culling = &mut self.do_backface_culling;
+                let is_rotating = &mut self.is_rotating;
                 move || {
+                    ui.checkbox(im_str!("Rotate"), is_rotating);
                     ui.text("Render Mode:");
                     ui.radio_button(im_str!("Standard"), render_mode, RenderMode::Standard);
                     ui.radio_button(im_str!("Clusters"), render_mode, RenderMode::Clusters);
+                    ui.text("Cluster Settings:");
+                    ui.checkbox(im_str!("Backface Culling"), do_backface_culling);
                 }
             });
 
@@ -317,7 +344,6 @@ impl App {
         let aspect_ratio = (swap_size.x as f32) / (swap_size.y as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
         let view_from_local = view_from_world * world_from_local;
-        let proj_from_local = proj_from_view * view_from_local.into_homogeneous_matrix();
 
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
             let context = base.context.as_ref();
@@ -330,6 +356,7 @@ impl App {
             let cluster_pipeline_layout = self.cluster_pipeline_layout;
             let window = &base.window;
             let render_mode = self.render_mode;
+            let do_backface_culling = self.do_backface_culling;
             let ui_platform = &mut base.ui_platform;
             let ui_renderer = &mut base.ui_renderer;
             move |_params, cmd, render_pass| {
@@ -338,8 +365,13 @@ impl App {
                 if let Some(mesh_buffers) = mesh_buffers {
                     match render_mode {
                         RenderMode::Standard => {
-                            let standard_descriptor_set = standard_descriptor_set_layout
-                                .write(descriptor_pool, |buf| *buf = StandardUniforms { proj_from_local });
+                            let standard_descriptor_set =
+                                standard_descriptor_set_layout.write(descriptor_pool, |buf| {
+                                    *buf = StandardUniforms {
+                                        proj_from_view,
+                                        view_from_local: view_from_local.into(),
+                                    }
+                                });
 
                             let state = GraphicsPipelineState::new(render_pass, main_sample_count).with_vertex_inputs(
                                 &[
@@ -409,11 +441,9 @@ impl App {
                                 descriptor_pool,
                                 |buf: &mut ClusterUniforms| {
                                     *buf = ClusterUniforms {
-                                        proj_from_local,
-                                        view_from_local: view_from_local.into_homogeneous_matrix(),
-                                        view_from_local_rotflip: view_from_local.rotation.into_matrix()
-                                            * Mat3::from_scale_homogeneous(1.0f32.copysign(view_from_local.scale)),
-                                        view_from_local_scale: view_from_local.scale,
+                                        proj_from_view,
+                                        view_from_local: view_from_local.into(),
+                                        do_backface_culling: if do_backface_culling { 1 } else { 0 },
                                         task_count,
                                     }
                                 },
@@ -471,7 +501,9 @@ impl App {
         base.display
             .present(swap_vk_image, rendering_finished_semaphore.unwrap());
 
-        self.angle += base.ui_context.io().delta_time;
+        if self.is_rotating {
+            self.angle += base.ui_context.io().delta_time;
+        }
     }
 }
 

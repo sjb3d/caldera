@@ -107,6 +107,7 @@ impl App {
                 let render_mode = &mut self.render_mode;
                 let is_rotating = &mut self.is_rotating;
                 move || {
+                    ui.checkbox(im_str!("Rotate"), is_rotating);
                     ui.text("Render Mode:");
                     ui.radio_button(im_str!("Raster"), render_mode, RenderMode::Raster);
                     ui.radio_button(
@@ -119,7 +120,6 @@ impl App {
                     } else {
                         ui.text_disabled("Ray Tracing Not Supported!");
                     }
-                    ui.checkbox(im_str!("Rotate"), is_rotating);
                 }
             });
 

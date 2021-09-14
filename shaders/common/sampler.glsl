@@ -84,8 +84,8 @@ float solid_angle_pdf_from_area_pdf(float area_pdf, float cos_theta, float dista
 vec2 sample_disc_uniform(vec2 u)
 {
     // remap to [-1,1]
-    const float a = 2.0f*u.x - 1.0f;
-    const float b = 2.0f*u.y - 1.0f;
+    const float a = 2.f*u.x - 1.f;
+    const float b = 2.f*u.y - 1.f;
 
     // use negative radius trick
     // http://psgraphics.blogspot.com/2011/01/improved-code-for-concentric-map.html
