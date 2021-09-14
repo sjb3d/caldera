@@ -37,9 +37,6 @@ INC=\
 	trace/triangle_mesh_light.glsl
 
 SRC=\
-	compute/trace.comp.glsl \
-	compute/copy.frag.glsl \
-	compute/copy.vert.glsl \
 	mesh/copy.frag.glsl \
 	mesh/copy.vert.glsl \
 	mesh/raster.vert.glsl \
@@ -47,6 +44,9 @@ SRC=\
 	mesh/trace.rchit.glsl \
 	mesh/trace.rgen.glsl \
 	mesh/trace.rmiss.glsl \
+	test_compute/trace.comp.glsl \
+	test_compute/copy.frag.glsl \
+	test_compute/copy.vert.glsl \
 	test_mesh_shader/cluster.mesh.glsl \
 	test_mesh_shader/cluster.task.glsl \
 	test_mesh_shader/standard.vert.glsl \
@@ -65,7 +65,7 @@ SRC=\
 	trace/path_trace.rgen.glsl \
 	trace/sphere.rint.glsl \
 
-APPS=compute mesh trace test_mesh_shader
+APPS=mesh trace test_compute test_mesh_shader
 
 SRC_DIR=shaders
 BIN_DIR=spv/bin
