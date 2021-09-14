@@ -154,7 +154,10 @@ dependencies = [
  "imgui-winit-support",
  "notify",
  "ply-rs",
+ "pmj",
+ "rand 0.7.3",
  "raw-window-handle",
+ "rayon",
  "spark",
  "spark-imgui",
  "structopt",
@@ -292,22 +295,6 @@ dependencies = [
  "foreign-types",
  "libc",
  "objc",
-]
-
-[[package]]
-name = "compute"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "caldera",
- "imgui",
- "pmj",
- "rand 0.7.3",
- "rayon",
- "spark",
- "structopt",
- "strum",
- "winit",
 ]
 
 [[package]]
