@@ -874,20 +874,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mesh"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "caldera",
- "imgui",
- "ply-rs",
- "spark",
- "structopt",
- "strum",
- "winit",
-]
-
-[[package]]
 name = "minimal-lexical"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -263,8 +263,8 @@ impl App {
                             cmd,
                             copy_pipeline_layout,
                             &state,
-                            "mesh/copy.vert.spv",
-                            "mesh/copy.frag.spv",
+                            "test_ray_tracing/copy.vert.spv",
+                            "test_ray_tracing/copy.frag.spv",
                             copy_descriptor_set,
                             3,
                         );
@@ -327,8 +327,8 @@ impl App {
                             ],
                         );
                         let pipeline = pipeline_cache.get_graphics(
-                            VertexShaderDesc::standard("mesh/raster.vert.spv"),
-                            "mesh/raster.frag.spv",
+                            VertexShaderDesc::standard("test_ray_tracing/raster.vert.spv"),
+                            "test_ray_tracing/raster.frag.spv",
                             raster_pipeline_layout,
                             &state,
                         );
