@@ -1105,48 +1105,48 @@ impl Renderer {
         // make pipeline
         let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
             .map(|i| match ShaderGroup::from_integer(i).unwrap() {
-                ShaderGroup::RayGenerator => RayTracingShaderGroupDesc::Raygen("trace/path_trace.rgen.spv"),
-                ShaderGroup::ExtendMiss => RayTracingShaderGroupDesc::Miss("trace/extend.rmiss.spv"),
+                ShaderGroup::RayGenerator => RayTracingShaderGroupDesc::Raygen("path_tracer/path_trace.rgen.spv"),
+                ShaderGroup::ExtendMiss => RayTracingShaderGroupDesc::Miss("path_tracer/extend.rmiss.spv"),
                 ShaderGroup::ExtendHitTriangle => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/extend_triangle.rchit.spv",
+                    closest_hit: "path_tracer/extend_triangle.rchit.spv",
                     any_hit: None,
                     intersection: None,
                 },
                 ShaderGroup::ExtendHitDisc => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/extend_procedural.rchit.spv",
+                    closest_hit: "path_tracer/extend_procedural.rchit.spv",
                     any_hit: None,
-                    intersection: Some("trace/disc.rint.spv"),
+                    intersection: Some("path_tracer/disc.rint.spv"),
                 },
                 ShaderGroup::ExtendHitSphere => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/extend_procedural.rchit.spv",
+                    closest_hit: "path_tracer/extend_procedural.rchit.spv",
                     any_hit: None,
-                    intersection: Some("trace/sphere.rint.spv"),
+                    intersection: Some("path_tracer/sphere.rint.spv"),
                 },
                 ShaderGroup::ExtendHitMandelbulb => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/extend_procedural.rchit.spv",
+                    closest_hit: "path_tracer/extend_procedural.rchit.spv",
                     any_hit: None,
-                    intersection: Some("trace/mandelbulb.rint.spv"),
+                    intersection: Some("path_tracer/mandelbulb.rint.spv"),
                 },
-                ShaderGroup::OcclusionMiss => RayTracingShaderGroupDesc::Miss("trace/occlusion.rmiss.spv"),
+                ShaderGroup::OcclusionMiss => RayTracingShaderGroupDesc::Miss("path_tracer/occlusion.rmiss.spv"),
                 ShaderGroup::OcclusionHitTriangle => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/occlusion.rchit.spv",
+                    closest_hit: "path_tracer/occlusion.rchit.spv",
                     any_hit: None,
                     intersection: None,
                 },
                 ShaderGroup::OcclusionHitDisc => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/occlusion.rchit.spv",
+                    closest_hit: "path_tracer/occlusion.rchit.spv",
                     any_hit: None,
-                    intersection: Some("trace/disc.rint.spv"),
+                    intersection: Some("path_tracer/disc.rint.spv"),
                 },
                 ShaderGroup::OcclusionHitSphere => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/occlusion.rchit.spv",
+                    closest_hit: "path_tracer/occlusion.rchit.spv",
                     any_hit: None,
-                    intersection: Some("trace/sphere.rint.spv"),
+                    intersection: Some("path_tracer/sphere.rint.spv"),
                 },
                 ShaderGroup::OcclusionHitMandelbulb => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "trace/occlusion.rchit.spv",
+                    closest_hit: "path_tracer/occlusion.rchit.spv",
                     any_hit: None,
-                    intersection: Some("trace/mandelbulb.rint.spv"),
+                    intersection: Some("path_tracer/mandelbulb.rint.spv"),
                 },
             })
             .collect();
@@ -2374,7 +2374,7 @@ impl Renderer {
                             pipeline_cache,
                             cmd,
                             self.filter_pipeline_layout,
-                            "trace/filter.comp.spv",
+                            "path_tracer/filter.comp.spv",
                             &[],
                             descriptor_set,
                             self.params.size().div_round_up(8),

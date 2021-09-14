@@ -14,29 +14,42 @@ INC=\
 	common/sampler.glsl \
 	common/tone_map.glsl \
 	common/transform.glsl \
-	test_mesh_shader/cluster_common.glsl \
-	trace/bsdf_common.glsl \
-	trace/diffuse_bsdf.glsl \
-	trace/disc_light.glsl \
-	trace/dome_light.glsl \
-	trace/extend_common.glsl \
-	trace/light_common.glsl \
-	trace/mirror_bsdf.glsl \
-	trace/occlusion_common.glsl \
-	trace/path_trace_common.glsl \
-	trace/quad_light.glsl \
-	trace/rough_conductor_bsdf.glsl \
-	trace/rough_dielectric_bsdf.glsl \
-	trace/rough_plastic_bsdf.glsl \
-	trace/sequence.glsl \
-	trace/solid_angle_light.glsl \
-	trace/spectrum.glsl \
-	trace/sphere_light.glsl \
-	trace/smooth_dielectric_bsdf.glsl \
-	trace/smooth_plastic_bsdf.glsl \
-	trace/triangle_mesh_light.glsl
+	path_tracer/bsdf_common.glsl \
+	path_tracer/diffuse_bsdf.glsl \
+	path_tracer/disc_light.glsl \
+	path_tracer/dome_light.glsl \
+	path_tracer/extend_common.glsl \
+	path_tracer/light_common.glsl \
+	path_tracer/mirror_bsdf.glsl \
+	path_tracer/occlusion_common.glsl \
+	path_tracer/path_trace_common.glsl \
+	path_tracer/quad_light.glsl \
+	path_tracer/rough_conductor_bsdf.glsl \
+	path_tracer/rough_dielectric_bsdf.glsl \
+	path_tracer/rough_plastic_bsdf.glsl \
+	path_tracer/sequence.glsl \
+	path_tracer/solid_angle_light.glsl \
+	path_tracer/spectrum.glsl \
+	path_tracer/sphere_light.glsl \
+	path_tracer/smooth_dielectric_bsdf.glsl \
+	path_tracer/smooth_plastic_bsdf.glsl \
+	path_tracer/triangle_mesh_light.glsl \
+	test_mesh_shader/cluster_common.glsl
 
 SRC=\
+	path_tracer/capture.comp.glsl \
+	path_tracer/copy.frag.glsl \
+	path_tracer/copy.vert.glsl \
+	path_tracer/disc.rint.glsl \
+	path_tracer/extend.rmiss.glsl \
+	path_tracer/extend_procedural.rchit.glsl \
+	path_tracer/extend_triangle.rchit.glsl \
+	path_tracer/filter.comp.glsl \
+	path_tracer/mandelbulb.rint.glsl \
+	path_tracer/occlusion.rchit.glsl \
+	path_tracer/occlusion.rmiss.glsl \
+	path_tracer/path_trace.rgen.glsl \
+	path_tracer/sphere.rint.glsl \
 	test_compute/trace.comp.glsl \
 	test_compute/copy.frag.glsl \
 	test_compute/copy.vert.glsl \
@@ -50,22 +63,9 @@ SRC=\
 	test_ray_tracing/raster.frag.glsl \
 	test_ray_tracing/trace.rchit.glsl \
 	test_ray_tracing/trace.rgen.glsl \
-	test_ray_tracing/trace.rmiss.glsl \
-	trace/capture.comp.glsl \
-	trace/copy.frag.glsl \
-	trace/copy.vert.glsl \
-	trace/disc.rint.glsl \
-	trace/extend.rmiss.glsl \
-	trace/extend_procedural.rchit.glsl \
-	trace/extend_triangle.rchit.glsl \
-	trace/filter.comp.glsl \
-	trace/mandelbulb.rint.glsl \
-	trace/occlusion.rchit.glsl \
-	trace/occlusion.rmiss.glsl \
-	trace/path_trace.rgen.glsl \
-	trace/sphere.rint.glsl \
+	test_ray_tracing/trace.rmiss.glsl
 
-APPS=trace test_compute test_mesh_shader test_ray_tracing
+APPS=path_tracer test_compute test_mesh_shader test_ray_tracing
 
 SRC_DIR=shaders
 BIN_DIR=spv/bin
@@ -116,22 +116,22 @@ $(LISTING_DIR)/%.spv.txt: $(BIN_DIR)/%.spv Makefile
 	$(DISASM) -o $@ $<
 
 IMAGES=\
-	docs/trace_bathroom2.jpg \
-	docs/trace_coffee.jpg \
-	docs/trace_glass-of-water.jpg \
-	docs/trace_staircase.jpg \
-	docs/trace_living-room-2.jpg \
-	docs/trace_staircase2.jpg \
-	docs/trace_spaceship.jpg \
-	docs/trace_cornell-box.jpg \
-	docs/trace_cornell-box_dome-light.jpg \
-	docs/trace_cornell-box_conductor.jpg \
-	docs/trace_cornell-box_conductor_surfaces-only.jpg \
-	docs/trace_cornell-box_conductor_lights-only.jpg \
-	docs/trace_material_conductors.jpg \
-	docs/trace_material_gold_f10_uniform.jpg \
-	docs/trace_material_gold_f10_hero.jpg \
-	docs/trace_material_gold_f10_continuous.jpg
+	docs/path_tracer_bathroom2.jpg \
+	docs/path_tracer_coffee.jpg \
+	docs/path_tracer_glass-of-water.jpg \
+	docs/path_tracer_staircase.jpg \
+	docs/path_tracer_living-room-2.jpg \
+	docs/path_tracer_staircase2.jpg \
+	docs/path_tracer_spaceship.jpg \
+	docs/path_tracer_cornell-box.jpg \
+	docs/path_tracer_cornell-box_dome-light.jpg \
+	docs/path_tracer_cornell-box_conductor.jpg \
+	docs/path_tracer_cornell-box_conductor_surfaces-only.jpg \
+	docs/path_tracer_cornell-box_conductor_lights-only.jpg \
+	docs/path_tracer_material_conductors.jpg \
+	docs/path_tracer_material_gold_f10_uniform.jpg \
+	docs/path_tracer_material_gold_f10_hero.jpg \
+	docs/path_tracer_material_gold_f10_continuous.jpg
 
 clean-images:
 	$(RM) $(IMAGES)
@@ -139,52 +139,52 @@ clean-images:
 images: $(IMAGES)
 
 MANY_SAMPLES=-s 10
-TRACE=cargo run --release --bin trace --
+PATH_TRACER=cargo run --release --example path_tracer --
 
-docs/trace_bathroom2.%: ../tungsten_scenes/bathroom2/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 0.62 $(MANY_SAMPLES) tungsten $<
+docs/path_tracer_bathroom2.%: ../tungsten_scenes/bathroom2/scene.json shaders Makefile
+	$(PATH_TRACER) -o $@ -w 1000 -h 560 -e -0.5 --fov 0.62 $(MANY_SAMPLES) tungsten $<
 
-docs/trace_coffee.%: ../tungsten_scenes/coffee/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
+docs/path_tracer_coffee.%: ../tungsten_scenes/coffee/scene.json shaders Makefile
+	$(PATH_TRACER) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
 
-docs/trace_glass-of-water.%: ../tungsten_scenes/glass-of-water/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -b 24 $(MANY_SAMPLES) tungsten $<
+docs/path_tracer_glass-of-water.%: ../tungsten_scenes/glass-of-water/scene.json shaders Makefile
+	$(PATH_TRACER) -o $@ -w 1000 -h 560 -b 24 $(MANY_SAMPLES) tungsten $<
 
-docs/trace_living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -e -0.5 --fov 1.03 $(MANY_SAMPLES) tungsten $<
+docs/path_tracer_living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders Makefile
+	$(PATH_TRACER) -o $@ -w 1000 -h 560 -e -0.5 --fov 1.03 $(MANY_SAMPLES) tungsten $<
 
-docs/trace_staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
+docs/path_tracer_staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
+	$(PATH_TRACER) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
 
-docs/trace_staircase2.%: ../tungsten_scenes/staircase2/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 1000 -e -0.5 -b 16 --planar-lights-are-two-sided enable $(MANY_SAMPLES) tungsten $<
+docs/path_tracer_staircase2.%: ../tungsten_scenes/staircase2/scene.json shaders Makefile
+	$(PATH_TRACER) -o $@ -w 1000 -h 1000 -e -0.5 -b 16 --planar-lights-are-two-sided enable $(MANY_SAMPLES) tungsten $<
 
-docs/trace_spaceship.%: ../tungsten_scenes/spaceship/scene.json shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 -b 16 $(MANY_SAMPLES) tungsten $<
+docs/path_tracer_spaceship.%: ../tungsten_scenes/spaceship/scene.json shaders Makefile
+	$(PATH_TRACER) -o $@ -w 1000 -h 560 -b 16 $(MANY_SAMPLES) tungsten $<
 
-docs/trace_cornell-box.%: shaders Makefile
-	$(TRACE) -o $@ -w 492 -h 492 -e 1.0 $(MANY_SAMPLES) cornell-box
+docs/path_tracer_cornell-box.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 492 -h 492 -e 1.0 $(MANY_SAMPLES) cornell-box
 
-docs/trace_cornell-box_dome-light.%: shaders Makefile
-	$(TRACE) -o $@ -w 492 -h 492 $(MANY_SAMPLES) cornell-box dome-light
+docs/path_tracer_cornell-box_dome-light.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 492 -h 492 $(MANY_SAMPLES) cornell-box dome-light
 
-docs/trace_cornell-box_conductor.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 5 -f box cornell-box conductor
+docs/path_tracer_cornell-box_conductor.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 5 -f box cornell-box conductor
 
-docs/trace_cornell-box_conductor_surfaces-only.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique surfaces-only cornell-box conductor
+docs/path_tracer_cornell-box_conductor_surfaces-only.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique surfaces-only cornell-box conductor
 
-docs/trace_cornell-box_conductor_lights-only.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique lights-only cornell-box conductor
+docs/path_tracer_cornell-box_conductor_lights-only.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique lights-only cornell-box conductor
 
-docs/trace_material_conductors.%: shaders Makefile
-	$(TRACE) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply conductors e
+docs/path_tracer_material_conductors.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply conductors e
 
-docs/trace_material_gold_f10_uniform.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method uniform material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
+docs/path_tracer_material_gold_f10_uniform.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method uniform material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
 
-docs/trace_material_gold_f10_hero.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method hero-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
+docs/path_tracer_material_gold_f10_hero.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method hero-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
 
-docs/trace_material_gold_f10_continuous.%: shaders Makefile
-	$(TRACE) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method continuous-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
+docs/path_tracer_material_gold_f10_continuous.%: shaders Makefile
+	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method continuous-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
