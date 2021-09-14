@@ -4,7 +4,7 @@ Vulkan and rust experiments. The code is split into a core `caldera` crate and a
 
 ## Features
 
-- Render graph implementation over Vulkan, for ease of use
+- Render graph implementation over Vulkan, featuring:
   - Automatic memory allocation of temporary buffers and images
   - Automatic placement of barriers and layout transitions
 - Makes use of [spark](https://github.com/sjb3d/spark) to manage Vulkan commands and extensions
