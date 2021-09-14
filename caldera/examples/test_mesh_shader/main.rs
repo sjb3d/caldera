@@ -113,7 +113,7 @@ impl MeshInfo {
     }
 
     fn get_world_from_local(&self) -> Similarity3 {
-        let scale = 0.9 / (self.max - self.min).component_max();
+        let scale = 0.9 / (self.max.y - self.min.y);
         let offset = (-0.5 * scale) * (self.max + self.min);
         Similarity3::new(offset, Rotor3::identity(), scale)
     }
@@ -336,8 +336,8 @@ impl App {
 
         let world_from_local = mesh_info.get_world_from_local();
         let view_from_world = Similarity3::new(
-            Vec3::new(0.0, 0.0, -3.0),
-            Rotor3::from_rotation_yz(0.5) * Rotor3::from_rotation_xz(self.angle),
+            Vec3::new(0.0, 0.0, -2.5),
+            Rotor3::from_rotation_yz(0.2) * Rotor3::from_rotation_xz(self.angle),
             1.0,
         );
         let vertical_fov = PI / 7.0;

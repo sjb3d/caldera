@@ -25,7 +25,7 @@ void main()
     vec3 normal_viewspace = transform_unit(g_standard.view_from_local, a_normal);
 
     gl_Position = g_standard.proj_from_view * vec4(pos_viewspace, 1.f);
-    v_color = vec3(1.f);
+    v_color = vec3(.9f);
     v_normal_viewspace = normal_viewspace;
     v_pos_viewspace = pos_viewspace;
 }

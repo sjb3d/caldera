@@ -29,7 +29,7 @@ void main()
         vec3 pos_viewspace = transform_point(g_cluster.view_from_local, pos_localspace);
         vec3 normal_viewspace = transform_unit(g_cluster.view_from_local, normal_localspace);
         gl_MeshVerticesNV[index].gl_Position = g_cluster.proj_from_view * vec4(pos_viewspace, 1.f);
-        v_color[index] = 0.2f + 0.8f*unpackUnorm4x8(hash(task_index)).xyz;
+        v_color[index] = 0.1f + 0.8f*unpackUnorm4x8(hash(task_index)).xyz;
         v_normal_viewspace[index] = normal_viewspace;
         v_pos_viewspace[index] = pos_viewspace;
     }
