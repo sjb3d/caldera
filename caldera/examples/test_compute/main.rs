@@ -1,4 +1,4 @@
-use bytemuck::{Contiguous, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
 use imgui::im_str;
 use imgui::{Drag, Key, Slider};
@@ -20,7 +20,6 @@ struct TraceData {
     dims: UVec2,
     dims_rcp: Vec2,
     pass_index: u32,
-    render_color_space: u32,
 }
 
 descriptor_set_layout!(TraceDescriptorSetLayout {
@@ -35,29 +34,12 @@ struct CopyData {
     offset: IVec2,
     trace_dims: UVec2,
     trace_scale: f32,
-    render_color_space: u32,
-    tone_map_method: u32,
 }
 
 descriptor_set_layout!(CopyDescriptorSetLayout {
     copy: UniformData<CopyData>,
     image: [StorageImage; 3],
 });
-
-#[repr(u32)]
-#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
-enum RenderColorSpace {
-    Rec709 = 0,
-    AcesCg = 1,
-}
-
-#[repr(u32)]
-#[derive(Clone, Copy, Contiguous, Eq, PartialEq)]
-enum ToneMapMethod {
-    None = 0,
-    FilmicSrgb = 1,
-    AcesFit = 2,
-}
 
 struct App {
     context: SharedContext,
@@ -73,8 +55,6 @@ struct App {
     log2_exposure_scale: f32,
     target_pass_count: u32,
     next_pass_index: u32,
-    render_color_space: RenderColorSpace,
-    tone_map_method: ToneMapMethod,
 }
 
 impl App {
@@ -149,8 +129,6 @@ impl App {
             log2_exposure_scale: 0f32,
             target_pass_count: 16,
             next_pass_index: 0,
-            render_color_space: RenderColorSpace::AcesCg,
-            tone_map_method: ToneMapMethod::AcesFit,
         }
     }
 
@@ -164,29 +142,6 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, || {
                 let mut needs_reset = false;
-                ui.text("Render Color Space:");
-                needs_reset |= ui.radio_button(
-                    im_str!("Rec709 (sRGB primaries)"),
-                    &mut self.render_color_space,
-                    RenderColorSpace::Rec709,
-                );
-                needs_reset |= ui.radio_button(
-                    im_str!("ACEScg (AP1 primaries)"),
-                    &mut self.render_color_space,
-                    RenderColorSpace::AcesCg,
-                );
-                ui.text("Tone Map Method:");
-                ui.radio_button(im_str!("None"), &mut self.tone_map_method, ToneMapMethod::None);
-                ui.radio_button(
-                    im_str!("Filmic sRGB"),
-                    &mut self.tone_map_method,
-                    ToneMapMethod::FilmicSrgb,
-                );
-                ui.radio_button(
-                    im_str!("ACES (fitted)"),
-                    &mut self.tone_map_method,
-                    ToneMapMethod::AcesFit,
-                );
                 Drag::new(im_str!("Exposure"))
                     .speed(0.05f32)
                     .build(&ui, &mut self.log2_exposure_scale);
@@ -242,7 +197,6 @@ impl App {
                     let trace_descriptor_set_layout = &self.trace_descriptor_set_layout;
                     let trace_pipeline_layout = self.trace_pipeline_layout;
                     let next_pass_index = self.next_pass_index;
-                    let render_color_space = self.render_color_space;
                     move |params, cmd| {
                         let sample_image_view = sample_image_view;
                         let trace_image_views = [
@@ -259,7 +213,6 @@ impl App {
                                     dims: trace_image_size,
                                     dims_rcp,
                                     pass_index: next_pass_index,
-                                    render_color_space: render_color_space.into_integer(),
                                 };
                             },
                             &trace_image_views,
@@ -315,8 +268,6 @@ impl App {
                 let log2_exposure_scale = self.log2_exposure_scale;
                 let copy_pipeline_layout = self.copy_pipeline_layout;
                 let window = &base.window;
-                let render_color_space = self.render_color_space;
-                let tone_map_method = self.tone_map_method;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
@@ -335,8 +286,6 @@ impl App {
                                 offset: ((trace_image_size.as_signed() - swap_size.as_signed()) / 2),
                                 trace_dims: trace_image_size,
                                 trace_scale: log2_exposure_scale.exp2() / (pass_count as f32),
-                                render_color_space: render_color_space.into_integer(),
-                                tone_map_method: tone_map_method.into_integer(),
                             };
                         },
                         &trace_image_views,

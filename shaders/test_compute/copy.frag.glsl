@@ -10,8 +10,6 @@ layout(set = 0, binding = 0, scalar) uniform CopyData {
     ivec2 offset;
     uvec2 trace_dims;
     float trace_scale;
-    uint render_color_space;
-    uint tone_map_method;
 } g_copy;
 
 layout(set = 0, binding = 1, r32f) uniform readonly image2D g_image[3];
@@ -25,6 +23,5 @@ void main()
         col.y = imageLoad(g_image[1], coord).x*g_copy.trace_scale;
         col.z = imageLoad(g_image[2], coord).x*g_copy.trace_scale;
     }
-    col = tone_map_sample(col, g_copy.render_color_space, g_copy.tone_map_method);
-    o_col = vec4(col, 1.f);
+    o_col = vec4(linear_from_gamma(filmic_tone_map(col)), 1.f);
 }

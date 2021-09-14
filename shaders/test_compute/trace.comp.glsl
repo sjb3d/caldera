@@ -2,7 +2,6 @@
 #extension GL_EXT_scalar_block_layout : require
 
 #extension GL_GOOGLE_include_directive : require
-#include "tone_map.glsl"
 #include "sampler.glsl"
 #include "ggx.glsl"
 #include "fresnel.glsl"
@@ -13,7 +12,6 @@ layout(set = 0, binding = 0, scalar) uniform TraceData {
     uvec2 dims;
     vec2 dims_rcp;
     uint pass_index;
-    uint render_color_space;
 } g_trace;
 
 layout(set = 0, binding = 1, r32f) uniform restrict image2D g_result[3];
@@ -153,7 +151,7 @@ void main()
                 } else {
                     light_value = light_scale*vec3(.2f, .1f, .2f);
                 }
-                light_value = sample_from_rec709(light_value, g_trace.render_color_space);
+                light_value = light_value;
                 sum += sample_value*light_value;
                 break;
             }
@@ -176,7 +174,6 @@ void main()
                     alpha *= 2.f;
                 }
             }
-            r0 = sample_from_rec709(r0, g_trace.render_color_space);
 
             // make sampling basis
             const vec3 normal = normalize(gnv);
