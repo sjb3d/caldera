@@ -115,23 +115,25 @@ listings: $(LISTINGS)
 $(LISTING_DIR)/%.spv.txt: $(BIN_DIR)/%.spv Makefile
 	$(DISASM) -o $@ $<
 
+IMAGE_DIR=caldera/examples/path_tracer/images
+
 IMAGES=\
-	docs/path_tracer_bathroom2.jpg \
-	docs/path_tracer_coffee.jpg \
-	docs/path_tracer_glass-of-water.jpg \
-	docs/path_tracer_staircase.jpg \
-	docs/path_tracer_living-room-2.jpg \
-	docs/path_tracer_staircase2.jpg \
-	docs/path_tracer_spaceship.jpg \
-	docs/path_tracer_cornell-box.jpg \
-	docs/path_tracer_cornell-box_dome-light.jpg \
-	docs/path_tracer_cornell-box_conductor.jpg \
-	docs/path_tracer_cornell-box_conductor_surfaces-only.jpg \
-	docs/path_tracer_cornell-box_conductor_lights-only.jpg \
-	docs/path_tracer_material_conductors.jpg \
-	docs/path_tracer_material_gold_f10_uniform.jpg \
-	docs/path_tracer_material_gold_f10_hero.jpg \
-	docs/path_tracer_material_gold_f10_continuous.jpg
+	$(IMAGE_DIR)/bathroom2.jpg \
+	$(IMAGE_DIR)/coffee.jpg \
+	$(IMAGE_DIR)/glass-of-water.jpg \
+	$(IMAGE_DIR)/staircase.jpg \
+	$(IMAGE_DIR)/living-room-2.jpg \
+	$(IMAGE_DIR)/staircase2.jpg \
+	$(IMAGE_DIR)/spaceship.jpg \
+	$(IMAGE_DIR)/cornell-box.jpg \
+	$(IMAGE_DIR)/cornell-box_dome-light.jpg \
+	$(IMAGE_DIR)/cornell-box_conductor.jpg \
+	$(IMAGE_DIR)/cornell-box_conductor_surfaces-only.jpg \
+	$(IMAGE_DIR)/cornell-box_conductor_lights-only.jpg \
+	$(IMAGE_DIR)/material_conductors.jpg \
+	$(IMAGE_DIR)/material_gold_f10_uniform.jpg \
+	$(IMAGE_DIR)/material_gold_f10_hero.jpg \
+	$(IMAGE_DIR)/material_gold_f10_continuous.jpg
 
 clean-images:
 	$(RM) $(IMAGES)
@@ -141,50 +143,50 @@ images: $(IMAGES)
 MANY_SAMPLES=-s 10
 PATH_TRACER=cargo run --release --example path_tracer --
 
-docs/path_tracer_bathroom2.%: ../tungsten_scenes/bathroom2/scene.json shaders Makefile
+$(IMAGE_DIR)/bathroom2.%: ../tungsten_scenes/bathroom2/scene.json shaders Makefile
 	$(PATH_TRACER) -o $@ -w 1000 -h 560 -e -0.5 --fov 0.62 $(MANY_SAMPLES) tungsten $<
 
-docs/path_tracer_coffee.%: ../tungsten_scenes/coffee/scene.json shaders Makefile
+$(IMAGE_DIR)/coffee.%: ../tungsten_scenes/coffee/scene.json shaders Makefile
 	$(PATH_TRACER) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
 
-docs/path_tracer_glass-of-water.%: ../tungsten_scenes/glass-of-water/scene.json shaders Makefile
+$(IMAGE_DIR)/glass-of-water.%: ../tungsten_scenes/glass-of-water/scene.json shaders Makefile
 	$(PATH_TRACER) -o $@ -w 1000 -h 560 -b 24 $(MANY_SAMPLES) tungsten $<
 
-docs/path_tracer_living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders Makefile
+$(IMAGE_DIR)/living-room-2.%: ../tungsten_scenes/living-room-2/scene.json shaders Makefile
 	$(PATH_TRACER) -o $@ -w 1000 -h 560 -e -0.5 --fov 1.03 $(MANY_SAMPLES) tungsten $<
 
-docs/path_tracer_staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
+$(IMAGE_DIR)/staircase.%: ../tungsten_scenes/staircase/scene.json shaders Makefile
 	$(PATH_TRACER) -o $@ -w 492 -h 875 -e -0.5 -b 16 $(MANY_SAMPLES) tungsten $<
 
-docs/path_tracer_staircase2.%: ../tungsten_scenes/staircase2/scene.json shaders Makefile
+$(IMAGE_DIR)/staircase2.%: ../tungsten_scenes/staircase2/scene.json shaders Makefile
 	$(PATH_TRACER) -o $@ -w 1000 -h 1000 -e -0.5 -b 16 --planar-lights-are-two-sided enable $(MANY_SAMPLES) tungsten $<
 
-docs/path_tracer_spaceship.%: ../tungsten_scenes/spaceship/scene.json shaders Makefile
+$(IMAGE_DIR)/spaceship.%: ../tungsten_scenes/spaceship/scene.json shaders Makefile
 	$(PATH_TRACER) -o $@ -w 1000 -h 560 -b 16 $(MANY_SAMPLES) tungsten $<
 
-docs/path_tracer_cornell-box.%: shaders Makefile
+$(IMAGE_DIR)/cornell-box.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 492 -h 492 -e 1.0 $(MANY_SAMPLES) cornell-box
 
-docs/path_tracer_cornell-box_dome-light.%: shaders Makefile
+$(IMAGE_DIR)/cornell-box_dome-light.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 492 -h 492 $(MANY_SAMPLES) cornell-box dome-light
 
-docs/path_tracer_cornell-box_conductor.%: shaders Makefile
+$(IMAGE_DIR)/cornell-box_conductor.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 5 -f box cornell-box conductor
 
-docs/path_tracer_cornell-box_conductor_surfaces-only.%: shaders Makefile
+$(IMAGE_DIR)/cornell-box_conductor_surfaces-only.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique surfaces-only cornell-box conductor
 
-docs/path_tracer_cornell-box_conductor_lights-only.%: shaders Makefile
+$(IMAGE_DIR)/cornell-box_conductor_lights-only.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 6 -f box --sampling-technique lights-only cornell-box conductor
 
-docs/path_tracer_material_conductors.%: shaders Makefile
+$(IMAGE_DIR)/material_conductors.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 1000 -h 560 $(MANY_SAMPLES) material-test ../ply/dragon_recon/dragon_vrip.ply conductors e
 
-docs/path_tracer_material_gold_f10_uniform.%: shaders Makefile
+$(IMAGE_DIR)/material_gold_f10_uniform.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method uniform material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
 
-docs/path_tracer_material_gold_f10_hero.%: shaders Makefile
+$(IMAGE_DIR)/material_gold_f10_hero.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method hero-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
 
-docs/path_tracer_material_gold_f10_continuous.%: shaders Makefile
+$(IMAGE_DIR)/material_gold_f10_continuous.%: shaders Makefile
 	$(PATH_TRACER) -o $@ -w 320 -h 320 -s 3 --wavelength-sampling-method continuous-mis material-test ../ply/dragon_recon/dragon_vrip.ply gold f10
