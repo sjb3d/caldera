@@ -1,8 +1,6 @@
-# Caldera Path Tracer
+# path_tracer
 
-This page has more information about the `trace` app that is part of the [caldera](https://github.com/sjb3d/caldera) project of Vulkan and rust experiments.
-
-The `trace` app is a spectral path tracer that makes use of Vulkan ray tracing extensions.
+This is an [caldera](https://github.com/sjb3d/caldera) example that implements a spectral path tracer that makes use of Vulkan ray tracing extensions.
 
 ## Features
 
@@ -58,40 +56,40 @@ The following crates have been super useful in making the app:
 
 As is tradition, here are some boxes under a couple of different lighting conditions (original [Cornell box](https://www.graphics.cornell.edu/online/box/data.html) data, and a variant with a mirror material and distant lights).
 
-![cornell-box](trace_cornell-box.jpg) ![cornell-box_dome-light](trace_cornell-box_dome-light.jpg)
+![cornell-box](images/cornell-box.jpg) ![cornell-box_dome-light](images/cornell-box_dome-light.jpg)
 
 Here is a variation on the classic Veach multiple importance sampling scene, showing 64 samples per pixel with BSDF sampling only, 64 with light sampling only, then 32 samples of each weighted using multiple importance sampling.
 
-![cornell-box_conductor_surfaces-only](trace_cornell-box_conductor_surfaces-only.jpg) ![cornell-box_conductor_lights-only](trace_cornell-box_conductor_lights-only.jpg)
- ![cornell-box_conductor](trace_cornell-box_conductor.jpg)
+![cornell-box_conductor_surfaces-only](images/cornell-box_conductor_surfaces-only.jpg) ![cornell-box_conductor_lights-only](images/cornell-box_conductor_lights-only.jpg)
+ ![cornell-box_conductor](images/cornell-box_conductor.jpg)
 
 Here is a test scene for some conductors using spectral reflectance data from [refractiveindex.info](https://refractiveindex.info/) for copper, iron and gold under a uniform illuminant (the colours are entirely from the reflectance data, there is no additional tinting).
 
-![trace_material_conductors](trace_material_conductors.jpg)
+![trace_material_conductors](images/material_conductors.jpg)
 
 If we change the illuminant to F10 (which has a very spiky distribution), we can check the effect that wavelength importance sampling has on colour noise. The following images use gold lit with F10, all with 8 paths per pixel and 3 wavelengths per path. The first image samples wavelengths uniformly, the second samples only the hero wavelength for that path proportional to F10, the third image samples all wavelengths for that path proportional to F10 (reproducing part of the result of Continuous Importance Sampling):
 
-![trace_material_gold_f10_uniform](trace_material_gold_f10_uniform.jpg) ![trace_material_gold_f10_hero](trace_material_gold_f10_hero.jpg) ![trace_material_gold_f10_continuous](trace_material_gold_f10_continuous.jpg)
+![trace_material_gold_f10_uniform](images/material_gold_f10_uniform.jpg) ![trace_material_gold_f10_hero](images/material_gold_f10_hero.jpg) ![trace_material_gold_f10_continuous](images/material_gold_f10_continuous.jpg)
 
 ## Gallery
 
 The next set of images are rendered from these excellent [rendering resources](https://benedikt-bitterli.me/resources/) by Benedikt Bitterli and [blendswap.com](https://blendswap.com/) artists nacimus, Wig42, cekuhnen, Jay-Artist, thecali, NewSee2l035 and aXel.
 
-![bathroom2](trace_bathroom2.jpg)
+![bathroom2](images/bathroom2.jpg)
 
-![staircase](trace_staircase.jpg) ![coffee](trace_coffee.jpg)
+![staircase](images/staircase.jpg) ![coffee](images/coffee.jpg)
 
-![living-room-2](trace_living-room-2.jpg)
+![living-room-2](images/living-room-2.jpg)
 
-![spaceship](trace_spaceship.jpg)
+![spaceship](images/spaceship.jpg)
 
-![staircase2](trace_staircase2.jpg)
+![staircase2](images/staircase2.jpg)
 
-![glass-of-water](trace_glass-of-water.jpg)
+![glass-of-water](images/glass-of-water.jpg)
 
 There is a barely started exporter for Blender, but support for materials beyond a simple texture map is a bit out of scope for now.  This image uses the "Classroom" [Blender demo file](https://www.blender.org/download/demo-files/), with highly approximated materials and only sunlight:
 
-![blender](trace_blender.jpg)
+![blender](images/blender.jpg)
 
 ## Potential Future Work
 
