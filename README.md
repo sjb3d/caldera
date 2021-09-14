@@ -9,7 +9,7 @@ Vulkan and rust experiments. The code is split into a core `caldera` crate and a
   - Automatic placement of barriers and layout transitions
 - Makes use of [spark](https://github.com/sjb3d/spark) to manage Vulkan commands and extensions
 - Live reload of shaders (not ray tracing pipeline shaders yet though)
-- A procedural macro for descriptor set layouts
+- A [procedural macro](caldera-macro) for descriptor set layouts
 - Asynchronous loading support for static buffers and images
 
 ## Examples
@@ -32,44 +32,6 @@ Screenshot | Description
 [![ray_tracing image](images/test_ray_tracing.jpg)](caldera/examples/test_ray_tracing) | [**test_ray_tracing**](caldera/examples/test_ray_tracing)<br/>Test of the `VK_KHR_acceleration_structure` and `VK_KHR_ray_tracing_pipeline` extensions. Loads a PLY format mesh and draws a few instances using either rasterization or ray tracing.
 [![mesh_shader image](images/test_mesh_shader.jpg)](caldera/examples/test_mesh_shader) | [**test_mesh_shader**](caldera/examples/test_mesh_shader)<br/>Test of the `NV_mesh_shader` extension.  Loads a PLY format mesh, makes some clusters, then draws the result using either the standard vertex pipeline or mesh shaders. Cluster-level backface culling is implemented efficiently in the task shader using subgroup operations from the `GL_KHR_shader_subgroup_ballot` GLSL extension.
 [![living-room-2 image](images/path_tracer.jpg)](caldera/examples/path_tracer) | [**path_tracer**](caldera/examples/path_tracer)<br/>A path tracer built on Vulkan ray tracing with support for spectral rendering and several different surfaces and light types. The [README](caldera/examples/path_tracer) for this example contains many more details. The scenes shown here are from these [rendering resources](https://benedikt-bitterli.me/resources/) made available by Benedikt Bitterli.
-
-## Procedural Macro for Descriptor Set Layout
-
-The macro `descriptor_set_layout!` is implemented in `caldera-macro`. This allows the layout to be declared using struct-like syntax.  For example, consider the following bindings in GLSL:
-
-```glsl
-layout(set = 0, binding = 0, scalar) uniform CopyData {
-    vec2 params;
-    float more;
-} g_copy;
-
-layout(set = 0, binding = 1, r32f) uniform restrict image2D g_images[3];
-```
-
-The descriptor set layout for set 0 above can be generated using the macro (and the [bytemuck](https://crates.io/crates/bytemuck) crate) as follows:
-
-```rust
-// Use bytemuck::Pod to safely alias as bytes
-#[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod)]
-struct CopyData {
-    params: Vec2, // [f32; 2] layout
-    more: f32,
-}
-
-// Use caldera::descriptor_set_layout to generate a helper struct
-descriptor_set_layout!(CopyDescriptorSetLayout {
-    copy: UniformData<CopyData>,
-    images: [StorageImage; 3],
-});
-```
-
-This generates a `CopyDescriptorSetLayout` struct with two methods:
-
-* A `new()` method that creates the corresponding Vulkan descriptor set layout, intended to be called once at startup.
-* A `write()` method that fully writes a descriptor set with uniform data and buffer/image views, intended to be called each time the descriptor set needs (fully) writing each frame.
-
-This helps to cut down on boilerplate code for descriptor sets that can be declared at build time.
 
 ## Potential Future Work
 
