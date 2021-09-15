@@ -10,7 +10,7 @@ Example when run with the Stanford Bunny from [The Stanford 3D Scanning Reposito
 
 ![test_ray_tracing image](../../../images/test_ray_tracing.jpg)
 
-The goal was to experiment with:
+The goals of this experiment were:
 
 - Use the `VK_KHR_acceleration_structure` extension
   - Build a bottom-level acceleration structure for the PLY mesh
@@ -18,5 +18,5 @@ The goal was to experiment with:
 - Use the `VK_KHR_ray_tracing_pipeline` extension
   - Trace camera rays to the first hit in a compute shader
   - Just interpolate vertex normals at the hit point
-- Compare with ray tracing and rasterization results and performance
+- Compare ray tracing and rasterization results and performance
 - As an unrelated test, try out using a _transient attachment_ for MSAA depth

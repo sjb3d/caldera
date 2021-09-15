@@ -16,7 +16,7 @@ The clustering code is extremely minimal: just grows clusters using adjacent tri
 
 ## Backface Culling
 
-To draw the mesh using clusters, the `NV_mesh_shader` extension is required.  This makes use of:
+To draw the mesh using clusters, the `VK_NV_mesh_shader` extension is required.  This makes use of:
 - A task shader to backface cull clusters that fully face away from the viewer
 - A mesh shader that emits all triangles in the cluster for rasterization (no addition culling)
 
