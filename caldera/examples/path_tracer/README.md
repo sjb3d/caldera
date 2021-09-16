@@ -22,6 +22,13 @@ This is an implementation of a spectral path tracer that makes use of Vulkan ray
   * All other parameters are either per-instance or global constants (for now)
 * Interactive renderer with moveable camera and debug UI
 
+The implementation makes use of the following Vulkan extensions:
+
+- `VK_KHR_ray_tracing_pipeline` and `VK_KHR_acceleration_structure` for tracing of rays. For now rays are traced using a single pipeline with all shading/sampling/traversal for a full path with multiple bounces.
+  - The pipeline contains several different intersection and hit shaders to handle ray tracing against analytic shapes such as spheres and discs in addition to triangle meshes.
+- `VK_KHR_buffer_device_address` to reference a GPU buffer using a `uint64_t` device address. This extension is required by `VK_KHR_ray_tracing_pipeline` for the shader binding table and vastly simplifies the setup of buffers, avoiding a lot of descriptor management code. The device address can be cast to a buffer reference of any type, so this can be useful to implement more generic GPU data structures.
+- `VK_EXT_descriptor_indexing` for "bindless" texturing. This extension is also required by `VK_KHR_ray_tracing_pipeline` and allows us to bundle all textures into a single descriptor set with an array per texture type, and refer to them by index when they need to be sampled. Since different GPU threads can require different texture indices during ray tracing, we additionally make use of "non-uniform indexing" in the shader code.
+
 ## Links
 
 Here are some of the references used when creating the renderer:
