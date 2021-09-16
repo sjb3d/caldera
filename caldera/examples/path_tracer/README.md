@@ -59,6 +59,26 @@ The following crates have been super useful in making the app:
 * [stb](https://crates.io/crates/stb): rust API for the [stb libraries](https://github.com/nothings/stb), used for image IO and BC compression
 * [winit](https://crates.io/crates/winit): cross platform windowing and events
 
+## How To Run
+
+The code can be run as follows (will show a Cornell box by default):
+
+```
+make && cargo run --release --example path_tracer --
+```
+
+By default this will create a window with a progressive renderer and debug UI for many parameters.  Additionally you can drag with the mouse and use W/A/S/D on the keyboard to move the camera.  For command-line help run as:
+
+```
+make && cargo run --release --example path_tracer -- help
+```
+
+Several of the images below are loaded from [Tungsten](https://github.com/tunabrain/tungsten) format scenes.  These can be loaded into the renderer by running using the commandline:
+
+```
+make && cargo run --release --example path_tracer -- tungsten <scene_json_file_name>
+```
+
 ## Test Images
 
 As is tradition, here are some boxes under a couple of different lighting conditions (original [Cornell box](https://www.graphics.cornell.edu/online/box/data.html) data, and a variant with a mirror material and distant lights).
@@ -66,9 +86,11 @@ As is tradition, here are some boxes under a couple of different lighting condit
 ![cornell-box](images/cornell-box.jpg) ![cornell-box_dome-light](images/cornell-box_dome-light.jpg)
 
 Here is a variation on the classic Veach multiple importance sampling scene, showing 64 samples per pixel with BSDF sampling only, 64 with light sampling only, then 32 samples of each weighted using multiple importance sampling.
+These images demonstrate how multiple importance sampling effectively combines BSDF and light sampling to reduce variance over the whole image.
 
-![cornell-box_conductor_surfaces-only](images/cornell-box_conductor_surfaces-only.jpg) ![cornell-box_conductor_lights-only](images/cornell-box_conductor_lights-only.jpg)
- ![cornell-box_conductor](images/cornell-box_conductor.jpg)
+ BSDF Sampling Only | Light Sampling Only | Combine with MIS
+:---: | :---: | :---:
+![cornell-box_conductor_surfaces-only](images/cornell-box_conductor_surfaces-only.jpg) | ![cornell-box_conductor_lights-only](images/cornell-box_conductor_lights-only.jpg) | ![cornell-box_conductor](images/cornell-box_conductor.jpg)
 
 Here is a test scene for some conductors using spectral reflectance data from [refractiveindex.info](https://refractiveindex.info/) for copper, iron and gold under a uniform illuminant (the colours are entirely from the reflectance data, there is no additional tinting).
 
@@ -76,7 +98,9 @@ Here is a test scene for some conductors using spectral reflectance data from [r
 
 If we change the illuminant to F10 (which has a very spiky distribution), we can check the effect that wavelength importance sampling has on colour noise. The following images use gold lit with F10, all with 8 paths per pixel and 3 wavelengths per path. The first image samples wavelengths uniformly, the second samples only the hero wavelength for that path proportional to F10, the third image samples all wavelengths for that path proportional to F10 (reproducing part of the result of Continuous Importance Sampling):
 
-![trace_material_gold_f10_uniform](images/material_gold_f10_uniform.jpg) ![trace_material_gold_f10_hero](images/material_gold_f10_hero.jpg) ![trace_material_gold_f10_continuous](images/material_gold_f10_continuous.jpg)
+Uniform Sampling | Sample Hero Wavelength Only | Sample All Wavelengths
+:---: | :---: | :---:
+![trace_material_gold_f10_uniform](images/material_gold_f10_uniform.jpg) | ![trace_material_gold_f10_hero](images/material_gold_f10_hero.jpg) | ![trace_material_gold_f10_continuous](images/material_gold_f10_continuous.jpg)
 
 ## Gallery
 
