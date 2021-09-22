@@ -362,7 +362,7 @@ impl App {
 
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
             let context = base.context.as_ref();
-            let descriptor_pool = &mut base.systems.descriptor_pool;
+            let descriptor_pool = &base.systems.descriptor_pool;
             let pipeline_cache = &base.systems.pipeline_cache;
             let task_group_size = self.task_group_size;
             let standard_descriptor_set_layout = &self.standard_descriptor_set_layout;

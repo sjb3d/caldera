@@ -9,8 +9,17 @@ use winit::{
     window::WindowBuilder,
 };
 
+descriptor_set_layout!(GenerateImageDescriptorSetLayout { image: StorageImage });
+
+descriptor_set_layout!(DebugImageDescriptorSetLayout { image: StorageImage });
+
 struct App {
     context: SharedContext,
+
+    generate_image_descriptor_set_layout: GenerateImageDescriptorSetLayout,
+    generate_image_pipeline_layout: vk::PipelineLayout,
+    debug_image_descriptor_set_layout: DebugImageDescriptorSetLayout,
+    debug_image_pipeline_layout: vk::PipelineLayout,
 
     counter: u32,
 }
@@ -18,10 +27,22 @@ struct App {
 impl App {
     fn new(base: &mut AppBase) -> Self {
         let context = SharedContext::clone(&base.context);
-        let _descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
+        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
+
+        let generate_image_descriptor_set_layout = GenerateImageDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let generate_image_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(generate_image_descriptor_set_layout.0);
+
+        let debug_image_descriptor_set_layout = DebugImageDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let debug_image_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(debug_image_descriptor_set_layout.0);
 
         Self {
             context,
+            generate_image_descriptor_set_layout,
+            generate_image_pipeline_layout,
+            debug_image_descriptor_set_layout,
+            debug_image_pipeline_layout,
             counter: 0,
         }
     }
@@ -62,27 +83,84 @@ impl App {
         );
 
         let main_sample_count = vk::SampleCountFlags::N1;
-        let main_render_state =
-            RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]);
+        let main_render_state = RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]);
 
-        schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
-            let context = base.context.as_ref();
-            let _descriptor_pool = &mut base.systems.descriptor_pool;
-            let pipeline_cache = &base.systems.pipeline_cache;
-            let window = &base.window;
-            let ui_platform = &mut base.ui_platform;
-            let ui_renderer = &mut base.ui_renderer;
-            move |_params, cmd, render_pass| {
-                set_viewport_helper(&context.device, cmd, swap_size);
+        let image_size = UVec2::new(1024, 1024);
+        let image_desc = ImageDesc::new_2d(image_size, vk::Format::R8_UNORM, vk::ImageAspectFlags::COLOR);
+        let input_image = schedule.describe_image(&image_desc);
 
-                // TODO: visualise things
+        schedule.add_compute(
+            command_name!("generate_image"),
+            |params| {
+                params.add_image(input_image, ImageUsage::COMPUTE_STORAGE_WRITE);
+            },
+            {
+                let context = base.context.as_ref();
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let generate_image_descriptor_set_layout = &self.generate_image_descriptor_set_layout;
+                let generate_image_pipeline_layout = self.generate_image_pipeline_layout;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                move |params, cmd| {
+                    let input_image_view = params.get_image_view(input_image);
 
-                // draw imgui
-                ui_platform.prepare_render(&ui, window);
-                let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
-                ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
-            }
-        });
+                    let descriptor_set = generate_image_descriptor_set_layout.write(descriptor_pool, input_image_view);
+
+                    dispatch_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        generate_image_pipeline_layout,
+                        "coherent_hashing/generate_image.comp.spv",
+                        &[],
+                        descriptor_set,
+                        image_size.div_round_up(16),
+                    );
+                }
+            },
+        );
+
+        schedule.add_graphics(
+            command_name!("main"),
+            main_render_state,
+            |params| {
+                params.add_image(input_image, ImageUsage::FRAGMENT_STORAGE_READ);
+            },
+            {
+                let context = base.context.as_ref();
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let debug_image_descriptor_set_layout = &self.debug_image_descriptor_set_layout;
+                let debug_image_pipeline_layout = self.debug_image_pipeline_layout;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                let window = &base.window;
+                let ui_platform = &mut base.ui_platform;
+                let ui_renderer = &mut base.ui_renderer;
+                move |params, cmd, render_pass| {
+                    let image_view = params.get_image_view(input_image);
+
+                    set_viewport_helper(&context.device, cmd, swap_size);
+
+                    // visualise results
+                    let descriptor_set = debug_image_descriptor_set_layout.write(descriptor_pool, image_view);
+                    let state = GraphicsPipelineState::new(render_pass, main_sample_count);
+                    draw_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        debug_image_pipeline_layout,
+                        &state,
+                        "coherent_hashing/debug_quad.vert.spv",
+                        "coherent_hashing/debug_image.frag.spv",
+                        descriptor_set,
+                        3,
+                    );
+
+                    // draw imgui
+                    ui_platform.prepare_render(&ui, window);
+                    let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
+                    ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                }
+            },
+        );
 
         schedule.run(
             &base.context,

@@ -37,6 +37,9 @@ INC=\
 	test_mesh_shader/cluster_common.glsl
 
 SRC=\
+	coherent_hashing/debug_image.frag.glsl \
+	coherent_hashing/debug_quad.vert.glsl \
+	coherent_hashing/generate_image.comp.glsl \
 	path_tracer/capture.comp.glsl \
 	path_tracer/copy.frag.glsl \
 	path_tracer/copy.vert.glsl \
@@ -65,7 +68,12 @@ SRC=\
 	test_ray_tracing/trace.rgen.glsl \
 	test_ray_tracing/trace.rmiss.glsl
 
-APPS=path_tracer test_compute test_mesh_shader test_ray_tracing
+APPS=\
+	coherent_hashing \
+	path_tracer \
+	test_compute \
+	test_mesh_shader \
+	test_ray_tracing
 
 SRC_DIR=shaders
 BIN_DIR=spv/bin
