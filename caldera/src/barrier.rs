@@ -9,7 +9,7 @@ pub struct AccessCategory(u32);
 impl AccessCategory {
     pub const READ: AccessCategory = AccessCategory(0x1);
     pub const WRITE: AccessCategory = AccessCategory(0x2);
-    // TODO: atomic
+    pub const ATOMIC: AccessCategory = AccessCategory(0x4);
 
     pub fn empty() -> Self {
         Self(0)
@@ -154,6 +154,13 @@ buffer_usage_impl! {
         vk::PipelineStageFlags::COMPUTE_SHADER,
         vk::AccessFlags::SHADER_WRITE,
         AccessCategory::WRITE
+    ),
+    (
+        COMPUTE_STORAGE_ATOMIC,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        vk::PipelineStageFlags::COMPUTE_SHADER,
+        vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
+        AccessCategory::ATOMIC
     ),
     (
         VERTEX_BUFFER,

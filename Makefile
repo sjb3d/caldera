@@ -6,6 +6,7 @@ GLSLCFLAGS_RAYS=--target-env spirv1.4
 DISASM=spirv-dis
 
 INC=\
+	coherent_hashing/hash_table_common.glsl \
 	common/color_space.glsl \
 	common/fresnel.glsl \
 	common/ggx.glsl \
@@ -37,9 +38,11 @@ INC=\
 	test_mesh_shader/cluster_common.glsl
 
 SRC=\
+	coherent_hashing/clear_hash_table.comp.glsl \
 	coherent_hashing/debug_image.frag.glsl \
 	coherent_hashing/debug_quad.vert.glsl \
 	coherent_hashing/generate_image.comp.glsl \
+	coherent_hashing/write_hash_table.comp.glsl \
 	path_tracer/capture.comp.glsl \
 	path_tracer/copy.frag.glsl \
 	path_tracer/copy.vert.glsl \

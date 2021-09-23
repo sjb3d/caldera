@@ -1,6 +1,11 @@
+use arrayvec::ArrayVec;
+use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
 use imgui::{im_str, Key};
+use primes::{PrimeSet as _, Sieve};
+use rand::{distributions::Uniform, prelude::*, rngs::SmallRng};
 use spark::vk;
+use std::mem;
 use structopt::StructOpt;
 use strum::VariantNames;
 use winit::{
@@ -9,7 +14,45 @@ use winit::{
     window::WindowBuilder,
 };
 
+struct Primes(Sieve);
+
+impl Primes {
+    fn new() -> Self {
+        Self(Sieve::new())
+    }
+
+    fn next_after(&mut self, n: u32) -> u32 {
+        self.0.find(n as u64).1 as u32
+    }
+}
+
 descriptor_set_layout!(GenerateImageDescriptorSetLayout { image: StorageImage });
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ClearHashTableUniforms {
+    entry_count: u32,
+}
+
+descriptor_set_layout!(ClearHashTableDescriptorSetLayout {
+    uniforms: UniformData<ClearHashTableUniforms>,
+    table: StorageBuffer,
+});
+
+const MAX_AGE: usize = 15;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct WriteHashTableUniforms {
+    entry_count: u32,
+    offsets: [u32; MAX_AGE],
+}
+
+descriptor_set_layout!(WriteHashTableDescriptorSetLayout {
+    uniforms: UniformData<WriteHashTableUniforms>,
+    table: StorageBuffer,
+    image: StorageImage,
+});
 
 descriptor_set_layout!(DebugImageDescriptorSetLayout { image: StorageImage });
 
@@ -18,6 +61,10 @@ struct App {
 
     generate_image_descriptor_set_layout: GenerateImageDescriptorSetLayout,
     generate_image_pipeline_layout: vk::PipelineLayout,
+    clear_hash_table_descriptor_set_layout: ClearHashTableDescriptorSetLayout,
+    clear_hash_table_pipeline_layout: vk::PipelineLayout,
+    write_hash_table_descriptor_set_layout: WriteHashTableDescriptorSetLayout,
+    write_hash_table_pipeline_layout: vk::PipelineLayout,
     debug_image_descriptor_set_layout: DebugImageDescriptorSetLayout,
     debug_image_pipeline_layout: vk::PipelineLayout,
 
@@ -33,6 +80,16 @@ impl App {
         let generate_image_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(generate_image_descriptor_set_layout.0);
 
+        let clear_hash_table_descriptor_set_layout =
+            ClearHashTableDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let clear_hash_table_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(clear_hash_table_descriptor_set_layout.0);
+
+        let write_hash_table_descriptor_set_layout =
+            WriteHashTableDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let write_hash_table_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(write_hash_table_descriptor_set_layout.0);
+
         let debug_image_descriptor_set_layout = DebugImageDescriptorSetLayout::new(descriptor_set_layout_cache);
         let debug_image_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(debug_image_descriptor_set_layout.0);
@@ -41,6 +98,10 @@ impl App {
             context,
             generate_image_descriptor_set_layout,
             generate_image_pipeline_layout,
+            clear_hash_table_descriptor_set_layout,
+            clear_hash_table_pipeline_layout,
+            write_hash_table_descriptor_set_layout,
+            write_hash_table_pipeline_layout,
             debug_image_descriptor_set_layout,
             debug_image_pipeline_layout,
             counter: 0,
@@ -89,6 +150,21 @@ impl App {
         let image_desc = ImageDesc::new_2d(image_size, vk::Format::R8_UNORM, vk::ImageAspectFlags::COLOR);
         let input_image = schedule.describe_image(&image_desc);
 
+        let mut primes = Primes::new();
+        let entry_count = primes.next_after(10_000);
+        let offsets: [u32; MAX_AGE] = {
+            let mut rng = SmallRng::seed_from_u64(0);
+            let dist = Uniform::new(1_000_000, 10_000_000);
+            let mut offsets = ArrayVec::new();
+            for _ in 0..MAX_AGE {
+                offsets.push(rng.sample(dist));
+            }
+            offsets.into_inner().unwrap()
+        };
+
+        let entries_desc = BufferDesc::new((entry_count as usize) * mem::size_of::<u32>());
+        let entries_buffer = schedule.describe_buffer(&entries_desc);
+
         schedule.add_compute(
             command_name!("generate_image"),
             |params| {
@@ -111,6 +187,77 @@ impl App {
                         cmd,
                         generate_image_pipeline_layout,
                         "coherent_hashing/generate_image.comp.spv",
+                        &[],
+                        descriptor_set,
+                        image_size.div_round_up(16),
+                    );
+                }
+            },
+        );
+
+        schedule.add_compute(
+            command_name!("clear_hash_table"),
+            |params| {
+                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
+            },
+            {
+                let context = base.context.as_ref();
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let clear_hash_table_descriptor_set_layout = &self.clear_hash_table_descriptor_set_layout;
+                let clear_hash_table_pipeline_layout = self.clear_hash_table_pipeline_layout;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                move |params, cmd| {
+                    let entries_buffer = params.get_buffer(entries_buffer);
+
+                    let descriptor_set = clear_hash_table_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut ClearHashTableUniforms| *buf = ClearHashTableUniforms { entry_count },
+                        entries_buffer,
+                    );
+
+                    dispatch_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        clear_hash_table_pipeline_layout,
+                        "coherent_hashing/clear_hash_table.comp.spv",
+                        &[],
+                        descriptor_set,
+                        UVec2::new(entry_count.div_round_up(64), 1),
+                    );
+                }
+            },
+        );
+
+        schedule.add_compute(
+            command_name!("write_hash_table"),
+            |params| {
+                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_ATOMIC);
+                params.add_image(input_image, ImageUsage::COMPUTE_STORAGE_READ);
+            },
+            {
+                let context = base.context.as_ref();
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let write_hash_table_descriptor_set_layout = &self.write_hash_table_descriptor_set_layout;
+                let write_hash_table_pipeline_layout = self.write_hash_table_pipeline_layout;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                move |params, cmd| {
+                    let entries_buffer = params.get_buffer(entries_buffer);
+                    let input_image_view = params.get_image_view(input_image);
+
+                    let descriptor_set = write_hash_table_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut WriteHashTableUniforms| *buf = WriteHashTableUniforms { entry_count, offsets },
+                        entries_buffer,
+                        input_image_view,
+                    );
+
+                    dispatch_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        write_hash_table_pipeline_layout,
+                        "coherent_hashing/write_hash_table.comp.spv",
                         &[],
                         descriptor_set,
                         image_size.div_round_up(16),

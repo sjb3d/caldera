@@ -156,6 +156,7 @@ dependencies = [
  "notify",
  "ply-rs",
  "pmj",
+ "primes",
  "rand 0.7.3",
  "raw-window-handle",
  "rayon",
@@ -1215,6 +1216,12 @@ name = "ppv-lite86"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
+
+[[package]]
+name = "primes"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68a61082d8bceecd71a3870e9162002bb75f7ba9c7aa8b76227e887782fef9c8"
 
 [[package]]
 name = "proc-macro-crate"
