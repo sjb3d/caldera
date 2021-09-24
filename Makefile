@@ -42,6 +42,7 @@ SRC=\
 	coherent_hashing/debug_image.frag.glsl \
 	coherent_hashing/debug_quad.vert.glsl \
 	coherent_hashing/generate_image.comp.glsl \
+	coherent_hashing/read_hash_table.comp.glsl \
 	coherent_hashing/write_hash_table.comp.glsl \
 	path_tracer/capture.comp.glsl \
 	path_tracer/copy.frag.glsl \

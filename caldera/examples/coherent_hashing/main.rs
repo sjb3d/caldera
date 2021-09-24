@@ -26,30 +26,24 @@ impl Primes {
     }
 }
 
-descriptor_set_layout!(GenerateImageDescriptorSetLayout { image: StorageImage });
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct ClearHashTableUniforms {
-    entry_count: u32,
-}
-
-descriptor_set_layout!(ClearHashTableDescriptorSetLayout {
-    uniforms: UniformData<ClearHashTableUniforms>,
-    table: StorageBuffer,
-});
-
 const MAX_AGE: usize = 15;
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct WriteHashTableUniforms {
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct HashTableUniforms {
     entry_count: u32,
     offsets: [u32; MAX_AGE],
 }
 
-descriptor_set_layout!(WriteHashTableDescriptorSetLayout {
-    uniforms: UniformData<WriteHashTableUniforms>,
+descriptor_set_layout!(GenerateImageDescriptorSetLayout { image: StorageImage });
+
+descriptor_set_layout!(ClearHashTableDescriptorSetLayout {
+    uniforms: UniformData<HashTableUniforms>,
+    table: StorageBuffer,
+});
+
+descriptor_set_layout!(UpdateHashTableDescriptorSetLayout {
+    uniforms: UniformData<HashTableUniforms>,
     table: StorageBuffer,
     image: StorageImage,
 });
@@ -63,11 +57,12 @@ struct App {
     generate_image_pipeline_layout: vk::PipelineLayout,
     clear_hash_table_descriptor_set_layout: ClearHashTableDescriptorSetLayout,
     clear_hash_table_pipeline_layout: vk::PipelineLayout,
-    write_hash_table_descriptor_set_layout: WriteHashTableDescriptorSetLayout,
-    write_hash_table_pipeline_layout: vk::PipelineLayout,
+    update_hash_table_descriptor_set_layout: UpdateHashTableDescriptorSetLayout,
+    update_hash_table_pipeline_layout: vk::PipelineLayout,
     debug_image_descriptor_set_layout: DebugImageDescriptorSetLayout,
     debug_image_pipeline_layout: vk::PipelineLayout,
 
+    hash_table_offsets: [u32; MAX_AGE],
     counter: u32,
 }
 
@@ -85,14 +80,28 @@ impl App {
         let clear_hash_table_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(clear_hash_table_descriptor_set_layout.0);
 
-        let write_hash_table_descriptor_set_layout =
-            WriteHashTableDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let write_hash_table_pipeline_layout =
-            descriptor_set_layout_cache.create_pipeline_layout(write_hash_table_descriptor_set_layout.0);
+        let update_hash_table_descriptor_set_layout =
+            UpdateHashTableDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let update_hash_table_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(update_hash_table_descriptor_set_layout.0);
 
         let debug_image_descriptor_set_layout = DebugImageDescriptorSetLayout::new(descriptor_set_layout_cache);
         let debug_image_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(debug_image_descriptor_set_layout.0);
+
+        let mut primes = Primes::new();
+        let hash_table_offsets = {
+            let mut rng = SmallRng::seed_from_u64(0);
+            let dist = Uniform::new(1_000_000, 10_000_000);
+            let mut offsets = ArrayVec::new();
+            offsets.push(0);
+            for _ in 1..MAX_AGE {
+                let random_not_prime = rng.sample(dist);
+                offsets.push(primes.next_after(random_not_prime));
+            }
+            offsets.into_inner().unwrap()
+        };
+        println!("{:?}", hash_table_offsets);
 
         Self {
             context,
@@ -100,10 +109,11 @@ impl App {
             generate_image_pipeline_layout,
             clear_hash_table_descriptor_set_layout,
             clear_hash_table_pipeline_layout,
-            write_hash_table_descriptor_set_layout,
-            write_hash_table_pipeline_layout,
+            update_hash_table_descriptor_set_layout,
+            update_hash_table_pipeline_layout,
             debug_image_descriptor_set_layout,
             debug_image_pipeline_layout,
+            hash_table_offsets,
             counter: 0,
         }
     }
@@ -149,17 +159,13 @@ impl App {
         let image_size = UVec2::new(1024, 1024);
         let image_desc = ImageDesc::new_2d(image_size, vk::Format::R8_UNORM, vk::ImageAspectFlags::COLOR);
         let input_image = schedule.describe_image(&image_desc);
+        let output_image = schedule.describe_image(&image_desc);
 
         let mut primes = Primes::new();
-        let entry_count = primes.next_after(10_000);
-        let offsets: [u32; MAX_AGE] = {
-            let mut rng = SmallRng::seed_from_u64(0);
-            let dist = Uniform::new(1_000_000, 10_000_000);
-            let mut offsets = ArrayVec::new();
-            for _ in 0..MAX_AGE {
-                offsets.push(rng.sample(dist));
-            }
-            offsets.into_inner().unwrap()
+        let entry_count = primes.next_after(50_000);
+        let hash_table_uniforms = HashTableUniforms {
+            entry_count,
+            offsets: self.hash_table_offsets,
         };
 
         let entries_desc = BufferDesc::new((entry_count as usize) * mem::size_of::<u32>());
@@ -211,7 +217,7 @@ impl App {
 
                     let descriptor_set = clear_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
-                        |buf: &mut ClearHashTableUniforms| *buf = ClearHashTableUniforms { entry_count },
+                        |buf: &mut HashTableUniforms| *buf = hash_table_uniforms,
                         entries_buffer,
                     );
 
@@ -238,16 +244,16 @@ impl App {
             {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
-                let write_hash_table_descriptor_set_layout = &self.write_hash_table_descriptor_set_layout;
-                let write_hash_table_pipeline_layout = self.write_hash_table_pipeline_layout;
+                let update_hash_table_descriptor_set_layout = &self.update_hash_table_descriptor_set_layout;
+                let update_hash_table_pipeline_layout = self.update_hash_table_pipeline_layout;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
                     let entries_buffer = params.get_buffer(entries_buffer);
                     let input_image_view = params.get_image_view(input_image);
 
-                    let descriptor_set = write_hash_table_descriptor_set_layout.write(
+                    let descriptor_set = update_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
-                        |buf: &mut WriteHashTableUniforms| *buf = WriteHashTableUniforms { entry_count, offsets },
+                        |buf: &mut HashTableUniforms| *buf = hash_table_uniforms,
                         entries_buffer,
                         input_image_view,
                     );
@@ -256,8 +262,45 @@ impl App {
                         &context.device,
                         pipeline_cache,
                         cmd,
-                        write_hash_table_pipeline_layout,
+                        update_hash_table_pipeline_layout,
                         "coherent_hashing/write_hash_table.comp.spv",
+                        &[],
+                        descriptor_set,
+                        image_size.div_round_up(16),
+                    );
+                }
+            },
+        );
+
+        schedule.add_compute(
+            command_name!("read_hash_table"),
+            |params| {
+                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
+                params.add_image(output_image, ImageUsage::COMPUTE_STORAGE_WRITE);
+            },
+            {
+                let context = base.context.as_ref();
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let update_hash_table_descriptor_set_layout = &self.update_hash_table_descriptor_set_layout;
+                let update_hash_table_pipeline_layout = self.update_hash_table_pipeline_layout;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                move |params, cmd| {
+                    let entries_buffer = params.get_buffer(entries_buffer);
+                    let output_image_view = params.get_image_view(output_image);
+
+                    let descriptor_set = update_hash_table_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut HashTableUniforms| *buf = hash_table_uniforms,
+                        entries_buffer,
+                        output_image_view,
+                    );
+
+                    dispatch_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        update_hash_table_pipeline_layout,
+                        "coherent_hashing/read_hash_table.comp.spv",
                         &[],
                         descriptor_set,
                         image_size.div_round_up(16),
@@ -270,7 +313,7 @@ impl App {
             command_name!("main"),
             main_render_state,
             |params| {
-                params.add_image(input_image, ImageUsage::FRAGMENT_STORAGE_READ);
+                params.add_image(output_image, ImageUsage::FRAGMENT_STORAGE_READ);
             },
             {
                 let context = base.context.as_ref();
@@ -282,7 +325,7 @@ impl App {
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
-                    let image_view = params.get_image_view(input_image);
+                    let image_view = params.get_image_view(output_image);
 
                     set_viewport_helper(&context.device, cmd, swap_size);
 

@@ -3,7 +3,7 @@ const uint MAX_AGE = 15;
 layout(set = 0, binding = 0, scalar) uniform HashTableUniforms {
     uint entry_count;
     uint offsets[MAX_AGE];
-} g_table;
+} g_hash_table;
 
 uint dilate2(uint x)
 {
@@ -24,10 +24,17 @@ struct Entry {
     uint bits;
 };
 
+#define ENTRY_AGE_MASK  0xf0000000U
+#define ENTRY_KEY_MASK  0x0fffff00U
+#define ENTRY_DATA_MASK 0x000000ffU
+
 Entry make_entry(uint age, uint key, uint data)
 {
     Entry e;
-    e.bits = (age << 28) | (key << 8) | data;
+    e.bits
+        = (age << 28)
+        | ((key << 8) & ENTRY_KEY_MASK)
+        | (data & ENTRY_DATA_MASK);
     return e;
 }
 Entry make_entry(uint bits)
@@ -41,11 +48,13 @@ Entry increment_age(Entry e)
     e.bits += 0x10000000U;
     return e;
 }
-uint get_age(Entry e)   { return (e.bits & 0xf0000000U) >> 28; }
-uint get_key(Entry e)   { return (e.bits & 0x0fffff00U) >> 8; }
-uint get_data(Entry e)  { return (e.bits & 0x000000ffU); }
+uint get_age(Entry e)   { return (e.bits & ENTRY_AGE_MASK) >> 28; }
+uint get_key(Entry e)   { return (e.bits & ENTRY_KEY_MASK) >> 8; }
+uint get_data(Entry e)  { return e.bits & ENTRY_DATA_MASK; }
 
 uint coherent_hash(uint key, uint age)
 {
-    return (key + g_table.offsets[age - 1]) % g_table.entry_count;
+    uint index = key + g_hash_table.offsets[age - 1];
+    uint count = g_hash_table.entry_count;
+    return index % count;
 }
