@@ -299,7 +299,8 @@ impl VecToOct for Vec3 {
     }
 }
 
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 pub struct Scale2Offset2 {
     pub scale: Vec2,
     pub offset: Vec2,

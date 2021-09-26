@@ -6,29 +6,18 @@
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
+layout(set = 0, binding = 0, scalar) uniform HashTableUniforms {
+    HashTableInfo info;
+} g_uniforms;
 layout(set = 0, binding = 1, scalar) restrict readonly buffer Entries {
     uint arr[];
 } g_entries;
 
-layout(set = 0, binding = 2, r8) uniform restrict writeonly image2D g_image;
+#define HASH_TABLE_INFO             g_uniforms.info
+#define HASH_TABLE_ENTRIES_READ     g_entries.arr
+#include "hash_table_read_write.glsl"
 
-bool get_entry(uint key, out uint data)
-{
-    for (uint age = 1; age <= MAX_AGE; ++age) {
-        uint entry_index = coherent_hash(key, age);
-        Entry entry = make_entry(g_entries.arr[entry_index]);
-        if (get_age(entry) == 0) {
-            // entry is empty, no need to check older ones
-            break;
-        }
-        if (get_key(entry) == key) {
-            data = get_data(entry);
-            return true;
-        }
-    }
-    data = 0;
-    return false;
-}
+layout(set = 0, binding = 2, r8) uniform restrict writeonly image2D g_image;
 
 void main()
 {
@@ -37,7 +26,9 @@ void main()
     uint key = morton2d(coord);
     
     uint data;
-    get_entry(key, data);
+    if (!get_entry(key, data)) {
+        data = 0;
+    }
 
     imageStore(g_image, ivec2(coord), vec4(float(data)/255.f));
 }

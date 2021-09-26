@@ -30,7 +30,7 @@ const MAX_AGE: usize = 15;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
-struct HashTableUniforms {
+struct HashTableInfo {
     entry_count: u32,
     offsets: [u32; MAX_AGE],
 }
@@ -38,17 +38,29 @@ struct HashTableUniforms {
 descriptor_set_layout!(GenerateImageDescriptorSetLayout { image: StorageImage });
 
 descriptor_set_layout!(ClearHashTableDescriptorSetLayout {
-    uniforms: UniformData<HashTableUniforms>,
-    table: StorageBuffer,
+    hash_table_info: UniformData<HashTableInfo>,
+    entries: StorageBuffer,
 });
 
 descriptor_set_layout!(UpdateHashTableDescriptorSetLayout {
-    uniforms: UniformData<HashTableUniforms>,
-    table: StorageBuffer,
+    hash_table_info: UniformData<HashTableInfo>,
+    entries: StorageBuffer,
     image: StorageImage,
 });
 
-descriptor_set_layout!(DebugImageDescriptorSetLayout { image: StorageImage });
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct DebugQuadUniforms {
+    ortho_from_quad: Scale2Offset2,
+}
+
+descriptor_set_layout!(DebugImageDescriptorSetLayout { debug_quad: UniformData<DebugQuadUniforms>, image: StorageImage });
+
+descriptor_set_layout!(DebugHashTableDescriptorSetLayout {
+    debug_quad: UniformData<DebugQuadUniforms>,
+    hash_table_info: UniformData<HashTableInfo>,
+    entries: StorageBuffer,
+});
 
 struct App {
     context: SharedContext,
@@ -61,6 +73,8 @@ struct App {
     update_hash_table_pipeline_layout: vk::PipelineLayout,
     debug_image_descriptor_set_layout: DebugImageDescriptorSetLayout,
     debug_image_pipeline_layout: vk::PipelineLayout,
+    debug_hash_table_descriptor_set_layout: DebugHashTableDescriptorSetLayout,
+    debug_hash_table_pipeline_layout: vk::PipelineLayout,
 
     hash_table_offsets: [u32; MAX_AGE],
     counter: u32,
@@ -89,6 +103,11 @@ impl App {
         let debug_image_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(debug_image_descriptor_set_layout.0);
 
+        let debug_hash_table_descriptor_set_layout =
+            DebugHashTableDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let debug_hash_table_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(debug_hash_table_descriptor_set_layout.0);
+
         let mut primes = Primes::new();
         let hash_table_offsets = {
             let mut rng = SmallRng::seed_from_u64(0);
@@ -113,6 +132,8 @@ impl App {
             update_hash_table_pipeline_layout,
             debug_image_descriptor_set_layout,
             debug_image_pipeline_layout,
+            debug_hash_table_descriptor_set_layout,
+            debug_hash_table_pipeline_layout,
             hash_table_offsets,
             counter: 0,
         }
@@ -163,7 +184,7 @@ impl App {
 
         let mut primes = Primes::new();
         let entry_count = primes.next_after(50_000);
-        let hash_table_uniforms = HashTableUniforms {
+        let hash_table_info = HashTableInfo {
             entry_count,
             offsets: self.hash_table_offsets,
         };
@@ -217,7 +238,7 @@ impl App {
 
                     let descriptor_set = clear_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
-                        |buf: &mut HashTableUniforms| *buf = hash_table_uniforms,
+                        |buf: &mut HashTableInfo| *buf = hash_table_info,
                         entries_buffer,
                     );
 
@@ -253,7 +274,7 @@ impl App {
 
                     let descriptor_set = update_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
-                        |buf: &mut HashTableUniforms| *buf = hash_table_uniforms,
+                        |buf: &mut HashTableInfo| *buf = hash_table_info,
                         entries_buffer,
                         input_image_view,
                     );
@@ -290,7 +311,7 @@ impl App {
 
                     let descriptor_set = update_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
-                        |buf: &mut HashTableUniforms| *buf = hash_table_uniforms,
+                        |buf: &mut HashTableInfo| *buf = hash_table_info,
                         entries_buffer,
                         output_image_view,
                     );
@@ -314,24 +335,40 @@ impl App {
             main_render_state,
             |params| {
                 params.add_image(output_image, ImageUsage::FRAGMENT_STORAGE_READ);
+                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
             },
             {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let debug_image_descriptor_set_layout = &self.debug_image_descriptor_set_layout;
                 let debug_image_pipeline_layout = self.debug_image_pipeline_layout;
+                let debug_hash_table_descriptor_set_layout = &self.debug_hash_table_descriptor_set_layout;
+                let debug_hash_table_pipeline_layout = self.debug_hash_table_pipeline_layout;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
-                    let image_view = params.get_image_view(output_image);
+                    let entries_buffer = params.get_buffer(entries_buffer);
+                    let output_image_view = params.get_image_view(output_image);
 
                     set_viewport_helper(&context.device, cmd, swap_size);
+                    let ortho_from_screen =
+                        Scale2Offset2::new(Vec2::broadcast(2.0) / swap_size.as_float(), Vec2::broadcast(-1.0));
 
                     // visualise results
-                    let descriptor_set = debug_image_descriptor_set_layout.write(descriptor_pool, image_view);
-                    let state = GraphicsPipelineState::new(render_pass, main_sample_count);
+                    let screen_from_image = Scale2Offset2::new(image_size.as_float(), Vec2::broadcast(10.0));
+                    let descriptor_set = debug_image_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut DebugQuadUniforms| {
+                            *buf = DebugQuadUniforms {
+                                ortho_from_quad: ortho_from_screen * screen_from_image,
+                            };
+                        },
+                        output_image_view,
+                    );
+                    let state = GraphicsPipelineState::new(render_pass, main_sample_count)
+                        .with_topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
                     draw_helper(
                         &context.device,
                         pipeline_cache,
@@ -341,7 +378,32 @@ impl App {
                         "coherent_hashing/debug_quad.vert.spv",
                         "coherent_hashing/debug_image.frag.spv",
                         descriptor_set,
-                        3,
+                        4,
+                    );
+
+                    let screen_from_table = Scale2Offset2::new(Vec2::new(128.0, 1024.0), Vec2::new(1044.0, 10.0));
+                    let descriptor_set = debug_hash_table_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut DebugQuadUniforms| {
+                            *buf = DebugQuadUniforms {
+                                ortho_from_quad: ortho_from_screen * screen_from_table,
+                            };
+                        },
+                        |buf: &mut HashTableInfo| {
+                            *buf = hash_table_info;
+                        },
+                        entries_buffer,
+                    );
+                    draw_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        debug_hash_table_pipeline_layout,
+                        &state,
+                        "coherent_hashing/debug_quad.vert.spv",
+                        "coherent_hashing/debug_hash_table.frag.spv",
+                        descriptor_set,
+                        4,
                     );
 
                     // draw imgui

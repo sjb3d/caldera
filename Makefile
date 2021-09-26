@@ -7,6 +7,7 @@ DISASM=spirv-dis
 
 INC=\
 	coherent_hashing/hash_table_common.glsl \
+	coherent_hashing/hash_table_read_write.glsl \
 	common/color_space.glsl \
 	common/fresnel.glsl \
 	common/ggx.glsl \
@@ -40,6 +41,7 @@ INC=\
 SRC=\
 	coherent_hashing/clear_hash_table.comp.glsl \
 	coherent_hashing/debug_image.frag.glsl \
+	coherent_hashing/debug_hash_table.frag.glsl \
 	coherent_hashing/debug_quad.vert.glsl \
 	coherent_hashing/generate_image.comp.glsl \
 	coherent_hashing/read_hash_table.comp.glsl \

@@ -147,6 +147,7 @@ impl Drop for ShaderLoader {
 pub struct GraphicsPipelineState {
     vertex_input_bindings: ArrayVec<vk::VertexInputBindingDescription, 4>,
     vertex_input_attributes: ArrayVec<vk::VertexInputAttributeDescription, 8>,
+    topology: vk::PrimitiveTopology,
     render_pass: vk::RenderPass, // TODO: replace with state for *compatible* pass
     samples: vk::SampleCountFlags,
 }
@@ -156,6 +157,7 @@ impl GraphicsPipelineState {
         Self {
             vertex_input_bindings: ArrayVec::new(),
             vertex_input_attributes: ArrayVec::new(),
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             render_pass,
             samples,
         }
@@ -170,6 +172,11 @@ impl GraphicsPipelineState {
         self.vertex_input_bindings.try_extend_from_slice(bindings).unwrap();
         self.vertex_input_attributes.clear();
         self.vertex_input_attributes.try_extend_from_slice(attributes).unwrap();
+        self
+    }
+
+    pub fn with_topology(mut self, topology: vk::PrimitiveTopology) -> Self {
+        self.topology = topology;
         self
     }
 }
@@ -527,7 +534,7 @@ impl PipelineCache {
                     .p_vertex_attribute_descriptions(&state.vertex_input_attributes)
                     .p_vertex_binding_descriptions(&state.vertex_input_bindings);
                 let input_assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo {
-                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    topology: state.topology,
                     ..Default::default()
                 };
 

@@ -6,6 +6,9 @@
 
 layout(local_size_x = 64) in;
 
+layout(set = 0, binding = 0, scalar) uniform HashTableUniforms {
+    HashTableInfo info;
+} g_uniforms;
 layout(set = 0, binding = 1, scalar) restrict writeonly buffer Entries {
     uint arr[];
 } g_entries;
@@ -15,7 +18,7 @@ layout(set = 0, binding = 1, scalar) restrict writeonly buffer Entries {
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
-    if (index < g_hash_table.entry_count) {
+    if (index < g_uniforms.info.entry_count) {
         g_entries.arr[index] = 0;
     }
 }

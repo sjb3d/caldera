@@ -6,33 +6,18 @@
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
+layout(set = 0, binding = 0, scalar) uniform HashTableUniforms {
+    HashTableInfo info;
+} g_uniforms;
 layout(set = 0, binding = 1, scalar) restrict buffer Entries {
     uint arr[];
 } g_entries;
 
-layout(set = 0, binding = 2, r8) uniform restrict readonly image2D g_image;
+#define HASH_TABLE_INFO             g_uniforms.info
+#define HASH_TABLE_ENTRIES_WRITE    g_entries.arr
+#include "hash_table_read_write.glsl"
 
-bool insert_entry(uint key, uint data)
-{
-    Entry entry = make_entry(1, key, data);
-    for (;;) {
-        uint entry_index = coherent_hash(get_key(entry), get_age(entry));
-        Entry prev = make_entry(atomicMax(g_entries.arr[entry_index], entry.bits));
-        if (entry.bits > prev.bits) {
-            // TODO: update max age for (key, 1)
-            entry = prev;
-            if (get_age(entry) == 0) {
-                // slot was unused, we are done
-                return true;
-            }
-        }
-        if (get_age(entry) == MAX_AGE) {
-            // insert failed
-            return false;
-        }
-        entry = increment_age(entry);       
-    }
-}
+layout(set = 0, binding = 2, r8) uniform restrict readonly image2D g_image;
 
 void main()
 {
