@@ -5,6 +5,7 @@ const uint MAX_AGE = 15;
 
 struct HashTableInfo {
     uint entry_count;
+    uint store_max_age;
     uint offsets[MAX_AGE];
 };
 

@@ -7,7 +7,7 @@
 layout(set = 0, binding = 1, scalar) uniform HashTableUniforms {
     HashTableInfo info;
 } g_uniforms;
-layout(set = 0, binding = 2, scalar) restrict writeonly buffer Entries {
+layout(set = 0, binding = 2, scalar) restrict readonly buffer Entries {
     uint arr[];
 } g_entries;
 

@@ -32,6 +32,7 @@ const MAX_AGE: usize = 15;
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct HashTableInfo {
     entry_count: u32,
+    store_max_age: u32,
     offsets: [u32; MAX_AGE],
 }
 
@@ -40,11 +41,13 @@ descriptor_set_layout!(GenerateImageDescriptorSetLayout { image: StorageImage })
 descriptor_set_layout!(ClearHashTableDescriptorSetLayout {
     hash_table_info: UniformData<HashTableInfo>,
     entries: StorageBuffer,
+    max_ages: StorageBuffer,
 });
 
 descriptor_set_layout!(UpdateHashTableDescriptorSetLayout {
     hash_table_info: UniformData<HashTableInfo>,
     entries: StorageBuffer,
+    max_ages: StorageBuffer,
     image: StorageImage,
 });
 
@@ -76,6 +79,7 @@ struct App {
     debug_hash_table_descriptor_set_layout: DebugHashTableDescriptorSetLayout,
     debug_hash_table_pipeline_layout: vk::PipelineLayout,
 
+    store_max_age: bool,
     hash_table_offsets: [u32; MAX_AGE],
     counter: u32,
 }
@@ -134,6 +138,7 @@ impl App {
             debug_image_pipeline_layout,
             debug_hash_table_descriptor_set_layout,
             debug_hash_table_pipeline_layout,
+            store_max_age: true,
             hash_table_offsets,
             counter: 0,
         }
@@ -149,9 +154,11 @@ impl App {
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
                 let ui = &ui;
+                let store_max_age = &mut self.store_max_age;
                 let counter = self.counter;
                 move || {
                     ui.text(format!("Counter: {}", counter));
+                    ui.checkbox("Store max age", store_max_age);
                 }
             });
 
@@ -186,11 +193,13 @@ impl App {
         let entry_count = primes.next_after(50_000);
         let hash_table_info = HashTableInfo {
             entry_count,
+            store_max_age: if self.store_max_age { 1 } else { 0 },
             offsets: self.hash_table_offsets,
         };
 
-        let entries_desc = BufferDesc::new((entry_count as usize) * mem::size_of::<u32>());
-        let entries_buffer = schedule.describe_buffer(&entries_desc);
+        let buffer_desc = BufferDesc::new((entry_count as usize) * mem::size_of::<u32>());
+        let entries_buffer = schedule.describe_buffer(&buffer_desc);
+        let max_ages_buffer = schedule.describe_buffer(&buffer_desc);
 
         schedule.add_compute(
             command_name!("generate_image"),
@@ -226,6 +235,7 @@ impl App {
             command_name!("clear_hash_table"),
             |params| {
                 params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
+                params.add_buffer(max_ages_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
             },
             {
                 let context = base.context.as_ref();
@@ -235,11 +245,13 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
                     let entries_buffer = params.get_buffer(entries_buffer);
+                    let max_ages_buffer = params.get_buffer(max_ages_buffer);
 
                     let descriptor_set = clear_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
                         entries_buffer,
+                        max_ages_buffer,
                     );
 
                     dispatch_helper(
@@ -260,6 +272,7 @@ impl App {
             command_name!("write_hash_table"),
             |params| {
                 params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_ATOMIC);
+                params.add_buffer(max_ages_buffer, BufferUsage::COMPUTE_STORAGE_ATOMIC);
                 params.add_image(input_image, ImageUsage::COMPUTE_STORAGE_READ);
             },
             {
@@ -270,12 +283,14 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
                     let entries_buffer = params.get_buffer(entries_buffer);
+                    let max_ages_buffer = params.get_buffer(max_ages_buffer);
                     let input_image_view = params.get_image_view(input_image);
 
                     let descriptor_set = update_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
                         entries_buffer,
+                        max_ages_buffer,
                         input_image_view,
                     );
 
@@ -297,6 +312,7 @@ impl App {
             command_name!("read_hash_table"),
             |params| {
                 params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
+                params.add_buffer(max_ages_buffer, BufferUsage::COMPUTE_STORAGE_READ);
                 params.add_image(output_image, ImageUsage::COMPUTE_STORAGE_WRITE);
             },
             {
@@ -307,12 +323,14 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
                     let entries_buffer = params.get_buffer(entries_buffer);
+                    let max_ages_buffer = params.get_buffer(max_ages_buffer);
                     let output_image_view = params.get_image_view(output_image);
 
                     let descriptor_set = update_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
                         entries_buffer,
+                        max_ages_buffer,
                         output_image_view,
                     );
 

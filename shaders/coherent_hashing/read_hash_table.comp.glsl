@@ -12,12 +12,16 @@ layout(set = 0, binding = 0, scalar) uniform HashTableUniforms {
 layout(set = 0, binding = 1, scalar) restrict readonly buffer Entries {
     uint arr[];
 } g_entries;
+layout(set = 0, binding = 2, scalar) restrict buffer MaxAges {
+    uint arr[];
+} g_max_ages;
 
 #define HASH_TABLE_INFO             g_uniforms.info
 #define HASH_TABLE_ENTRIES_READ     g_entries.arr
+#define HASH_TABLE_MAX_AGES         g_max_ages.arr
 #include "hash_table_read_write.glsl"
 
-layout(set = 0, binding = 2, r8) uniform restrict writeonly image2D g_image;
+layout(set = 0, binding = 3, r8) uniform restrict writeonly image2D g_image;
 
 void main()
 {

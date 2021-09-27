@@ -13,10 +13,16 @@ bool insert_entry(uint key, uint data)
         uint entry_index = coherent_hash(get_key(entry), get_age(entry));
         Entry prev = make_entry(atomicMax(HASH_TABLE_ENTRIES_WRITE[entry_index], entry.bits));
         if (entry.bits > prev.bits) {
-            // TODO: update max age for (key, 1)
+            // we displaced the (younger) entry here, so update max age for the new entry
+            if (HASH_TABLE_INFO.store_max_age != 0) {
+                uint max_age_index = coherent_hash(get_key(entry), 1);
+                atomicMax(HASH_TABLE_MAX_AGES[max_age_index], get_age(entry));
+            }
+
+            // find a new home for the entry that was displaced (if non-empty)
             entry = prev;
             if (get_age(entry) == 0) {
-                // slot was unused, we are done
+                // insert succeeded
                 return true;
             }
         }
@@ -32,7 +38,12 @@ bool insert_entry(uint key, uint data)
 #ifdef HASH_TABLE_ENTRIES_READ
 bool get_entry(uint key, out uint data)
 {
-    for (uint age = 1; age <= MAX_AGE; ++age) {
+    uint max_age = MAX_AGE;
+    if (HASH_TABLE_INFO.store_max_age != 0) {
+        uint max_age_index = coherent_hash(key, 1);
+        max_age = HASH_TABLE_MAX_AGES[max_age_index];
+    }
+    for (uint age = 1; age <= max_age; ++age) {
         uint entry_index = coherent_hash(key, age);
         Entry entry = make_entry(HASH_TABLE_ENTRIES_READ[entry_index]);
         if (get_age(entry) == 0) {

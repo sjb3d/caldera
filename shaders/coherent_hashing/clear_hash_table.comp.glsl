@@ -12,6 +12,9 @@ layout(set = 0, binding = 0, scalar) uniform HashTableUniforms {
 layout(set = 0, binding = 1, scalar) restrict writeonly buffer Entries {
     uint arr[];
 } g_entries;
+layout(set = 0, binding = 2, scalar) restrict writeonly buffer MaxAges {
+    uint arr[];
+} g_max_ages;
 
 // TODO: max age buffer
 
@@ -20,5 +23,8 @@ void main()
     uint index = gl_GlobalInvocationID.x;
     if (index < g_uniforms.info.entry_count) {
         g_entries.arr[index] = 0;
+        if (g_uniforms.info.store_max_age != 0) {
+            g_max_ages.arr[index] = 0;
+        }
     }
 }
