@@ -229,34 +229,32 @@ impl App {
         imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, {
-                || {
-                    self.renderer.debug_ui(&mut self.progress, &ui);
-                    let mut needs_reset = false;
-                    if CollapsingHeader::new("Camera").default_open(true).build(&ui) {
-                        let scene = self.scene.deref();
-                        ui.text("Cameras:");
-                        for camera_ref in scene.camera_ref_iter() {
-                            if ui.small_button(format!("Camera {}", camera_ref.0)) {
-                                self.view_adjust =
-                                    ViewAdjust::new(scene.camera(camera_ref), self.renderer.params.fov_y_override);
-                                needs_reset = true;
-                            }
+            .build(&ui, || {
+                self.renderer.debug_ui(&mut self.progress, &ui);
+                let mut needs_reset = false;
+                if CollapsingHeader::new("Camera").default_open(true).build(&ui) {
+                    let scene = self.scene.deref();
+                    ui.text("Cameras:");
+                    for camera_ref in scene.camera_ref_iter() {
+                        if ui.small_button(format!("Camera {}", camera_ref.0)) {
+                            self.view_adjust =
+                                ViewAdjust::new(scene.camera(camera_ref), self.renderer.params.fov_y_override);
+                            needs_reset = true;
                         }
-                        Drag::new("Camera Scale Bias")
-                            .speed(0.05)
-                            .build(&ui, &mut self.view_adjust.log2_scale);
-                        needs_reset |= Drag::new("Camera FOV")
-                            .speed(0.005)
-                            .build(&ui, &mut self.view_adjust.fov_y);
-                        needs_reset |=
-                            Slider::new("Aperture Radius", 0.0, 0.1).build(&ui, &mut self.view_adjust.aperture_radius);
-                        needs_reset |=
-                            Slider::new("Focus Distance", 0.0, 10.0).build(&ui, &mut self.view_adjust.focus_distance);
                     }
-                    if needs_reset {
-                        self.progress.reset();
-                    }
+                    Drag::new("Camera Scale Bias")
+                        .speed(0.05)
+                        .build(&ui, &mut self.view_adjust.log2_scale);
+                    needs_reset |= Drag::new("Camera FOV")
+                        .speed(0.005)
+                        .build(&ui, &mut self.view_adjust.fov_y);
+                    needs_reset |=
+                        Slider::new("Aperture Radius", 0.0, 0.1).build(&ui, &mut self.view_adjust.aperture_radius);
+                    needs_reset |=
+                        Slider::new("Focus Distance", 0.0, 10.0).build(&ui, &mut self.view_adjust.focus_distance);
+                }
+                if needs_reset {
+                    self.progress.reset();
                 }
             });
 

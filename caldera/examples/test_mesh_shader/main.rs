@@ -301,24 +301,17 @@ impl App {
         imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, {
-                let ui = &ui;
-                let has_mesh_shader = self.has_mesh_shader;
-                let render_mode = &mut self.render_mode;
-                let do_backface_culling = &mut self.do_backface_culling;
-                let is_rotating = &mut self.is_rotating;
-                move || {
-                    ui.checkbox("Rotate", is_rotating);
-                    ui.text("Render Mode:");
-                    ui.radio_button("Standard", render_mode, RenderMode::Standard);
-                    if has_mesh_shader {
-                        ui.radio_button("Clusters", render_mode, RenderMode::Clusters);
-                    } else {
-                        ui.text_disabled("Mesh Shaders Not Supported!");
-                    }
-                    ui.text("Cluster Settings:");
-                    ui.checkbox("Backface Culling", do_backface_culling);
+            .build(&ui, || {
+                ui.checkbox("Rotate", &mut self.is_rotating);
+                ui.text("Render Mode:");
+                ui.radio_button("Standard", &mut self.render_mode, RenderMode::Standard);
+                if self.has_mesh_shader {
+                    ui.radio_button("Clusters", &mut self.render_mode, RenderMode::Clusters);
+                } else {
+                    ui.text_disabled("Mesh Shaders Not Supported!");
                 }
+                ui.text("Cluster Settings:");
+                ui.checkbox("Backface Culling", &mut self.do_backface_culling);
             });
 
         let cbar = base.systems.acquire_command_buffer();

@@ -104,21 +104,19 @@ impl App {
         imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, {
-                let ui = &ui;
-                let context = base.context.as_ref();
-                let render_mode = &mut self.render_mode;
-                let is_rotating = &mut self.is_rotating;
-                move || {
-                    ui.checkbox("Rotate", is_rotating);
-                    ui.text("Render Mode:");
-                    ui.radio_button("Raster", render_mode, RenderMode::Raster);
-                    ui.radio_button("Raster (Multisampled)", render_mode, RenderMode::RasterMultisampled);
-                    if context.device.extensions.supports_khr_acceleration_structure() {
-                        ui.radio_button("Ray Trace", render_mode, RenderMode::RayTrace);
-                    } else {
-                        ui.text_disabled("Ray Tracing Not Supported!");
-                    }
+            .build(&ui, || {
+                ui.checkbox("Rotate", &mut self.is_rotating);
+                ui.text("Render Mode:");
+                ui.radio_button("Raster", &mut self.render_mode, RenderMode::Raster);
+                ui.radio_button(
+                    "Raster (Multisampled)",
+                    &mut self.render_mode,
+                    RenderMode::RasterMultisampled,
+                );
+                if self.context.device.extensions.supports_khr_acceleration_structure() {
+                    ui.radio_button("Ray Trace", &mut self.render_mode, RenderMode::RayTrace);
+                } else {
+                    ui.text_disabled("Ray Tracing Not Supported!");
                 }
             });
 
