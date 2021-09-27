@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::Key;
+use imgui::{Key, Slider};
 use primes::{PrimeSet as _, Sieve};
 use rand::{distributions::Uniform, prelude::*, rngs::SmallRng};
 use spark::vk;
@@ -58,7 +58,11 @@ struct DebugQuadUniforms {
     ortho_from_quad: Scale2Offset2,
 }
 
-descriptor_set_layout!(DebugImageDescriptorSetLayout { debug_quad: UniformData<DebugQuadUniforms>, image: StorageImage });
+descriptor_set_layout!(DebugImageDescriptorSetLayout {
+    debug_quad: UniformData<DebugQuadUniforms>,
+    input_image: StorageImage,
+    output_image: StorageImage
+});
 
 descriptor_set_layout!(DebugHashTableDescriptorSetLayout {
     debug_quad: UniformData<DebugQuadUniforms>,
@@ -96,9 +100,22 @@ struct App {
     debug_age_histogram_descriptor_set_layout: DebugAgeHistogramDescriptorSetLayout,
     debug_age_histogram_pipeline_layout: vk::PipelineLayout,
 
+    rng: SmallRng,
+    primes: Primes,
     store_max_age: bool,
+    table_size: f32,
     hash_table_offsets: [u32; MAX_AGE],
-    counter: u32,
+}
+
+fn make_hash_table_offsets(rng: &mut SmallRng, primes: &mut Primes) -> [u32; MAX_AGE] {
+    let dist = Uniform::new(1_000_000, 10_000_000);
+    let mut offsets = ArrayVec::new();
+    offsets.push(0);
+    for _ in 1..MAX_AGE {
+        let random_not_prime = rng.sample(dist);
+        offsets.push(primes.next_after(random_not_prime));
+    }
+    offsets.into_inner().unwrap()
 }
 
 impl App {
@@ -139,18 +156,9 @@ impl App {
         let debug_age_histogram_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(debug_age_histogram_descriptor_set_layout.0);
 
+        let mut rng = SmallRng::seed_from_u64(0);
         let mut primes = Primes::new();
-        let hash_table_offsets = {
-            let mut rng = SmallRng::seed_from_u64(0);
-            let dist = Uniform::new(1_000_000, 10_000_000);
-            let mut offsets = ArrayVec::new();
-            offsets.push(0);
-            for _ in 1..MAX_AGE {
-                let random_not_prime = rng.sample(dist);
-                offsets.push(primes.next_after(random_not_prime));
-            }
-            offsets.into_inner().unwrap()
-        };
+        let hash_table_offsets = make_hash_table_offsets(&mut rng, &mut primes);
         println!("{:?}", hash_table_offsets);
 
         Self {
@@ -169,9 +177,11 @@ impl App {
             make_age_histogram_pipeline_layout,
             debug_age_histogram_descriptor_set_layout,
             debug_age_histogram_pipeline_layout,
+            rng,
+            primes,
             store_max_age: true,
+            table_size: 0.05,
             hash_table_offsets,
-            counter: 0,
         }
     }
 
@@ -183,13 +193,11 @@ impl App {
         imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, {
-                let ui = &ui;
-                let store_max_age = &mut self.store_max_age;
-                let counter = self.counter;
-                move || {
-                    ui.text(format!("Counter: {}", counter));
-                    ui.checkbox("Store max age", store_max_age);
+            .build(&ui, || {
+                Slider::new("Table size", 0.001, 0.12).build(&ui, &mut self.table_size);
+                ui.checkbox("Store max age", &mut self.store_max_age);
+                if ui.button("Random offsets") {
+                    self.hash_table_offsets = make_hash_table_offsets(&mut self.rng, &mut self.primes);
                 }
             });
 
@@ -220,8 +228,7 @@ impl App {
         let input_image = schedule.describe_image(&image_desc);
         let output_image = schedule.describe_image(&image_desc);
 
-        let mut primes = Primes::new();
-        let entry_count = primes.next_after(50_000);
+        let entry_count = self.primes.next_after((1024.0 * 1024.0 * self.table_size) as u32);
         let hash_table_info = HashTableInfo {
             entry_count,
             store_max_age: if self.store_max_age { 1 } else { 0 },
@@ -424,6 +431,7 @@ impl App {
             command_name!("main"),
             main_render_state,
             |params| {
+                params.add_image(input_image, ImageUsage::FRAGMENT_STORAGE_READ);
                 params.add_image(output_image, ImageUsage::FRAGMENT_STORAGE_READ);
                 params.add_buffer(entries_buffer, BufferUsage::FRAGMENT_STORAGE_READ);
                 params.add_buffer(age_histogram_buffer, BufferUsage::FRAGMENT_STORAGE_READ);
@@ -442,6 +450,7 @@ impl App {
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
+                    let input_image_view = params.get_image_view(input_image);
                     let output_image_view = params.get_image_view(output_image);
                     let entries_buffer = params.get_buffer(entries_buffer);
                     let age_histogram_buffer = params.get_buffer(age_histogram_buffer);
@@ -459,6 +468,7 @@ impl App {
                                 ortho_from_quad: ortho_from_screen * screen_from_image,
                             };
                         },
+                        input_image_view,
                         output_image_view,
                     );
                     let state = GraphicsPipelineState::new(render_pass, main_sample_count)
@@ -544,8 +554,6 @@ impl App {
         let rendering_finished_semaphore = base.systems.submit_command_buffer(&cbar);
         base.display
             .present(swap_vk_image, rendering_finished_semaphore.unwrap());
-
-        self.counter += 1;
     }
 }
 

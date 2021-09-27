@@ -7,8 +7,3 @@ Run using:
 ```
 make && cargo run --release --example coherent_hashing
 ```
-
-TODO:
-
-- [ ] Maybe table size controls? (Handle failure properly when set too small)
-- [ ] More README
