@@ -36,7 +36,25 @@ struct HashTableInfo {
     offsets: [u32; MAX_AGE],
 }
 
-descriptor_set_layout!(GenerateImageDescriptorSetLayout { image: StorageImage });
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct CircleParams {
+    centre: Vec2,
+    radius: f32,
+}
+
+const CIRCLE_COUNT: usize = 4;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct GenerateImageUniforms {
+    circles: [CircleParams; CIRCLE_COUNT],
+}
+
+descriptor_set_layout!(GenerateImageDescriptorSetLayout {
+    uniforms: UniformData<GenerateImageUniforms>,
+    image: StorageImage
+});
 
 descriptor_set_layout!(ClearHashTableDescriptorSetLayout {
     hash_table_info: UniformData<HashTableInfo>,
@@ -104,7 +122,20 @@ struct App {
     primes: Primes,
     store_max_age: bool,
     table_size: f32,
+    circles: [CircleParams; CIRCLE_COUNT],
     hash_table_offsets: [u32; MAX_AGE],
+}
+
+fn make_circles(rng: &mut SmallRng) -> [CircleParams; CIRCLE_COUNT] {
+    let mut circles = ArrayVec::new();
+    let dist = Uniform::new(0.0, 1.0);
+    for _ in 0..CIRCLE_COUNT {
+        circles.push(CircleParams {
+            centre: Vec2::new(rng.sample(dist), rng.sample(dist)) * 1024.0,
+            radius: rng.sample(dist) * 512.0,
+        });
+    }
+    circles.into_inner().unwrap()
 }
 
 fn make_hash_table_offsets(rng: &mut SmallRng, primes: &mut Primes) -> [u32; MAX_AGE] {
@@ -158,6 +189,7 @@ impl App {
 
         let mut rng = SmallRng::seed_from_u64(0);
         let mut primes = Primes::new();
+        let circles = make_circles(&mut rng);
         let hash_table_offsets = make_hash_table_offsets(&mut rng, &mut primes);
         println!("{:?}", hash_table_offsets);
 
@@ -181,6 +213,7 @@ impl App {
             primes,
             store_max_age: true,
             table_size: 0.05,
+            circles,
             hash_table_offsets,
         }
     }
@@ -194,6 +227,9 @@ impl App {
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, || {
+                if ui.button("Random circles") {
+                    self.circles = make_circles(&mut self.rng);
+                }
                 Slider::new("Table size", 0.001, 0.12).build(&ui, &mut self.table_size);
                 ui.checkbox("Store max age", &mut self.store_max_age);
                 if ui.button("Random offsets") {
@@ -228,7 +264,7 @@ impl App {
         let input_image = schedule.describe_image(&image_desc);
         let output_image = schedule.describe_image(&image_desc);
 
-        let entry_count = self.primes.next_after((1024.0 * 1024.0 * self.table_size) as u32);
+        let entry_count = ((1024.0 * 1024.0 * self.table_size) as u32) | 1;
         let hash_table_info = HashTableInfo {
             entry_count,
             store_max_age: if self.store_max_age { 1 } else { 0 },
@@ -251,10 +287,15 @@ impl App {
                 let generate_image_descriptor_set_layout = &self.generate_image_descriptor_set_layout;
                 let generate_image_pipeline_layout = self.generate_image_pipeline_layout;
                 let pipeline_cache = &base.systems.pipeline_cache;
+                let circles = self.circles;
                 move |params, cmd| {
                     let input_image_view = params.get_image_view(input_image);
 
-                    let descriptor_set = generate_image_descriptor_set_layout.write(descriptor_pool, input_image_view);
+                    let descriptor_set = generate_image_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut GenerateImageUniforms| *buf = GenerateImageUniforms { circles },
+                        input_image_view,
+                    );
 
                     dispatch_helper(
                         &context.device,
@@ -581,7 +622,7 @@ fn main() {
 
     let window = WindowBuilder::new()
         .with_title("coherent_hashing")
-        .with_inner_size(Size::Logical(LogicalSize::new(1920.0, 1080.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(1354.0, 1044.0)))
         .build(&event_loop)
         .unwrap();
 
