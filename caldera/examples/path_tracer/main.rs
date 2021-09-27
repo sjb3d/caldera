@@ -27,10 +27,11 @@ use std::{
 use structopt::StructOpt;
 use strum::{EnumString, EnumVariantNames, VariantNames};
 use winit::{
-    dpi::{LogicalSize, Size},
+    dpi::{LogicalSize, PhysicalSize, Size},
     event::VirtualKeyCode,
     event_loop::EventLoop,
-    window::WindowBuilder,
+    monitor::VideoMode,
+    window::{Fullscreen, WindowBuilder},
 };
 
 #[repr(C)]
@@ -745,6 +746,10 @@ struct AppParams {
     #[structopt(short, long, global = true, display_order = 3)]
     output: Option<PathBuf>,
 
+    /// Run fullscreen
+    #[structopt(long, global = true)]
+    fullscreen: bool,
+
     #[structopt(flatten)]
     renderer_params: RendererParams,
 
@@ -809,14 +814,26 @@ fn main() {
     } else {
         let event_loop = EventLoop::new();
 
-        let window = WindowBuilder::new()
-            .with_title("trace")
-            .with_inner_size(Size::Logical(LogicalSize::new(
+        let mut window_builder = WindowBuilder::new().with_title("trace");
+        window_builder = if app_params.fullscreen {
+            let monitor = event_loop.primary_monitor().unwrap();
+            let size = PhysicalSize::new(renderer_params.width, renderer_params.height);
+            let video_mode = monitor
+                .video_modes()
+                .filter(|m| m.size() == size)
+                .max_by(|a, b| {
+                    let t = |m: &VideoMode| (m.bit_depth(), m.refresh_rate());
+                    Ord::cmp(&t(a), &t(b))
+                })
+                .unwrap();
+            window_builder.with_fullscreen(Some(Fullscreen::Exclusive(video_mode)))
+        } else {
+            window_builder.with_inner_size(Size::Logical(LogicalSize::new(
                 renderer_params.width as f64,
                 renderer_params.height as f64,
             )))
-            .build(&event_loop)
-            .unwrap();
+        };
+        let window = window_builder.build(&event_loop).unwrap();
 
         let mut base = AppBase::new(window, &context_params);
         let app = App::new(&mut base, scene, renderer_params);
