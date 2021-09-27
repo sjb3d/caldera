@@ -1,6 +1,6 @@
 use crate::{command_buffer::*, context::*};
 use arrayvec::ArrayVec;
-use imgui::{im_str, Ui};
+use imgui::Ui;
 use spark::{vk, Device};
 use std::{ffi::CStr, mem};
 
@@ -134,8 +134,8 @@ impl QueryPool {
     }
 
     pub fn ui_timestamp_table(&mut self, ui: &Ui) {
-        ui.checkbox(im_str!("Enabled"), &mut self.is_enabled);
-        ui.columns(2, im_str!("QueryPoolBegin"), true);
+        ui.checkbox("Enabled", &mut self.is_enabled);
+        ui.columns(2, "QueryPoolBegin", true);
         ui.text("Pass");
         ui.next_column();
         ui.text("Time (us)");
@@ -147,7 +147,7 @@ impl QueryPool {
             ui.text(format!("{:>7.1}", time_us));
             ui.next_column();
         }
-        ui.columns(1, im_str!("QueryPoolEnd"), false);
+        ui.columns(1, "QueryPoolEnd", false);
     }
 }
 

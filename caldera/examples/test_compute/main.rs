@@ -1,6 +1,5 @@
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::im_str;
 use imgui::{Drag, Key, Slider};
 use rand::{prelude::*, rngs::SmallRng};
 use rayon::prelude::*;
@@ -137,19 +136,17 @@ impl App {
         if ui.is_key_pressed(Key::Escape) {
             base.exit_requested = true;
         }
-        imgui::Window::new(im_str!("Debug"))
+        imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, || {
                 let mut needs_reset = false;
-                Drag::new(im_str!("Exposure"))
+                Drag::new("Exposure")
                     .speed(0.05f32)
                     .build(&ui, &mut self.log2_exposure_scale);
-                Slider::new(im_str!("Target Pass Count"))
-                    .range(1..=Self::MAX_PASS_COUNT)
-                    .build(&ui, &mut self.target_pass_count);
+                Slider::new("Target Pass Count", 1, Self::MAX_PASS_COUNT).build(&ui, &mut self.target_pass_count);
                 ui.text(format!("Passes: {}", self.next_pass_index));
-                needs_reset |= ui.button(im_str!("Reset"), [0.0, 0.0]);
+                needs_reset |= ui.button("Reset");
 
                 if needs_reset {
                     self.next_pass_index = 0;

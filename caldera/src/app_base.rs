@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use imgui::im_str;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use spark::{vk, Device};
 use std::{slice, time::Instant};
@@ -187,12 +186,12 @@ impl AppSystems {
     }
 
     pub fn draw_ui(&mut self, ui: &imgui::Ui) {
-        imgui::Window::new(im_str!("Memory"))
+        imgui::Window::new("Memory")
             .position([360.0, 5.0], imgui::Condition::FirstUseEver)
             .size([270.0, 310.0], imgui::Condition::FirstUseEver)
             .collapsed(true, imgui::Condition::Once)
             .build(ui, || {
-                ui.columns(2, im_str!("StatsBegin"), true);
+                ui.columns(2, "StatsBegin", true);
                 ui.text("Stat");
                 ui.next_column();
                 ui.text("Value");
@@ -203,9 +202,9 @@ impl AppSystems {
                 self.descriptor_pool.ui_stats_table_rows(ui);
                 self.global_allocator.ui_stats_table_rows(ui, "global memory");
                 self.resource_loader.ui_stats_table_rows(ui);
-                ui.columns(1, im_str!("StatsEnd"), false);
+                ui.columns(1, "StatsEnd", false);
             });
-        imgui::Window::new(im_str!("Timestamps"))
+        imgui::Window::new("Timestamps")
             .position([410.0, 30.0], imgui::Condition::FirstUseEver)
             .size([220.0, 120.0], imgui::Condition::FirstUseEver)
             .build(ui, || {

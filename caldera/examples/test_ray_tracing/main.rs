@@ -5,7 +5,6 @@ use crate::accel::*;
 use crate::loader::*;
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::im_str;
 use imgui::Key;
 use spark::vk;
 use std::{
@@ -102,7 +101,7 @@ impl App {
         if ui.is_key_pressed(Key::Escape) {
             base.exit_requested = true;
         }
-        imgui::Window::new(im_str!("Debug"))
+        imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
@@ -111,16 +110,12 @@ impl App {
                 let render_mode = &mut self.render_mode;
                 let is_rotating = &mut self.is_rotating;
                 move || {
-                    ui.checkbox(im_str!("Rotate"), is_rotating);
+                    ui.checkbox("Rotate", is_rotating);
                     ui.text("Render Mode:");
-                    ui.radio_button(im_str!("Raster"), render_mode, RenderMode::Raster);
-                    ui.radio_button(
-                        im_str!("Raster (Multisampled)"),
-                        render_mode,
-                        RenderMode::RasterMultisampled,
-                    );
+                    ui.radio_button("Raster", render_mode, RenderMode::Raster);
+                    ui.radio_button("Raster (Multisampled)", render_mode, RenderMode::RasterMultisampled);
                     if context.device.extensions.supports_khr_acceleration_structure() {
-                        ui.radio_button(im_str!("Ray Trace"), render_mode, RenderMode::RayTrace);
+                        ui.radio_button("Ray Trace", render_mode, RenderMode::RayTrace);
                     } else {
                         ui.text_disabled("Ray Tracing Not Supported!");
                     }

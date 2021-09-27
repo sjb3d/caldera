@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::{im_str, Key};
+use imgui::Key;
 use primes::{PrimeSet as _, Sieve};
 use rand::{distributions::Uniform, prelude::*, rngs::SmallRng};
 use spark::vk;
@@ -144,7 +144,7 @@ impl App {
         if ui.is_key_pressed(Key::Escape) {
             base.exit_requested = true;
         }
-        imgui::Window::new(im_str!("Debug"))
+        imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {

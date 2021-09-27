@@ -4,7 +4,7 @@ mod loader;
 use crate::{cluster::*, loader::*};
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::{im_str, Key};
+use imgui::Key;
 use spark::vk;
 use std::{
     mem,
@@ -298,7 +298,7 @@ impl App {
         if ui.is_key_pressed(Key::Escape) {
             base.exit_requested = true;
         }
-        imgui::Window::new(im_str!("Debug"))
+        imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
@@ -308,16 +308,16 @@ impl App {
                 let do_backface_culling = &mut self.do_backface_culling;
                 let is_rotating = &mut self.is_rotating;
                 move || {
-                    ui.checkbox(im_str!("Rotate"), is_rotating);
+                    ui.checkbox("Rotate", is_rotating);
                     ui.text("Render Mode:");
-                    ui.radio_button(im_str!("Standard"), render_mode, RenderMode::Standard);
+                    ui.radio_button("Standard", render_mode, RenderMode::Standard);
                     if has_mesh_shader {
-                        ui.radio_button(im_str!("Clusters"), render_mode, RenderMode::Clusters);
+                        ui.radio_button("Clusters", render_mode, RenderMode::Clusters);
                     } else {
                         ui.text_disabled("Mesh Shaders Not Supported!");
                     }
                     ui.text("Cluster Settings:");
-                    ui.checkbox(im_str!("Backface Culling"), do_backface_culling);
+                    ui.checkbox("Backface Culling", do_backface_culling);
                 }
             });
 

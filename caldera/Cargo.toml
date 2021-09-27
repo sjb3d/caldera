@@ -11,10 +11,10 @@ arrayvec = "0.7"
 spark = { git = "https://github.com/sjb3d/spark/" }
 spark-imgui = { git = "https://github.com/sjb3d/spark/" }
 notify = "4.0"
-winit = "0.24"
+winit = "0.25"
 raw-window-handle = "0.3"
-imgui = "0.7"
-imgui-winit-support = "0.7"
+imgui = "0.8"
+imgui-winit-support = "0.8"
 bytemuck = { version = "1.7", features = ["derive", "min_const_generics"] }
 ultraviolet = { version = "0.8.1", features = ["int", "bytemuck"] }
 bitvec = "0.22"

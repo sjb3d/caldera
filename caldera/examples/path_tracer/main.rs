@@ -15,7 +15,7 @@ use crate::renderer::*;
 use crate::scene::*;
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::{im_str, CollapsingHeader, Drag, Key, MouseButton, Slider};
+use imgui::{CollapsingHeader, Drag, Key, MouseButton, Slider};
 use spark::vk;
 use std::{
     ffi::CString,
@@ -225,35 +225,33 @@ impl App {
         if ui.is_mouse_clicked(MouseButton::Right) {
             self.show_debug_ui = !self.show_debug_ui;
         }
-        imgui::Window::new(im_str!("Debug"))
+        imgui::Window::new("Debug")
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, {
                 || {
                     self.renderer.debug_ui(&mut self.progress, &ui);
                     let mut needs_reset = false;
-                    if CollapsingHeader::new(im_str!("Camera")).default_open(true).build(&ui) {
+                    if CollapsingHeader::new("Camera").default_open(true).build(&ui) {
                         let scene = self.scene.deref();
                         ui.text("Cameras:");
                         for camera_ref in scene.camera_ref_iter() {
-                            if ui.small_button(&im_str!("Camera {}", camera_ref.0)) {
+                            if ui.small_button(format!("Camera {}", camera_ref.0)) {
                                 self.view_adjust =
                                     ViewAdjust::new(scene.camera(camera_ref), self.renderer.params.fov_y_override);
                                 needs_reset = true;
                             }
                         }
-                        Drag::new(im_str!("Camera Scale Bias"))
+                        Drag::new("Camera Scale Bias")
                             .speed(0.05)
                             .build(&ui, &mut self.view_adjust.log2_scale);
-                        needs_reset |= Drag::new(im_str!("Camera FOV"))
+                        needs_reset |= Drag::new("Camera FOV")
                             .speed(0.005)
                             .build(&ui, &mut self.view_adjust.fov_y);
-                        needs_reset |= Slider::new(im_str!("Aperture Radius"))
-                            .range(0.0..=0.1)
-                            .build(&ui, &mut self.view_adjust.aperture_radius);
-                        needs_reset |= Slider::new(im_str!("Focus Distance"))
-                            .range(0.0..=10.0)
-                            .build(&ui, &mut self.view_adjust.focus_distance);
+                        needs_reset |=
+                            Slider::new("Aperture Radius", 0.0, 0.1).build(&ui, &mut self.view_adjust.aperture_radius);
+                        needs_reset |=
+                            Slider::new("Focus Distance", 0.0, 10.0).build(&ui, &mut self.view_adjust.focus_distance);
                     }
                     if needs_reset {
                         self.progress.reset();
