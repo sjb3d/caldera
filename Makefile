@@ -40,10 +40,12 @@ INC=\
 
 SRC=\
 	coherent_hashing/clear_hash_table.comp.glsl \
+	coherent_hashing/debug_age_histogram.frag.glsl \
 	coherent_hashing/debug_image.frag.glsl \
 	coherent_hashing/debug_hash_table.frag.glsl \
 	coherent_hashing/debug_quad.vert.glsl \
 	coherent_hashing/generate_image.comp.glsl \
+	coherent_hashing/make_age_histogram.comp.glsl \
 	coherent_hashing/read_hash_table.comp.glsl \
 	coherent_hashing/write_hash_table.comp.glsl \
 	path_tracer/capture.comp.glsl \

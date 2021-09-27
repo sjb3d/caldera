@@ -10,6 +10,5 @@ make && cargo run --release --example coherent_hashing
 
 TODO:
 
-- [ ] Visualise age histogram
 - [ ] Maybe table size controls? (Handle failure properly when set too small)
 - [ ] More README

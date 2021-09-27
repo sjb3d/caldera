@@ -12,7 +12,7 @@ layout(set = 0, binding = 0, scalar) uniform HashTableUniforms {
 layout(set = 0, binding = 1, scalar) restrict readonly buffer Entries {
     uint arr[];
 } g_entries;
-layout(set = 0, binding = 2, scalar) restrict buffer MaxAges {
+layout(set = 0, binding = 2, scalar) restrict readonly buffer MaxAges {
     uint arr[];
 } g_max_ages;
 

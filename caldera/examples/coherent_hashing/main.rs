@@ -42,6 +42,7 @@ descriptor_set_layout!(ClearHashTableDescriptorSetLayout {
     hash_table_info: UniformData<HashTableInfo>,
     entries: StorageBuffer,
     max_ages: StorageBuffer,
+    age_histogram: StorageBuffer,
 });
 
 descriptor_set_layout!(UpdateHashTableDescriptorSetLayout {
@@ -65,6 +66,18 @@ descriptor_set_layout!(DebugHashTableDescriptorSetLayout {
     entries: StorageBuffer,
 });
 
+descriptor_set_layout!(MakeAgeHistogramDescriptorSetLayout {
+    hash_table_info: UniformData<HashTableInfo>,
+    entries: StorageBuffer,
+    age_histogram: StorageBuffer,
+});
+
+descriptor_set_layout!(DebugAgeHistogramDescriptorSetLayout {
+    debug_quad: UniformData<DebugQuadUniforms>,
+    hash_table_info: UniformData<HashTableInfo>,
+    age_histogram: StorageBuffer,
+});
+
 struct App {
     context: SharedContext,
 
@@ -78,6 +91,10 @@ struct App {
     debug_image_pipeline_layout: vk::PipelineLayout,
     debug_hash_table_descriptor_set_layout: DebugHashTableDescriptorSetLayout,
     debug_hash_table_pipeline_layout: vk::PipelineLayout,
+    make_age_histogram_descriptor_set_layout: MakeAgeHistogramDescriptorSetLayout,
+    make_age_histogram_pipeline_layout: vk::PipelineLayout,
+    debug_age_histogram_descriptor_set_layout: DebugAgeHistogramDescriptorSetLayout,
+    debug_age_histogram_pipeline_layout: vk::PipelineLayout,
 
     store_max_age: bool,
     hash_table_offsets: [u32; MAX_AGE],
@@ -112,6 +129,16 @@ impl App {
         let debug_hash_table_pipeline_layout =
             descriptor_set_layout_cache.create_pipeline_layout(debug_hash_table_descriptor_set_layout.0);
 
+        let make_age_histogram_descriptor_set_layout =
+            MakeAgeHistogramDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let make_age_histogram_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(make_age_histogram_descriptor_set_layout.0);
+
+        let debug_age_histogram_descriptor_set_layout =
+            DebugAgeHistogramDescriptorSetLayout::new(descriptor_set_layout_cache);
+        let debug_age_histogram_pipeline_layout =
+            descriptor_set_layout_cache.create_pipeline_layout(debug_age_histogram_descriptor_set_layout.0);
+
         let mut primes = Primes::new();
         let hash_table_offsets = {
             let mut rng = SmallRng::seed_from_u64(0);
@@ -138,6 +165,10 @@ impl App {
             debug_image_pipeline_layout,
             debug_hash_table_descriptor_set_layout,
             debug_hash_table_pipeline_layout,
+            make_age_histogram_descriptor_set_layout,
+            make_age_histogram_pipeline_layout,
+            debug_age_histogram_descriptor_set_layout,
+            debug_age_histogram_pipeline_layout,
             store_max_age: true,
             hash_table_offsets,
             counter: 0,
@@ -200,6 +231,7 @@ impl App {
         let buffer_desc = BufferDesc::new((entry_count as usize) * mem::size_of::<u32>());
         let entries_buffer = schedule.describe_buffer(&buffer_desc);
         let max_ages_buffer = schedule.describe_buffer(&buffer_desc);
+        let age_histogram_buffer = schedule.describe_buffer(&BufferDesc::new(MAX_AGE * mem::size_of::<u32>()));
 
         schedule.add_compute(
             command_name!("generate_image"),
@@ -236,6 +268,7 @@ impl App {
             |params| {
                 params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
                 params.add_buffer(max_ages_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
+                params.add_buffer(age_histogram_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
             },
             {
                 let context = base.context.as_ref();
@@ -246,12 +279,14 @@ impl App {
                 move |params, cmd| {
                     let entries_buffer = params.get_buffer(entries_buffer);
                     let max_ages_buffer = params.get_buffer(max_ages_buffer);
+                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer);
 
                     let descriptor_set = clear_hash_table_descriptor_set_layout.write(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
                         entries_buffer,
                         max_ages_buffer,
+                        age_histogram_buffer,
                     );
 
                     dispatch_helper(
@@ -309,6 +344,43 @@ impl App {
         );
 
         schedule.add_compute(
+            command_name!("make_age_histogram"),
+            |params| {
+                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
+                params.add_buffer(age_histogram_buffer, BufferUsage::COMPUTE_STORAGE_ATOMIC);
+            },
+            {
+                let context = base.context.as_ref();
+                let descriptor_pool = &base.systems.descriptor_pool;
+                let make_age_histogram_descriptor_set_layout = &self.make_age_histogram_descriptor_set_layout;
+                let make_age_histogram_pipeline_layout = self.make_age_histogram_pipeline_layout;
+                let pipeline_cache = &base.systems.pipeline_cache;
+                move |params, cmd| {
+                    let entries_buffer = params.get_buffer(entries_buffer);
+                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer);
+
+                    let descriptor_set = make_age_histogram_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut HashTableInfo| *buf = hash_table_info,
+                        entries_buffer,
+                        age_histogram_buffer,
+                    );
+
+                    dispatch_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        make_age_histogram_pipeline_layout,
+                        "coherent_hashing/make_age_histogram.comp.spv",
+                        &[],
+                        descriptor_set,
+                        UVec2::new(entry_count.div_round_up(64), 1),
+                    );
+                }
+            },
+        );
+
+        schedule.add_compute(
             command_name!("read_hash_table"),
             |params| {
                 params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
@@ -353,7 +425,8 @@ impl App {
             main_render_state,
             |params| {
                 params.add_image(output_image, ImageUsage::FRAGMENT_STORAGE_READ);
-                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
+                params.add_buffer(entries_buffer, BufferUsage::FRAGMENT_STORAGE_READ);
+                params.add_buffer(age_histogram_buffer, BufferUsage::FRAGMENT_STORAGE_READ);
             },
             {
                 let context = base.context.as_ref();
@@ -362,13 +435,16 @@ impl App {
                 let debug_image_pipeline_layout = self.debug_image_pipeline_layout;
                 let debug_hash_table_descriptor_set_layout = &self.debug_hash_table_descriptor_set_layout;
                 let debug_hash_table_pipeline_layout = self.debug_hash_table_pipeline_layout;
+                let debug_age_histogram_descriptor_set_layout = &self.debug_age_histogram_descriptor_set_layout;
+                let debug_age_histogram_pipeline_layout = self.debug_age_histogram_pipeline_layout;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
-                    let entries_buffer = params.get_buffer(entries_buffer);
                     let output_image_view = params.get_image_view(output_image);
+                    let entries_buffer = params.get_buffer(entries_buffer);
+                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer);
 
                     set_viewport_helper(&context.device, cmd, swap_size);
                     let ortho_from_screen =
@@ -420,6 +496,31 @@ impl App {
                         &state,
                         "coherent_hashing/debug_quad.vert.spv",
                         "coherent_hashing/debug_hash_table.frag.spv",
+                        descriptor_set,
+                        4,
+                    );
+
+                    let screen_from_histogram = Scale2Offset2::new(Vec2::new(160.0, 80.0), Vec2::new(1184.0, 10.0));
+                    let descriptor_set = debug_age_histogram_descriptor_set_layout.write(
+                        descriptor_pool,
+                        |buf: &mut DebugQuadUniforms| {
+                            *buf = DebugQuadUniforms {
+                                ortho_from_quad: ortho_from_screen * screen_from_histogram,
+                            };
+                        },
+                        |buf: &mut HashTableInfo| {
+                            *buf = hash_table_info;
+                        },
+                        age_histogram_buffer,
+                    );
+                    draw_helper(
+                        &context.device,
+                        pipeline_cache,
+                        cmd,
+                        debug_age_histogram_pipeline_layout,
+                        &state,
+                        "coherent_hashing/debug_quad.vert.spv",
+                        "coherent_hashing/debug_age_histogram.frag.spv",
                         descriptor_set,
                         4,
                     );

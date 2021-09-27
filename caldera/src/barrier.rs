@@ -184,6 +184,13 @@ buffer_usage_impl! {
         AccessCategory::READ
     ),
     (
+        FRAGMENT_STORAGE_READ,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        vk::PipelineStageFlags::FRAGMENT_SHADER,
+        vk::AccessFlags::SHADER_READ,
+        AccessCategory::READ
+    ),
+    (
         ACCELERATION_STRUCTURE_BUILD_INPUT,
         vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
