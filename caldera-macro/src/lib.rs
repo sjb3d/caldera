@@ -12,7 +12,9 @@ use syn::{
 };
 
 mod kw {
+    syn::custom_keyword!(Sampler);
     syn::custom_keyword!(SampledImage);
+    syn::custom_keyword!(CombinedImageSampler);
     syn::custom_keyword!(StorageImage);
     syn::custom_keyword!(UniformData);
     syn::custom_keyword!(StorageBuffer);
@@ -20,7 +22,9 @@ mod kw {
 }
 
 enum BindingType {
+    Sampler,
     SampledImage,
+    CombinedImageSampler,
     StorageImage,
     UniformData { ty: Ident },
     StorageBuffer,
@@ -42,9 +46,15 @@ struct Layout {
 impl Parse for BindingType {
     fn parse(input: ParseStream) -> Result<Self> {
         let lookahead = input.lookahead1();
-        if lookahead.peek(kw::SampledImage) {
+        if lookahead.peek(kw::Sampler) {
+            input.parse::<kw::Sampler>()?;
+            Ok(BindingType::Sampler)
+        } else if lookahead.peek(kw::SampledImage) {
             input.parse::<kw::SampledImage>()?;
             Ok(BindingType::SampledImage)
+        } else if lookahead.peek(kw::CombinedImageSampler) {
+            input.parse::<kw::CombinedImageSampler>()?;
+            Ok(BindingType::CombinedImageSampler)
         } else if lookahead.peek(kw::StorageImage) {
             input.parse::<kw::StorageImage>()?;
             Ok(BindingType::StorageImage)
@@ -112,37 +122,51 @@ impl Parse for Layout {
 }
 
 impl Binding {
-    fn get_binding(&self) -> (Option<TokenStream2>, TokenStream2) {
+    fn get_binding(&self) -> TokenStream2 {
         match self.ty {
+            BindingType::Sampler => {
+                quote!(DescriptorSetLayoutBinding::Sampler)
+            }
             BindingType::SampledImage => {
-                let sampler = format_ident!("{}_sampler", self.name);
-                (
-                    Some(quote!(#sampler: vk::Sampler)),
-                    quote!(DescriptorSetLayoutBinding::SampledImage { sampler: #sampler }),
-                )
+                quote!(DescriptorSetLayoutBinding::SampledImage)
+            }
+            BindingType::CombinedImageSampler => {
+                quote!(DescriptorSetLayoutBinding::CombinedImageSampler)
             }
             BindingType::StorageImage => {
                 let count = self.array.unwrap_or(1) as u32;
-                (None, quote!(DescriptorSetLayoutBinding::StorageImage { count: #count }))
+                quote!(DescriptorSetLayoutBinding::StorageImage { count: #count })
             }
-            BindingType::UniformData { ref ty } => (
-                None,
-                quote!(DescriptorSetLayoutBinding::UniformData {
-                    size: ::std::mem::size_of::<#ty>() as u32,
-                }),
-            ),
-            BindingType::StorageBuffer => (None, quote!(DescriptorSetLayoutBinding::StorageBuffer)),
-            BindingType::AccelerationStructure => (None, quote!(DescriptorSetLayoutBinding::AccelerationStructure)),
+            BindingType::UniformData { ref ty } => quote!(DescriptorSetLayoutBinding::UniformData {
+                size: ::std::mem::size_of::<#ty>() as u32,
+            }),
+            BindingType::StorageBuffer => quote!(DescriptorSetLayoutBinding::StorageBuffer),
+            BindingType::AccelerationStructure => quote!(DescriptorSetLayoutBinding::AccelerationStructure),
         }
     }
 
     fn get_data(&self) -> (TokenStream2, TokenStream2) {
         match self.ty {
+            BindingType::Sampler => {
+                let sampler = format_ident!("{}_sampler", self.name);
+                (
+                    quote!(#sampler: vk::Sampler),
+                    quote!(DescriptorSetBindingData::Sampler { sampler: #sampler }),
+                )
+            }
             BindingType::SampledImage => {
                 let image_view = format_ident!("{}_image_view", self.name);
                 (
                     quote!(#image_view: vk::ImageView),
                     quote!(DescriptorSetBindingData::SampledImage { image_view: #image_view }),
+                )
+            }
+            BindingType::CombinedImageSampler => {
+                let image_view = format_ident!("{}_image_view", self.name);
+                let sampler = format_ident!("{}_sampler", self.name);
+                (
+                    quote!(#image_view: vk::ImageView, #sampler: vk::Sampler),
+                    quote!(DescriptorSetBindingData::CombinedImageSampler { image_view: #image_view, sampler: #sampler }),
                 )
             }
             BindingType::StorageImage => {
@@ -202,8 +226,7 @@ pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
         bindings,
     } = parse_macro_input!(input as Layout);
 
-    let (binding_args, binding_entries): (Vec<_>, Vec<_>) = bindings.iter().map(Binding::get_binding).unzip();
-    let binding_args: Vec<_> = binding_args.iter().filter_map(|a| a.as_ref()).collect();
+    let binding_entries: Vec<_> = bindings.iter().map(Binding::get_binding).collect();
     let (data_args, data_entries): (Vec<_>, Vec<_>) = bindings.iter().map(Binding::get_data).unzip();
 
     quote!(
@@ -211,7 +234,7 @@ pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
         #visibility struct #name(pub vk::DescriptorSetLayout);
 
         impl #name {
-            pub fn new(descriptor_set_layout_cache: &mut DescriptorSetLayoutCache, #(#binding_args),*) -> Self {
+            pub fn new(descriptor_set_layout_cache: &mut DescriptorSetLayoutCache) -> Self {
                 let bindings = &[#(#binding_entries),*];
                 Self(descriptor_set_layout_cache.create_descriptor_set_layout(bindings))
             }

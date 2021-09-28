@@ -158,7 +158,9 @@ impl Drop for UniformDataPool {
 
 #[derive(Debug, Clone, Copy)]
 pub enum DescriptorSetLayoutBinding {
-    SampledImage { sampler: vk::Sampler },
+    Sampler,
+    SampledImage,
+    CombinedImageSampler,
     StorageImage { count: u32 },
     UniformData { size: u32 },
     StorageBuffer,
@@ -166,8 +168,15 @@ pub enum DescriptorSetLayoutBinding {
 }
 
 pub enum DescriptorSetBindingData<'a> {
+    Sampler {
+        sampler: vk::Sampler,
+    },
     SampledImage {
         image_view: vk::ImageView,
+    },
+    CombinedImageSampler {
+        image_view: vk::ImageView,
+        sampler: vk::Sampler,
     },
     StorageImage {
         image_views: &'a [vk::ImageView],
@@ -207,13 +216,31 @@ impl DescriptorSetLayoutCache {
         let mut bindings_vk = Vec::new();
         for (i, binding) in bindings.iter().enumerate() {
             match binding {
-                DescriptorSetLayoutBinding::SampledImage { sampler } => {
+                DescriptorSetLayoutBinding::Sampler => {
+                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                        binding: i as u32,
+                        descriptor_type: vk::DescriptorType::SAMPLER,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::ALL,
+                        ..Default::default()
+                    });
+                }
+                DescriptorSetLayoutBinding::SampledImage => {
+                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                        binding: i as u32,
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::ALL,
+                        ..Default::default()
+                    });
+                }
+                DescriptorSetLayoutBinding::CombinedImageSampler => {
                     bindings_vk.push(vk::DescriptorSetLayoutBinding {
                         binding: i as u32,
                         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                         descriptor_count: 1,
                         stage_flags: vk::ShaderStageFlags::ALL,
-                        p_immutable_samplers: sampler,
+                        ..Default::default()
                     });
                 }
                 DescriptorSetLayoutBinding::StorageImage { count } => {
@@ -325,6 +352,14 @@ impl DescriptorPool {
         let pools = {
             let mut descriptor_pool_sizes = Vec::new();
             descriptor_pool_sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
+            });
+            descriptor_pool_sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
+            });
+            descriptor_pool_sizes.push(vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
             });
@@ -427,9 +462,41 @@ impl DescriptorPool {
 
         for (i, data) in data.iter().enumerate() {
             match data {
+                DescriptorSetBindingData::Sampler { sampler } => {
+                    image_info.push(vk::DescriptorImageInfo {
+                        sampler: Some(*sampler),
+                        image_view: None,
+                        image_layout: vk::ImageLayout::UNDEFINED,
+                    });
+
+                    writes.push(vk::WriteDescriptorSet {
+                        dst_set: Some(descriptor_set),
+                        dst_binding: i as u32,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::SAMPLER,
+                        p_image_info: image_info.last().unwrap(),
+                        ..Default::default()
+                    });
+                }
                 DescriptorSetBindingData::SampledImage { image_view } => {
                     image_info.push(vk::DescriptorImageInfo {
                         sampler: None,
+                        image_view: Some(*image_view),
+                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    });
+
+                    writes.push(vk::WriteDescriptorSet {
+                        dst_set: Some(descriptor_set),
+                        dst_binding: i as u32,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                        p_image_info: image_info.last().unwrap(),
+                        ..Default::default()
+                    });
+                }
+                DescriptorSetBindingData::CombinedImageSampler { image_view, sampler } => {
+                    image_info.push(vk::DescriptorImageInfo {
+                        sampler: Some(*sampler),
                         image_view: Some(*image_view),
                         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                     });

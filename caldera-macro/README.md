@@ -7,7 +7,9 @@ This crate implements the macro `descriptor_set_layout`, which can be used to de
 The struct members can use:
 
 - `UniformData<T>` for a uniform buffer of type `T`
+- `Sampler` for a sampler type
 - `SampledImage` for sampled image views
+- `CombinedImageSampler` to combine both of the above
 - `StorageImage` or `[StorageImage; N]` for storage image views
 - `StorageBuffer` for buffers
 - `AccelerationStructure` for acceleration structure handles

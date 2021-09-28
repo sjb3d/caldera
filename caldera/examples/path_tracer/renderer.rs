@@ -206,12 +206,12 @@ descriptor_set_layout!(PathTraceDescriptorSetLayout {
     accel: AccelerationStructure,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
-    illuminants: SampledImage,
-    conductors: SampledImage,
-    smits_table: SampledImage,
-    wavelength_inv_cdf: SampledImage,
-    wavelength_pdf: SampledImage,
-    xyz_matching: SampledImage,
+    illuminants: CombinedImageSampler,
+    conductors: CombinedImageSampler,
+    smits_table: CombinedImageSampler,
+    wavelength_inv_cdf: CombinedImageSampler,
+    wavelength_pdf: CombinedImageSampler,
+    xyz_matching: CombinedImageSampler,
     result: [StorageImage; 3],
 });
 
@@ -1086,15 +1086,7 @@ impl Renderer {
             unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
         };
 
-        let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(
-            descriptor_set_layout_cache,
-            clamp_linear_sampler, // illuminants
-            clamp_linear_sampler, // conductors
-            clamp_point_sampler,  // smits_table
-            clamp_linear_sampler, // wavelength_inv_cdf
-            clamp_point_sampler,  // wavelength_pdf
-            clamp_linear_sampler, // xyz_matching
-        );
+        let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache);
         let texture_binding_set = TextureBindingSet::new(context, texture_images);
         let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_multi_layout(&[
             path_trace_descriptor_set_layout.0,
@@ -2164,6 +2156,8 @@ impl Renderer {
         let wavelength_inv_cdf_image_view = resource_loader.get_image_view(self.wavelength_inv_cdf_image)?;
         let wavelength_pdf_image_view = resource_loader.get_image_view(self.wavelength_pdf_image)?;
         let xyz_matching_image_view = resource_loader.get_image_view(self.xyz_matching_image)?;
+        let clamp_point_sampler = self.clamp_point_sampler;
+        let clamp_linear_sampler = self.clamp_linear_sampler;
 
         // do a pass
         if !progress.done(&self.params) {
@@ -2273,11 +2267,17 @@ impl Renderer {
                             pmj_samples_image_view,
                             sobol_samples_image_view,
                             illuminants_image_view,
+                            clamp_linear_sampler,
                             conductors_image_view,
+                            clamp_linear_sampler,
                             smits_table_image_view,
+                            clamp_point_sampler,
                             wavelength_inv_cdf_image_view,
+                            clamp_linear_sampler,
                             wavelength_pdf_image_view,
+                            clamp_point_sampler,
                             xyz_matching_image_view,
+                            clamp_linear_sampler,
                             &temp_image_views,
                         );
 
