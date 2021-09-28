@@ -3,10 +3,7 @@ use crate::context::SharedContext;
 use arrayvec::ArrayVec;
 use imgui::{ProgressBar, Ui};
 use spark::{vk, Builder};
-use std::{
-    slice,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{cell::Cell, slice};
 
 fn align_up(x: u32, alignment: u32) -> u32 {
     (x + alignment - 1) & !(alignment - 1)
@@ -21,7 +18,7 @@ struct UniformDataPool {
     mapping: *mut u8,
     buffers: [vk::Buffer; Self::COUNT],
     buffer_index: usize,
-    next_offset: AtomicUsize,
+    next_offset: Cell<u32>,
     last_usage: u32,
 }
 
@@ -86,18 +83,18 @@ impl UniformDataPool {
             mapping: mapping as *mut _,
             buffers,
             buffer_index: 0,
-            next_offset: AtomicUsize::new(0),
+            next_offset: Cell::new(0),
             last_usage: 0,
         }
     }
 
     pub fn begin_frame(&mut self) {
         self.buffer_index = (self.buffer_index + 1) % Self::COUNT;
-        self.next_offset = AtomicUsize::new(0);
+        self.next_offset = Cell::new(0);
     }
 
     pub fn end_frame(&mut self) {
-        self.last_usage = self.next_offset.load(Ordering::Acquire) as u32;
+        self.last_usage = self.next_offset.get();
         if self.last_usage == 0 {
             return;
         }
@@ -118,8 +115,9 @@ impl UniformDataPool {
     pub fn alloc(&self, size: u32, align: u32) -> Option<(&mut [u8], u32)> {
         let aligned_size = align_up(size, self.min_alignment.max(align));
 
-        let base = self.next_offset.fetch_add(aligned_size as usize, Ordering::SeqCst) as u32;
+        let base = self.next_offset.get();
         let end = base + aligned_size;
+        self.next_offset.set(end);
 
         if end <= self.size_per_frame {
             Some((
