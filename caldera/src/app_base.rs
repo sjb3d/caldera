@@ -32,31 +32,6 @@ pub fn dispatch_helper(
     device: &Device,
     pipeline_cache: &PipelineCache,
     cmd: vk::CommandBuffer,
-    pipeline_layout: vk::PipelineLayout,
-    shader_name: &str,
-    constants: &[SpecializationConstant],
-    descriptor_set: vk::DescriptorSet,
-    grid_size: UVec2,
-) {
-    let pipeline = pipeline_cache.get_compute(shader_name, constants, pipeline_layout);
-    unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
-        device.cmd_bind_descriptor_sets(
-            cmd,
-            vk::PipelineBindPoint::COMPUTE,
-            pipeline_layout,
-            0,
-            slice::from_ref(&descriptor_set),
-            &[],
-        );
-        device.cmd_dispatch(cmd, grid_size.x, grid_size.y, 1);
-    }
-}
-
-pub fn dispatch_helper2(
-    device: &Device,
-    pipeline_cache: &PipelineCache,
-    cmd: vk::CommandBuffer,
     shader_name: &str,
     constants: &[SpecializationConstant],
     descriptor_set: DescriptorSet,
@@ -80,38 +55,6 @@ pub fn dispatch_helper2(
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_helper(
-    device: &Device,
-    pipeline_cache: &PipelineCache,
-    cmd: vk::CommandBuffer,
-    pipeline_layout: vk::PipelineLayout,
-    state: &GraphicsPipelineState,
-    vertex_shader_name: &str,
-    fragment_shader_name: &str,
-    descriptor_set: vk::DescriptorSet,
-    vertex_count: u32,
-) {
-    let pipeline = pipeline_cache.get_graphics(
-        VertexShaderDesc::standard(vertex_shader_name),
-        fragment_shader_name,
-        pipeline_layout,
-        state,
-    );
-    unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-        device.cmd_bind_descriptor_sets(
-            cmd,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline_layout,
-            0,
-            slice::from_ref(&descriptor_set),
-            &[],
-        );
-        device.cmd_draw(cmd, vertex_count, 1, 0, 0);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn draw_helper2(
     device: &Device,
     pipeline_cache: &PipelineCache,
     cmd: vk::CommandBuffer,
@@ -148,7 +91,6 @@ pub struct AppDisplay {
 }
 
 pub struct AppSystems {
-    pub descriptor_set_layout_cache: DescriptorSetLayoutCache,
     pub descriptor_pool: DescriptorPool,
     pub pipeline_cache: PipelineCache,
     pub command_buffer_pool: CommandBufferPool,
@@ -207,7 +149,6 @@ impl AppDisplay {
 
 impl AppSystems {
     pub fn new(context: &SharedContext) -> Self {
-        let descriptor_set_layout_cache = DescriptorSetLayoutCache::new(context);
         let descriptor_pool = DescriptorPool::new(context);
         let pipeline_cache = PipelineCache::new(context, "spv/bin");
         let command_buffer_pool = CommandBufferPool::new(context);
@@ -219,7 +160,6 @@ impl AppSystems {
         let render_graph = RenderGraph::new(context, CHUNK_SIZE, CHUNK_SIZE);
 
         Self {
-            descriptor_set_layout_cache,
             descriptor_pool,
             pipeline_cache,
             command_buffer_pool,

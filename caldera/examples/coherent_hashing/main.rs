@@ -232,7 +232,7 @@ impl App {
                         input_image_view,
                     );
 
-                    dispatch_helper2(
+                    dispatch_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
@@ -269,7 +269,7 @@ impl App {
                         age_histogram_buffer,
                     );
 
-                    dispatch_helper2(
+                    dispatch_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
@@ -306,7 +306,7 @@ impl App {
                         input_image_view,
                     );
 
-                    dispatch_helper2(
+                    dispatch_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
@@ -340,7 +340,7 @@ impl App {
                         age_histogram_buffer,
                     );
 
-                    dispatch_helper2(
+                    dispatch_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
@@ -377,7 +377,7 @@ impl App {
                         output_image_view,
                     );
 
-                    dispatch_helper2(
+                    dispatch_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
@@ -430,7 +430,7 @@ impl App {
                     );
                     let state = GraphicsPipelineState::new(render_pass, main_sample_count)
                         .with_topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
-                    draw_helper2(
+                    draw_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
@@ -454,7 +454,7 @@ impl App {
                         },
                         entries_buffer,
                     );
-                    draw_helper2(
+                    draw_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
@@ -478,7 +478,7 @@ impl App {
                         },
                         age_histogram_buffer,
                     );
-                    draw_helper2(
+                    draw_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,

@@ -230,21 +230,9 @@ pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
     let (data_args, data_entries): (Vec<_>, Vec<_>) = bindings.iter().map(Binding::get_data).unzip();
 
     quote!(
-        #[repr(transparent)]
-        #visibility struct #name(pub vk::DescriptorSetLayout);
+        #visibility struct #name {}
 
         impl #name {
-            pub fn new(descriptor_set_layout_cache: &mut DescriptorSetLayoutCache) -> Self {
-                let bindings = &[#(#binding_entries),*];
-                Self(descriptor_set_layout_cache.create_descriptor_set_layout(bindings))
-            }
-
-            #[allow(clippy::too_many_arguments)]
-            pub fn write(&self, descriptor_pool: &DescriptorPool, #(#data_args),*) -> vk::DescriptorSet {
-                let data = &[#(#data_entries),*];
-                descriptor_pool.create_descriptor_set(self.0, data)
-            }
-
             const BINDINGS: &'static [DescriptorSetLayoutBinding] = &[#(#binding_entries),*];
 
             pub fn layout(descriptor_pool: &DescriptorPool) -> vk::DescriptorSetLayout {

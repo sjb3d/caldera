@@ -2354,7 +2354,7 @@ impl Renderer {
                             result_image_view,
                         );
 
-                        dispatch_helper2(
+                        dispatch_helper(
                             &context.device,
                             pipeline_cache,
                             cmd,

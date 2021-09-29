@@ -27,11 +27,11 @@ struct RasterData {
     proj_from_world: Mat4,
 }
 
-descriptor_set_layout!(RasterDescriptorSetLayout {
+descriptor_set_layout!(RasterDescriptorSet {
     test: UniformData<RasterData>,
 });
 
-descriptor_set_layout!(CopyDescriptorSetLayout { ids: StorageImage });
+descriptor_set_layout!(CopyDescriptorSet { ids: StorageImage });
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RenderMode {
@@ -43,12 +43,6 @@ enum RenderMode {
 struct App {
     context: SharedContext,
 
-    raster_descriptor_set_layout: RasterDescriptorSetLayout,
-    raster_pipeline_layout: vk::PipelineLayout,
-
-    copy_descriptor_set_layout: CopyDescriptorSetLayout,
-    copy_pipeline_layout: vk::PipelineLayout,
-
     mesh_info: Arc<Mutex<MeshInfo>>,
     accel_info: Option<AccelInfo>,
     render_mode: RenderMode,
@@ -59,13 +53,6 @@ struct App {
 impl App {
     fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
         let context = SharedContext::clone(&base.context);
-        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
-
-        let raster_descriptor_set_layout = RasterDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let raster_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(raster_descriptor_set_layout.0);
-
-        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
 
         let has_ray_tracing = context.device.extensions.supports_khr_acceleration_structure();
         let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
@@ -80,10 +67,6 @@ impl App {
 
         Self {
             context,
-            raster_descriptor_set_layout,
-            raster_pipeline_layout,
-            copy_descriptor_set_layout,
-            copy_pipeline_layout,
             mesh_info,
             accel_info: None,
             render_mode: if has_ray_tracing {
@@ -233,10 +216,6 @@ impl App {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
-                let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
-                let copy_pipeline_layout = self.copy_pipeline_layout;
-                let raster_descriptor_set_layout = &self.raster_descriptor_set_layout;
-                let raster_pipeline_layout = self.raster_pipeline_layout;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
@@ -246,7 +225,7 @@ impl App {
                     if let Some(trace_image) = trace_image {
                         let trace_image_view = params.get_image_view(trace_image);
 
-                        let copy_descriptor_set = copy_descriptor_set_layout.write(descriptor_pool, trace_image_view);
+                        let copy_descriptor_set = CopyDescriptorSet::create(descriptor_pool, trace_image_view);
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
 
@@ -254,7 +233,6 @@ impl App {
                             &context.device,
                             pipeline_cache,
                             cmd,
-                            copy_pipeline_layout,
                             &state,
                             "test_ray_tracing/copy.vert.spv",
                             "test_ray_tracing/copy.frag.spv",
@@ -262,7 +240,7 @@ impl App {
                             3,
                         );
                     } else if let Some(mesh_buffers) = mesh_buffers {
-                        let raster_descriptor_set = raster_descriptor_set_layout.write(descriptor_pool, |buf| {
+                        let raster_descriptor_set = RasterDescriptorSet::create(descriptor_pool, |buf| {
                             *buf = RasterData {
                                 proj_from_world: proj_from_view * view_from_world.into_homogeneous_matrix(),
                             };
@@ -319,6 +297,8 @@ impl App {
                                 },
                             ],
                         );
+                        let raster_pipeline_layout =
+                            pipeline_cache.get_pipeline_layout(slice::from_ref(&raster_descriptor_set.layout));
                         let pipeline = pipeline_cache.get_graphics(
                             VertexShaderDesc::standard("test_ray_tracing/raster.vert.spv"),
                             "test_ray_tracing/raster.frag.spv",
@@ -334,7 +314,7 @@ impl App {
                                 vk::PipelineBindPoint::GRAPHICS,
                                 raster_pipeline_layout,
                                 0,
-                                slice::from_ref(&raster_descriptor_set),
+                                slice::from_ref(&raster_descriptor_set.set),
                                 &[],
                             );
                             context.device.cmd_bind_vertex_buffers(

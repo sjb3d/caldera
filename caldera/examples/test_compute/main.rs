@@ -196,7 +196,7 @@ impl App {
                             sample_image_view,
                         );
 
-                        dispatch_helper2(
+                        dispatch_helper(
                             &context.device,
                             pipeline_cache,
                             cmd,
@@ -264,7 +264,7 @@ impl App {
                         },
                         &trace_image_views,
                     );
-                    draw_helper2(
+                    draw_helper(
                         &context.device,
                         pipeline_cache,
                         cmd,
