@@ -45,7 +45,7 @@ struct StandardUniforms {
     view_from_local: PackedTransform,
 }
 
-descriptor_set_layout!(StandardDescriptorSet {
+descriptor_set!(StandardDescriptorSet {
     standard_uniforms: UniformData<StandardUniforms>,
 });
 
@@ -71,7 +71,7 @@ struct ClusterUniforms {
     task_count: u32,
 }
 
-descriptor_set_layout!(ClusterDescriptorSet {
+descriptor_set!(ClusterDescriptorSet {
     cluster_uniforms: UniformData<ClusterUniforms>,
     position: StorageBuffer,
     normal: StorageBuffer,

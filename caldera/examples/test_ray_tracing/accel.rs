@@ -18,7 +18,7 @@ struct HitRecordData {
     attribute_buffer_address: u64,
 }
 
-descriptor_set_layout!(TraceDescriptorSet {
+descriptor_set!(TraceDescriptorSet {
     trace: UniformData<TraceData>,
     accel: AccelerationStructure,
     output: StorageImage,

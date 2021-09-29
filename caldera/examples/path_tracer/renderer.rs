@@ -201,7 +201,7 @@ struct LightAliasEntry {
     indices: u32,
 }
 
-descriptor_set_layout!(PathTraceDescriptorSet {
+descriptor_set!(PathTraceDescriptorSet {
     path_trace_uniforms: UniformData<PathTraceUniforms>,
     accel: AccelerationStructure,
     pmj_samples: StorageImage,
@@ -711,7 +711,7 @@ struct FilterData {
     filter_type: u32,
 }
 
-descriptor_set_layout!(FilterDescriptorSet {
+descriptor_set!(FilterDescriptorSet {
     data: UniformData<FilterData>,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,

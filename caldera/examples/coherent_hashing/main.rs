@@ -51,19 +51,19 @@ struct GenerateImageUniforms {
     circles: [CircleParams; CIRCLE_COUNT],
 }
 
-descriptor_set_layout!(GenerateImageDescriptorSet {
+descriptor_set!(GenerateImageDescriptorSet {
     uniforms: UniformData<GenerateImageUniforms>,
     image: StorageImage
 });
 
-descriptor_set_layout!(ClearHashTableDescriptorSet {
+descriptor_set!(ClearHashTableDescriptorSet {
     hash_table_info: UniformData<HashTableInfo>,
     entries: StorageBuffer,
     max_ages: StorageBuffer,
     age_histogram: StorageBuffer,
 });
 
-descriptor_set_layout!(UpdateHashTableDescriptorSet {
+descriptor_set!(UpdateHashTableDescriptorSet {
     hash_table_info: UniformData<HashTableInfo>,
     entries: StorageBuffer,
     max_ages: StorageBuffer,
@@ -76,25 +76,25 @@ struct DebugQuadUniforms {
     ortho_from_quad: Scale2Offset2,
 }
 
-descriptor_set_layout!(DebugImageDescriptorSet {
+descriptor_set!(DebugImageDescriptorSet {
     debug_quad: UniformData<DebugQuadUniforms>,
     input_image: StorageImage,
     output_image: StorageImage
 });
 
-descriptor_set_layout!(DebugHashTableDescriptorSet {
+descriptor_set!(DebugHashTableDescriptorSet {
     debug_quad: UniformData<DebugQuadUniforms>,
     hash_table_info: UniformData<HashTableInfo>,
     entries: StorageBuffer,
 });
 
-descriptor_set_layout!(MakeAgeHistogramDescriptorSet {
+descriptor_set!(MakeAgeHistogramDescriptorSet {
     hash_table_info: UniformData<HashTableInfo>,
     entries: StorageBuffer,
     age_histogram: StorageBuffer,
 });
 
-descriptor_set_layout!(DebugAgeHistogramDescriptorSet {
+descriptor_set!(DebugAgeHistogramDescriptorSet {
     debug_quad: UniformData<DebugQuadUniforms>,
     hash_table_info: UniformData<HashTableInfo>,
     age_histogram: StorageBuffer,

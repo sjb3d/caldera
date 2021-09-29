@@ -21,7 +21,7 @@ struct TraceData {
     pass_index: u32,
 }
 
-descriptor_set_layout!(TraceDescriptorSet {
+descriptor_set!(TraceDescriptorSet {
     trace: UniformData<TraceData>,
     result: [StorageImage; 3],
     samples: StorageImage,
@@ -35,7 +35,7 @@ struct CopyData {
     trace_scale: f32,
 }
 
-descriptor_set_layout!(CopyDescriptorSet {
+descriptor_set!(CopyDescriptorSet {
     copy: UniformData<CopyData>,
     image: [StorageImage; 3],
 });

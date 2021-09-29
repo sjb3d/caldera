@@ -43,7 +43,7 @@ struct CopyData {
     tone_map_method: u32,
 }
 
-descriptor_set_layout!(CopyDescriptorSet {
+descriptor_set!(CopyDescriptorSet {
     data: UniformData<CopyData>,
     result: StorageImage,
 });
@@ -58,7 +58,7 @@ struct CaptureData {
     tone_map_method: u32,
 }
 
-descriptor_set_layout!(CaptureDescriptorSet {
+descriptor_set!(CaptureDescriptorSet {
     data: UniformData<CaptureData>,
     output: StorageBuffer,
     input: StorageImage,

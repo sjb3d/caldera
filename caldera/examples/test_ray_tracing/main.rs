@@ -27,11 +27,11 @@ struct RasterData {
     proj_from_world: Mat4,
 }
 
-descriptor_set_layout!(RasterDescriptorSet {
+descriptor_set!(RasterDescriptorSet {
     test: UniformData<RasterData>,
 });
 
-descriptor_set_layout!(CopyDescriptorSet { ids: StorageImage });
+descriptor_set!(CopyDescriptorSet { ids: StorageImage });
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RenderMode {

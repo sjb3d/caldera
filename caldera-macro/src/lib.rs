@@ -219,7 +219,7 @@ impl Binding {
 }
 
 #[proc_macro]
-pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
+pub fn descriptor_set(input: TokenStream) -> TokenStream {
     let Layout {
         visibility,
         name,
