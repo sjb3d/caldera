@@ -172,7 +172,7 @@ impl App {
             if base.context.device.extensions.supports_khr_acceleration_structure() && self.accel_info.is_none() {
                 self.accel_info = Some(AccelInfo::new(
                     &base.context,
-                    &mut base.systems.descriptor_set_layout_cache,
+                    &base.systems.descriptor_pool,
                     &base.systems.pipeline_cache,
                     &mut base.systems.resource_loader,
                     &mesh_info,

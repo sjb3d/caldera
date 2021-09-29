@@ -21,7 +21,7 @@ struct TraceData {
     pass_index: u32,
 }
 
-descriptor_set_layout!(TraceDescriptorSetLayout {
+descriptor_set_layout!(TraceDescriptorSet {
     trace: UniformData<TraceData>,
     result: [StorageImage; 3],
     samples: StorageImage,
@@ -35,18 +35,13 @@ struct CopyData {
     trace_scale: f32,
 }
 
-descriptor_set_layout!(CopyDescriptorSetLayout {
+descriptor_set_layout!(CopyDescriptorSet {
     copy: UniformData<CopyData>,
     image: [StorageImage; 3],
 });
 
 struct App {
     context: SharedContext,
-
-    trace_descriptor_set_layout: TraceDescriptorSetLayout,
-    trace_pipeline_layout: vk::PipelineLayout,
-    copy_descriptor_set_layout: CopyDescriptorSetLayout,
-    copy_pipeline_layout: vk::PipelineLayout,
 
     sample_image: StaticImageHandle,
     trace_images: (ImageHandle, ImageHandle, ImageHandle),
@@ -66,14 +61,6 @@ impl App {
     }
 
     fn new(base: &mut AppBase) -> Self {
-        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
-
-        let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(trace_descriptor_set_layout.0);
-
-        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
-
         let sample_image = base.systems.resource_loader.create_image();
         base.systems.resource_loader.async_load(move |allocator| {
             let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
@@ -116,11 +103,6 @@ impl App {
 
         Self {
             context: SharedContext::clone(&base.context),
-
-            trace_descriptor_set_layout,
-            trace_pipeline_layout,
-            copy_descriptor_set_layout,
-            copy_pipeline_layout,
 
             sample_image,
             trace_images,
@@ -191,8 +173,6 @@ impl App {
                     let descriptor_pool = &base.systems.descriptor_pool;
                     let pipeline_cache = &base.systems.pipeline_cache;
                     let trace_images = &self.trace_images;
-                    let trace_descriptor_set_layout = &self.trace_descriptor_set_layout;
-                    let trace_pipeline_layout = self.trace_pipeline_layout;
                     let next_pass_index = self.next_pass_index;
                     move |params, cmd| {
                         let sample_image_view = sample_image_view;
@@ -202,7 +182,7 @@ impl App {
                             params.get_image_view(trace_images.2),
                         ];
 
-                        let descriptor_set = trace_descriptor_set_layout.write(
+                        let descriptor_set = TraceDescriptorSet::create(
                             descriptor_pool,
                             |buf: &mut TraceData| {
                                 let dims_rcp = Vec2::broadcast(1.0) / trace_image_size.as_float();
@@ -216,11 +196,10 @@ impl App {
                             sample_image_view,
                         );
 
-                        dispatch_helper(
+                        dispatch_helper2(
                             &context.device,
                             pipeline_cache,
                             cmd,
-                            trace_pipeline_layout,
                             "test_compute/trace.comp.spv",
                             &[],
                             descriptor_set,
@@ -261,9 +240,7 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let trace_images = &self.trace_images;
-                let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
                 let log2_exposure_scale = self.log2_exposure_scale;
-                let copy_pipeline_layout = self.copy_pipeline_layout;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
@@ -276,7 +253,7 @@ impl App {
 
                     set_viewport_helper(&context.device, cmd, swap_size);
 
-                    let copy_descriptor_set = copy_descriptor_set_layout.write(
+                    let copy_descriptor_set = CopyDescriptorSet::create(
                         descriptor_pool,
                         |buf| {
                             *buf = CopyData {
@@ -287,11 +264,10 @@ impl App {
                         },
                         &trace_image_views,
                     );
-                    draw_helper(
+                    draw_helper2(
                         &context.device,
                         pipeline_cache,
                         cmd,
-                        copy_pipeline_layout,
                         &GraphicsPipelineState::new(render_pass, main_sample_count),
                         "test_compute/copy.vert.spv",
                         "test_compute/copy.frag.spv",

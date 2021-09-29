@@ -201,7 +201,7 @@ struct LightAliasEntry {
     indices: u32,
 }
 
-descriptor_set_layout!(PathTraceDescriptorSetLayout {
+descriptor_set_layout!(PathTraceDescriptorSet {
     path_trace_uniforms: UniformData<PathTraceUniforms>,
     accel: AccelerationStructure,
     pmj_samples: StorageImage,
@@ -711,7 +711,7 @@ struct FilterData {
     filter_type: u32,
 }
 
-descriptor_set_layout!(FilterDescriptorSetLayout {
+descriptor_set_layout!(FilterDescriptorSet {
     data: UniformData<FilterData>,
     pmj_samples: StorageImage,
     sobol_samples: StorageImage,
@@ -805,14 +805,10 @@ pub struct Renderer {
     accel: SceneAccel,
 
     path_trace_pipeline_layout: vk::PipelineLayout,
-    path_trace_descriptor_set_layout: PathTraceDescriptorSetLayout,
     path_trace_pipeline: vk::Pipeline,
 
     clamp_point_sampler: vk::Sampler,
     clamp_linear_sampler: vk::Sampler,
-
-    filter_descriptor_set_layout: FilterDescriptorSetLayout,
-    filter_pipeline_layout: vk::PipelineLayout,
 
     texture_binding_set: TextureBindingSet,
     shader_data: Vec<ShaderData>,
@@ -845,7 +841,7 @@ impl Renderer {
     pub fn new(
         context: &SharedContext,
         scene: &Arc<Scene>,
-        descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
+        descriptor_pool: &DescriptorPool,
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
         render_graph: &mut RenderGraph,
@@ -1086,14 +1082,13 @@ impl Renderer {
             unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
         };
 
-        let path_trace_descriptor_set_layout = PathTraceDescriptorSetLayout::new(descriptor_set_layout_cache);
+        // make pipeline
+        let path_trace_descriptor_set_layout = PathTraceDescriptorSet::layout(descriptor_pool);
         let texture_binding_set = TextureBindingSet::new(context, texture_images);
-        let path_trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_multi_layout(&[
-            path_trace_descriptor_set_layout.0,
+        let path_trace_pipeline_layout = pipeline_cache.get_pipeline_layout(&[
+            path_trace_descriptor_set_layout,
             texture_binding_set.descriptor_set_layout,
         ]);
-
-        // make pipeline
         let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
             .map(|i| match ShaderGroup::from_integer(i).unwrap() {
                 ShaderGroup::RayGenerator => RayTracingShaderGroupDesc::Raygen("path_tracer/path_trace.rgen.spv"),
@@ -1142,9 +1137,6 @@ impl Renderer {
             })
             .collect();
         let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
-
-        let filter_descriptor_set_layout = FilterDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let filter_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(filter_descriptor_set_layout.0);
 
         let pmj_samples_image = resource_loader.create_image();
         resource_loader.async_load(move |allocator| {
@@ -1431,13 +1423,10 @@ impl Renderer {
             context: SharedContext::clone(context),
             scene: Arc::clone(scene),
             accel,
-            path_trace_descriptor_set_layout,
             path_trace_pipeline_layout,
             path_trace_pipeline,
             clamp_point_sampler,
             clamp_linear_sampler,
-            filter_descriptor_set_layout,
-            filter_pipeline_layout,
             texture_binding_set,
             shader_data,
             geometry_attrib_data,
@@ -2238,7 +2227,7 @@ impl Renderer {
                                     * (mem::size_of::<LightAliasEntry>() as u64),
                         );
 
-                        let path_trace_descriptor_set = self.path_trace_descriptor_set_layout.write(
+                        let path_trace_descriptor_set = PathTraceDescriptorSet::create(
                             descriptor_pool,
                             |buf: &mut PathTraceUniforms| {
                                 *buf = PathTraceUniforms {
@@ -2297,7 +2286,7 @@ impl Renderer {
                                 vk::PipelineBindPoint::RAY_TRACING_KHR,
                                 self.path_trace_pipeline_layout,
                                 0,
-                                &[path_trace_descriptor_set, texture_binding_descriptor_set],
+                                &[path_trace_descriptor_set.set, texture_binding_descriptor_set],
                                 &[],
                             );
                         }
@@ -2349,7 +2338,7 @@ impl Renderer {
                         ];
                         let result_image_view = params.get_image_view(self.result_image);
 
-                        let descriptor_set = self.filter_descriptor_set_layout.write(
+                        let descriptor_set = FilterDescriptorSet::create(
                             descriptor_pool,
                             |buf: &mut FilterData| {
                                 *buf = FilterData {
@@ -2365,11 +2354,10 @@ impl Renderer {
                             result_image_view,
                         );
 
-                        dispatch_helper(
+                        dispatch_helper2(
                             &context.device,
                             pipeline_cache,
                             cmd,
-                            self.filter_pipeline_layout,
                             "path_tracer/filter.comp.spv",
                             &[],
                             descriptor_set,

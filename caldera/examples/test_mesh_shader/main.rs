@@ -45,7 +45,7 @@ struct StandardUniforms {
     view_from_local: PackedTransform,
 }
 
-descriptor_set_layout!(StandardDescriptorSetLayout {
+descriptor_set_layout!(StandardDescriptorSet {
     standard_uniforms: UniformData<StandardUniforms>,
 });
 
@@ -71,7 +71,7 @@ struct ClusterUniforms {
     task_count: u32,
 }
 
-descriptor_set_layout!(ClusterDescriptorSetLayout {
+descriptor_set_layout!(ClusterDescriptorSet {
     cluster_uniforms: UniformData<ClusterUniforms>,
     position: StorageBuffer,
     normal: StorageBuffer,
@@ -226,11 +226,6 @@ enum RenderMode {
 struct App {
     context: SharedContext,
 
-    standard_descriptor_set_layout: StandardDescriptorSetLayout,
-    standard_pipeline_layout: vk::PipelineLayout,
-    cluster_descriptor_set_layout: ClusterDescriptorSetLayout,
-    cluster_pipeline_layout: vk::PipelineLayout,
-
     has_mesh_shader: bool,
     task_group_size: u32,
     mesh_info: Arc<Mutex<MeshInfo>>,
@@ -243,15 +238,6 @@ struct App {
 impl App {
     fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
         let context = SharedContext::clone(&base.context);
-        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
-
-        let standard_descriptor_set_layout = StandardDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let standard_pipeline_layout =
-            descriptor_set_layout_cache.create_pipeline_layout(standard_descriptor_set_layout.0);
-
-        let cluster_descriptor_set_layout = ClusterDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let cluster_pipeline_layout =
-            descriptor_set_layout_cache.create_pipeline_layout(cluster_descriptor_set_layout.0);
 
         let has_mesh_shader = context.device.extensions.supports_nv_mesh_shader()
             && context.device.extensions.supports_ext_subgroup_size_control();
@@ -275,10 +261,6 @@ impl App {
 
         Self {
             context,
-            standard_descriptor_set_layout,
-            standard_pipeline_layout,
-            cluster_descriptor_set_layout,
-            cluster_pipeline_layout,
             has_mesh_shader,
             task_group_size,
             mesh_info,
@@ -358,10 +340,6 @@ impl App {
             let descriptor_pool = &base.systems.descriptor_pool;
             let pipeline_cache = &base.systems.pipeline_cache;
             let task_group_size = self.task_group_size;
-            let standard_descriptor_set_layout = &self.standard_descriptor_set_layout;
-            let standard_pipeline_layout = self.standard_pipeline_layout;
-            let cluster_descriptor_set_layout = &self.cluster_descriptor_set_layout;
-            let cluster_pipeline_layout = self.cluster_pipeline_layout;
             let window = &base.window;
             let render_mode = self.render_mode;
             let do_backface_culling = self.do_backface_culling;
@@ -373,13 +351,12 @@ impl App {
                 if let Some(mesh_buffers) = mesh_buffers {
                     match render_mode {
                         RenderMode::Standard => {
-                            let standard_descriptor_set =
-                                standard_descriptor_set_layout.write(descriptor_pool, |buf| {
-                                    *buf = StandardUniforms {
-                                        proj_from_view,
-                                        view_from_local: view_from_local.into(),
-                                    }
-                                });
+                            let standard_descriptor_set = StandardDescriptorSet::create(descriptor_pool, |buf| {
+                                *buf = StandardUniforms {
+                                    proj_from_view,
+                                    view_from_local: view_from_local.into(),
+                                }
+                            });
 
                             let state = GraphicsPipelineState::new(render_pass, main_sample_count).with_vertex_inputs(
                                 &[
@@ -410,6 +387,8 @@ impl App {
                                 ],
                             );
 
+                            let standard_pipeline_layout =
+                                pipeline_cache.get_pipeline_layout(slice::from_ref(&standard_descriptor_set.layout));
                             let pipeline = pipeline_cache.get_graphics(
                                 VertexShaderDesc::standard("test_mesh_shader/standard.vert.spv"),
                                 "test_mesh_shader/test.frag.spv",
@@ -425,7 +404,7 @@ impl App {
                                     vk::PipelineBindPoint::GRAPHICS,
                                     standard_pipeline_layout,
                                     0,
-                                    slice::from_ref(&standard_descriptor_set),
+                                    slice::from_ref(&standard_descriptor_set.set),
                                     &[],
                                 );
                                 context.device.cmd_bind_vertex_buffers(
@@ -445,7 +424,7 @@ impl App {
                         RenderMode::Clusters => {
                             // draw cluster test
                             let task_count = mesh_info.cluster_count;
-                            let cluster_descriptor_set = cluster_descriptor_set_layout.write(
+                            let cluster_descriptor_set = ClusterDescriptorSet::create(
                                 descriptor_pool,
                                 |buf: &mut ClusterUniforms| {
                                     *buf = ClusterUniforms {
@@ -461,6 +440,8 @@ impl App {
                             );
 
                             let state = GraphicsPipelineState::new(render_pass, main_sample_count);
+                            let cluster_pipeline_layout =
+                                pipeline_cache.get_pipeline_layout(slice::from_ref(&cluster_descriptor_set.layout));
                             let pipeline = pipeline_cache.get_graphics(
                                 VertexShaderDesc::mesh(
                                     "test_mesh_shader/cluster.task.spv",
@@ -481,7 +462,7 @@ impl App {
                                     vk::PipelineBindPoint::GRAPHICS,
                                     cluster_pipeline_layout,
                                     0,
-                                    &[cluster_descriptor_set],
+                                    slice::from_ref(&cluster_descriptor_set.set),
                                     &[],
                                 );
                                 device.cmd_draw_mesh_tasks_nv(cmd, task_count.div_round_up(task_group_size), 0);

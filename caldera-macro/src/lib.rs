@@ -247,10 +247,14 @@ pub fn descriptor_set_layout(input: TokenStream) -> TokenStream {
 
             const BINDINGS: &'static [DescriptorSetLayoutBinding] = &[#(#binding_entries),*];
 
-            pub fn create(descriptor_pool: &DescriptorPool, #(#data_args),*) -> DescriptorSet {
-                let layout = descriptor_pool.get_descriptor_set_layout(
+            pub fn layout(descriptor_pool: &DescriptorPool) -> vk::DescriptorSetLayout {
+                descriptor_pool.get_descriptor_set_layout(
                     ::std::any::TypeId::of::<Self>(),
-                    Self::BINDINGS);
+                    Self::BINDINGS)
+            }
+
+            pub fn create(descriptor_pool: &DescriptorPool, #(#data_args),*) -> DescriptorSet {
+                let layout = Self::layout(descriptor_pool);
 
                 let data = &[#(#data_entries),*];
                 let set = descriptor_pool.create_descriptor_set(layout, data);

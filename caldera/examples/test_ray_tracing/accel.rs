@@ -18,7 +18,7 @@ struct HitRecordData {
     attribute_buffer_address: u64,
 }
 
-descriptor_set_layout!(TraceDescriptorSetLayout {
+descriptor_set_layout!(TraceDescriptorSet {
     trace: UniformData<TraceData>,
     accel: AccelerationStructure,
     output: StorageImage,
@@ -315,7 +315,6 @@ impl ShaderBindingRegion {
 }
 
 pub struct AccelInfo {
-    trace_descriptor_set_layout: TraceDescriptorSetLayout,
     trace_pipeline_layout: vk::PipelineLayout,
     trace_pipeline: vk::Pipeline,
     shader_binding_table: StaticBufferHandle,
@@ -330,7 +329,7 @@ pub struct AccelInfo {
 impl AccelInfo {
     pub fn new<'a>(
         context: &'a SharedContext,
-        descriptor_set_layout_cache: &mut DescriptorSetLayoutCache,
+        descriptor_pool: &DescriptorPool,
         pipeline_cache: &PipelineCache,
         resource_loader: &mut ResourceLoader,
         mesh_info: &'a MeshInfo,
@@ -338,15 +337,14 @@ impl AccelInfo {
         global_allocator: &mut Allocator,
         schedule: &mut RenderSchedule<'a>,
     ) -> Self {
-        let trace_descriptor_set_layout = TraceDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let trace_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(trace_descriptor_set_layout.0);
-
         let index_buffer_device_address =
             unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.index) };
         let attribute_buffer_device_address =
             unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.attribute) };
 
         // TODO: figure out live reload, needs to regenerate SBT!
+        let trace_descriptor_set_layout = TraceDescriptorSet::layout(descriptor_pool);
+        let trace_pipeline_layout = pipeline_cache.get_pipeline_layout(slice::from_ref(&trace_descriptor_set_layout));
         let trace_pipeline = pipeline_cache.get_ray_tracing(
             &[
                 RayTracingShaderGroupDesc::Raygen("test_ray_tracing/trace.rgen.spv"),
@@ -501,7 +499,6 @@ impl AccelInfo {
         });
 
         Self {
-            trace_descriptor_set_layout,
             trace_pipeline_layout,
             trace_pipeline,
             shader_binding_table,
@@ -570,7 +567,7 @@ impl AccelInfo {
             move |params, cmd| {
                 let output_image_view = params.get_image_view(output_image);
 
-                let trace_descriptor_set = self.trace_descriptor_set_layout.write(
+                let trace_descriptor_set = TraceDescriptorSet::create(
                     descriptor_pool,
                     |buf: &mut TraceData| {
                         *buf = TraceData {
@@ -591,7 +588,7 @@ impl AccelInfo {
                         vk::PipelineBindPoint::RAY_TRACING_KHR,
                         self.trace_pipeline_layout,
                         0,
-                        slice::from_ref(&trace_descriptor_set),
+                        slice::from_ref(&trace_descriptor_set.set),
                         &[],
                     );
                 }

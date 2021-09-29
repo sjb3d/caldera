@@ -43,7 +43,7 @@ struct CopyData {
     tone_map_method: u32,
 }
 
-descriptor_set_layout!(CopyDescriptorSetLayout {
+descriptor_set_layout!(CopyDescriptorSet {
     data: UniformData<CopyData>,
     result: StorageImage,
 });
@@ -58,7 +58,7 @@ struct CaptureData {
     tone_map_method: u32,
 }
 
-descriptor_set_layout!(CaptureDescriptorSetLayout {
+descriptor_set_layout!(CaptureDescriptorSet {
     data: UniformData<CaptureData>,
     output: StorageBuffer,
     input: StorageImage,
@@ -172,9 +172,6 @@ impl ViewAdjust {
 struct App {
     context: SharedContext,
 
-    copy_descriptor_set_layout: CopyDescriptorSetLayout,
-    copy_pipeline_layout: vk::PipelineLayout,
-
     scene: Arc<Scene>,
     renderer: Renderer,
     progress: RenderProgress,
@@ -186,16 +183,12 @@ struct App {
 impl App {
     fn new(base: &mut AppBase, scene: Scene, renderer_params: RendererParams) -> Self {
         let context = SharedContext::clone(&base.context);
-        let descriptor_set_layout_cache = &mut base.systems.descriptor_set_layout_cache;
-
-        let copy_descriptor_set_layout = CopyDescriptorSetLayout::new(descriptor_set_layout_cache);
-        let copy_pipeline_layout = descriptor_set_layout_cache.create_pipeline_layout(copy_descriptor_set_layout.0);
 
         let scene = Arc::new(scene);
         let renderer = Renderer::new(
             &context,
             &scene,
-            &mut base.systems.descriptor_set_layout_cache,
+            &base.systems.descriptor_pool,
             &base.systems.pipeline_cache,
             &mut base.systems.resource_loader,
             &mut base.systems.render_graph,
@@ -207,8 +200,6 @@ impl App {
         let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), renderer.params.fov_y_override);
         Self {
             context,
-            copy_descriptor_set_layout,
-            copy_pipeline_layout,
             scene,
             renderer,
             progress,
@@ -313,8 +304,6 @@ impl App {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
-                let copy_descriptor_set_layout = &self.copy_descriptor_set_layout;
-                let copy_pipeline_layout = self.copy_pipeline_layout;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
@@ -339,7 +328,7 @@ impl App {
                                 renderer_params.observer_white_point(),
                             );
 
-                        let copy_descriptor_set = copy_descriptor_set_layout.write(
+                        let copy_descriptor_set = CopyDescriptorSet::create(
                             descriptor_pool,
                             |buf: &mut CopyData| {
                                 *buf = CopyData {
@@ -354,11 +343,10 @@ impl App {
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
 
-                        draw_helper(
+                        draw_helper2(
                             &context.device,
                             pipeline_cache,
                             cmd,
-                            copy_pipeline_layout,
                             &state,
                             "path_tracer/copy.vert.spv",
                             "path_tracer/copy.frag.spv",
@@ -485,8 +473,6 @@ struct CommandlineApp {
     renderer: Renderer,
     progress: RenderProgress,
 
-    capture_descriptor_set_layout: CaptureDescriptorSetLayout,
-    capture_pipeline_layout: vk::PipelineLayout,
     capture_buffer: CaptureBuffer,
 }
 
@@ -500,7 +486,7 @@ impl CommandlineApp {
         let renderer = Renderer::new(
             &context,
             &scene,
-            &mut systems.descriptor_set_layout_cache,
+            &systems.descriptor_pool,
             &systems.pipeline_cache,
             &mut systems.resource_loader,
             &mut systems.render_graph,
@@ -510,11 +496,6 @@ impl CommandlineApp {
 
         let progress = RenderProgress::new();
 
-        let capture_descriptor_set_layout = CaptureDescriptorSetLayout::new(&mut systems.descriptor_set_layout_cache);
-        let capture_pipeline_layout = systems
-            .descriptor_set_layout_cache
-            .create_pipeline_layout(capture_descriptor_set_layout.0);
-
         let capture_buffer = CaptureBuffer::new(&context, renderer.params.width * renderer.params.height * 3);
 
         Self {
@@ -523,8 +504,6 @@ impl CommandlineApp {
             scene,
             renderer,
             progress,
-            capture_descriptor_set_layout,
-            capture_pipeline_layout,
             capture_buffer,
         }
     }
@@ -583,8 +562,6 @@ impl CommandlineApp {
                             params.add_buffer(capture_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
                         },
                         {
-                            let capture_descriptor_set_layout = &self.capture_descriptor_set_layout;
-                            let capture_pipeline_layout = self.capture_pipeline_layout;
                             let pipeline_cache = &self.systems.pipeline_cache;
                             let descriptor_pool = &self.systems.descriptor_pool;
                             let context = &self.context;
@@ -606,7 +583,7 @@ impl CommandlineApp {
                                         WhitePoint::E,
                                     );
 
-                                let descriptor_set = capture_descriptor_set_layout.write(
+                                let descriptor_set = CaptureDescriptorSet::create(
                                     descriptor_pool,
                                     |buf: &mut CaptureData| {
                                         *buf = CaptureData {
@@ -621,11 +598,10 @@ impl CommandlineApp {
                                     result_image_view,
                                 );
 
-                                dispatch_helper(
+                                dispatch_helper2(
                                     &context.device,
                                     pipeline_cache,
                                     cmd,
-                                    capture_pipeline_layout,
                                     "path_tracer/capture.comp.spv",
                                     &[],
                                     descriptor_set,
