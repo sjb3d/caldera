@@ -387,8 +387,7 @@ pub struct PipelineCache {
     shader_loader: ShaderLoader,
     layout_cache: RefCell<PipelineLayoutCache>,
     pipeline_cache: vk::PipelineCache,
-    current_pipelines: HashMap<PipelineCacheKey, vk::Pipeline>,
-    new_pipelines: Mutex<HashMap<PipelineCacheKey, vk::Pipeline>>,
+    pipelines: RefCell<HashMap<PipelineCacheKey, vk::Pipeline>>,
 }
 
 impl PipelineCache {
@@ -411,18 +410,12 @@ impl PipelineCache {
             shader_loader: ShaderLoader::new(context, path),
             layout_cache: RefCell::new(layout_cache),
             pipeline_cache,
-            current_pipelines: HashMap::new(),
-            new_pipelines: Mutex::new(HashMap::new()),
+            pipelines: RefCell::new(HashMap::new()),
         }
     }
 
     pub fn begin_frame(&mut self) {
         self.shader_loader.transfer_new_shaders();
-
-        let mut new_pipelines = self.new_pipelines.lock().unwrap();
-        for (k, v) in new_pipelines.drain() {
-            self.current_pipelines.insert(k, v);
-        }
     }
 
     pub fn get_pipeline_layout(&self, descriptor_set_layouts: &[vk::DescriptorSetLayout]) -> vk::PipelineLayout {
@@ -441,35 +434,31 @@ impl PipelineCache {
             shader,
             constants: constants.to_vec(),
         };
-        self.current_pipelines.get(&key).copied().unwrap_or_else(|| {
-            // TODO: create pipeline on worker thread, for now we just block on miss
-            let mut new_pipelines = self.new_pipelines.lock().unwrap();
-            *new_pipelines.entry(key).or_insert_with(|| {
-                let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let specialization_data = SpecializationData::new(constants);
-                let specialization_info = vk::SpecializationInfo::builder()
-                    .p_map_entries(&specialization_data.map_entries)
-                    .p_data(&specialization_data.store);
-                let pipeline_create_info = vk::ComputePipelineCreateInfo {
-                    stage: vk::PipelineShaderStageCreateInfo {
-                        stage: vk::ShaderStageFlags::COMPUTE,
-                        module: Some(shader),
-                        p_name: shader_entry_name.as_ptr(),
-                        p_specialization_info: &*specialization_info,
-                        ..Default::default()
-                    },
-                    layout: Some(pipeline_layout),
+        *self.pipelines.borrow_mut().entry(key).or_insert_with(|| {
+            let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
+            let specialization_data = SpecializationData::new(constants);
+            let specialization_info = vk::SpecializationInfo::builder()
+                .p_map_entries(&specialization_data.map_entries)
+                .p_data(&specialization_data.store);
+            let pipeline_create_info = vk::ComputePipelineCreateInfo {
+                stage: vk::PipelineShaderStageCreateInfo {
+                    stage: vk::ShaderStageFlags::COMPUTE,
+                    module: Some(shader),
+                    p_name: shader_entry_name.as_ptr(),
+                    p_specialization_info: &*specialization_info,
                     ..Default::default()
-                };
-                unsafe {
-                    self.context.device.create_compute_pipelines_single(
-                        Some(self.pipeline_cache),
-                        &pipeline_create_info,
-                        None,
-                    )
-                }
-                .unwrap()
-            })
+                },
+                layout: Some(pipeline_layout),
+                ..Default::default()
+            };
+            unsafe {
+                self.context.device.create_compute_pipelines_single(
+                    Some(self.pipeline_cache),
+                    &pipeline_create_info,
+                    None,
+                )
+            }
+            .unwrap()
         })
     }
 
@@ -505,140 +494,136 @@ impl PipelineCache {
             fragment_shader,
             state: state.clone(),
         };
-        self.current_pipelines.get(&key).copied().unwrap_or_else(|| {
-            // TODO: create pipeline on worker thread, for now we just block on miss
-            let mut new_pipelines = self.new_pipelines.lock().unwrap();
-            *new_pipelines.entry(key).or_insert_with(|| {
-                let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let mut specialization_data = ArrayVec::<SpecializationData, 2>::new();
-                let mut specialization_info = ArrayVec::<vk::SpecializationInfo, 2>::new();
-                let mut required_subgroup_size_create_info =
-                    ArrayVec::<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT, 1>::new();
-                let mut shader_stage_create_info = ArrayVec::<vk::PipelineShaderStageCreateInfo, 3>::new();
-                match vertex_shader {
-                    VertexShaderKey::Standard { vertex } => {
-                        shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
-                            stage: vk::ShaderStageFlags::VERTEX,
-                            module: Some(vertex),
+        *self.pipelines.borrow_mut().entry(key).or_insert_with(|| {
+            let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
+            let mut specialization_data = ArrayVec::<SpecializationData, 2>::new();
+            let mut specialization_info = ArrayVec::<vk::SpecializationInfo, 2>::new();
+            let mut required_subgroup_size_create_info =
+                ArrayVec::<vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT, 1>::new();
+            let mut shader_stage_create_info = ArrayVec::<vk::PipelineShaderStageCreateInfo, 3>::new();
+            match vertex_shader {
+                VertexShaderKey::Standard { vertex } => {
+                    shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                        stage: vk::ShaderStageFlags::VERTEX,
+                        module: Some(vertex),
+                        p_name: shader_entry_name.as_ptr(),
+                        ..Default::default()
+                    });
+                }
+                VertexShaderKey::Mesh {
+                    task,
+                    task_constants,
+                    task_subgroup_size,
+                    mesh,
+                    mesh_constants,
+                } => {
+                    shader_stage_create_info.push({
+                        specialization_data.push(SpecializationData::new(&task_constants));
+                        specialization_info.push(*specialization_data.last().unwrap().info());
+                        let mut p_next = ptr::null();
+                        let mut flags = vk::PipelineShaderStageCreateFlags::empty();
+                        if let Some(task_subgroup_size) = task_subgroup_size {
+                            required_subgroup_size_create_info.push(
+                                vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT {
+                                    required_subgroup_size: task_subgroup_size,
+                                    ..Default::default()
+                                },
+                            );
+                            p_next = required_subgroup_size_create_info.last().unwrap() as *const _ as *const _;
+                            flags |= vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS_EXT;
+                        };
+                        vk::PipelineShaderStageCreateInfo {
+                            p_next,
+                            flags,
+                            stage: vk::ShaderStageFlags::TASK_NV,
+                            module: Some(task),
                             p_name: shader_entry_name.as_ptr(),
+                            p_specialization_info: specialization_info.last().unwrap(),
                             ..Default::default()
-                        });
-                    }
-                    VertexShaderKey::Mesh {
-                        task,
-                        task_constants,
-                        task_subgroup_size,
-                        mesh,
-                        mesh_constants,
-                    } => {
-                        shader_stage_create_info.push({
-                            specialization_data.push(SpecializationData::new(&task_constants));
-                            specialization_info.push(*specialization_data.last().unwrap().info());
-                            let mut p_next = ptr::null();
-                            let mut flags = vk::PipelineShaderStageCreateFlags::empty();
-                            if let Some(task_subgroup_size) = task_subgroup_size {
-                                required_subgroup_size_create_info.push(
-                                    vk::PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT {
-                                        required_subgroup_size: task_subgroup_size,
-                                        ..Default::default()
-                                    },
-                                );
-                                p_next = required_subgroup_size_create_info.last().unwrap() as *const _ as *const _;
-                                flags |= vk::PipelineShaderStageCreateFlags::REQUIRE_FULL_SUBGROUPS_EXT;
-                            };
-                            vk::PipelineShaderStageCreateInfo {
-                                p_next,
-                                flags,
-                                stage: vk::ShaderStageFlags::TASK_NV,
-                                module: Some(task),
-                                p_name: shader_entry_name.as_ptr(),
-                                p_specialization_info: specialization_info.last().unwrap(),
-                                ..Default::default()
-                            }
-                        });
-                        shader_stage_create_info.push({
-                            specialization_data.push(SpecializationData::new(&mesh_constants));
-                            specialization_info.push(*specialization_data.last().unwrap().info());
-                            vk::PipelineShaderStageCreateInfo {
-                                stage: vk::ShaderStageFlags::MESH_NV,
-                                module: Some(mesh),
-                                p_name: shader_entry_name.as_ptr(),
-                                p_specialization_info: specialization_info.last().unwrap(),
-                                ..Default::default()
-                            }
-                        });
-                    }
+                        }
+                    });
+                    shader_stage_create_info.push({
+                        specialization_data.push(SpecializationData::new(&mesh_constants));
+                        specialization_info.push(*specialization_data.last().unwrap().info());
+                        vk::PipelineShaderStageCreateInfo {
+                            stage: vk::ShaderStageFlags::MESH_NV,
+                            module: Some(mesh),
+                            p_name: shader_entry_name.as_ptr(),
+                            p_specialization_info: specialization_info.last().unwrap(),
+                            ..Default::default()
+                        }
+                    });
                 }
-                shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
-                    stage: vk::ShaderStageFlags::FRAGMENT,
-                    module: Some(fragment_shader),
-                    p_name: shader_entry_name.as_ptr(),
-                    ..Default::default()
-                });
+            }
+            shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                stage: vk::ShaderStageFlags::FRAGMENT,
+                module: Some(fragment_shader),
+                p_name: shader_entry_name.as_ptr(),
+                ..Default::default()
+            });
 
-                let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder()
-                    .p_vertex_attribute_descriptions(&state.vertex_input_attributes)
-                    .p_vertex_binding_descriptions(&state.vertex_input_bindings);
-                let input_assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo {
-                    topology: state.topology,
-                    ..Default::default()
-                };
+            let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder()
+                .p_vertex_attribute_descriptions(&state.vertex_input_attributes)
+                .p_vertex_binding_descriptions(&state.vertex_input_bindings);
+            let input_assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo {
+                topology: state.topology,
+                ..Default::default()
+            };
 
-                let viewport_state_create_info = vk::PipelineViewportStateCreateInfo {
-                    viewport_count: 1,
-                    scissor_count: 1,
-                    ..Default::default()
-                };
+            let viewport_state_create_info = vk::PipelineViewportStateCreateInfo {
+                viewport_count: 1,
+                scissor_count: 1,
+                ..Default::default()
+            };
 
-                let rasterization_state_create_info = vk::PipelineRasterizationStateCreateInfo {
-                    polygon_mode: vk::PolygonMode::FILL,
-                    cull_mode: vk::CullModeFlags::BACK,
-                    line_width: 1.0,
-                    ..Default::default()
-                };
-                let multisample_state_create_info = vk::PipelineMultisampleStateCreateInfo {
-                    rasterization_samples: state.samples,
-                    ..Default::default()
-                };
+            let rasterization_state_create_info = vk::PipelineRasterizationStateCreateInfo {
+                polygon_mode: vk::PolygonMode::FILL,
+                cull_mode: vk::CullModeFlags::BACK,
+                line_width: 1.0,
+                ..Default::default()
+            };
+            let multisample_state_create_info = vk::PipelineMultisampleStateCreateInfo {
+                rasterization_samples: state.samples,
+                ..Default::default()
+            };
 
-                let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
-                    .depth_test_enable(true)
-                    .depth_write_enable(true)
-                    .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
+            let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+                .depth_test_enable(true)
+                .depth_write_enable(true)
+                .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
 
-                let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
-                    color_write_mask: vk::ColorComponentFlags::all(),
-                    ..Default::default()
-                };
-                let color_blend_state_create_info = vk::PipelineColorBlendStateCreateInfo::builder()
-                    .p_attachments(slice::from_ref(&color_blend_attachment_state));
+            let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
+                color_write_mask: vk::ColorComponentFlags::all(),
+                ..Default::default()
+            };
+            let color_blend_state_create_info = vk::PipelineColorBlendStateCreateInfo::builder()
+                .p_attachments(slice::from_ref(&color_blend_attachment_state));
 
-                let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-                let pipeline_dynamic_state_create_info =
-                    vk::PipelineDynamicStateCreateInfo::builder().p_dynamic_states(&dynamic_states);
+            let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+            let pipeline_dynamic_state_create_info =
+                vk::PipelineDynamicStateCreateInfo::builder().p_dynamic_states(&dynamic_states);
 
-                let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-                    .p_stages(&shader_stage_create_info)
-                    .p_vertex_input_state(Some(&vertex_input_state_create_info))
-                    .p_input_assembly_state(Some(&input_assembly_state_create_info))
-                    .p_viewport_state(Some(&viewport_state_create_info))
-                    .p_rasterization_state(&rasterization_state_create_info)
-                    .p_multisample_state(Some(&multisample_state_create_info))
-                    .p_depth_stencil_state(Some(&depth_stencil_state))
-                    .p_color_blend_state(Some(&color_blend_state_create_info))
-                    .p_dynamic_state(Some(&pipeline_dynamic_state_create_info))
-                    .layout(pipeline_layout)
-                    .render_pass(state.render_pass);
+            let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
+                .p_stages(&shader_stage_create_info)
+                .p_vertex_input_state(Some(&vertex_input_state_create_info))
+                .p_input_assembly_state(Some(&input_assembly_state_create_info))
+                .p_viewport_state(Some(&viewport_state_create_info))
+                .p_rasterization_state(&rasterization_state_create_info)
+                .p_multisample_state(Some(&multisample_state_create_info))
+                .p_depth_stencil_state(Some(&depth_stencil_state))
+                .p_color_blend_state(Some(&color_blend_state_create_info))
+                .p_dynamic_state(Some(&pipeline_dynamic_state_create_info))
+                .layout(pipeline_layout)
+                .render_pass(state.render_pass);
 
-                unsafe {
-                    self.context.device.create_graphics_pipelines_single(
-                        Some(self.pipeline_cache),
-                        &pipeline_create_info,
-                        None,
-                    )
-                }
-                .unwrap()
-            })
+            unsafe {
+                self.context.device.create_graphics_pipelines_single(
+                    Some(self.pipeline_cache),
+                    &pipeline_create_info,
+                    None,
+                )
+            }
+            .unwrap()
         })
     }
 
@@ -649,13 +634,11 @@ impl PipelineCache {
         samples: vk::SampleCountFlags,
     ) -> vk::Pipeline {
         let key = PipelineCacheKey::Ui { render_pass, samples };
-        self.current_pipelines.get(&key).copied().unwrap_or_else(|| {
-            // TODO: create pipeline on worker thread, for now we just block on miss
-            let mut new_pipelines = self.new_pipelines.lock().unwrap();
-            *new_pipelines
-                .entry(key)
-                .or_insert_with(|| ui_renderer.create_pipeline(&self.context.device, render_pass, samples))
-        })
+        *self
+            .pipelines
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| ui_renderer.create_pipeline(&self.context.device, render_pass, samples))
     }
 
     pub fn get_ray_tracing(
@@ -690,100 +673,96 @@ impl PipelineCache {
             pipeline_layout,
             shader_groups: shader_groups.clone(),
         };
-        self.current_pipelines.get(&key).copied().unwrap_or_else(|| {
-            // TODO: create pipeline on worker thread, for now we just block on miss
-            let mut new_pipelines = self.new_pipelines.lock().unwrap();
-            *new_pipelines.entry(key).or_insert_with(|| {
-                let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
-                let mut shader_stage_create_info = Vec::new();
-                let mut get_stage_index = |stage, module| {
-                    if let Some(i) = shader_stage_create_info.iter().enumerate().find_map(
-                        |(i, info): (usize, &vk::PipelineShaderStageCreateInfo)| {
-                            if stage == info.stage && Some(module) == info.module {
-                                Some(i as u32)
-                            } else {
-                                None
-                            }
-                        },
-                    ) {
-                        i
-                    } else {
-                        shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
-                            stage,
-                            module: Some(module),
-                            p_name: shader_entry_name.as_ptr(),
-                            ..Default::default()
-                        });
-                        (shader_stage_create_info.len() - 1) as u32
-                    }
-                };
-
-                let shader_group_create_info: Vec<_> = shader_groups
-                    .iter()
-                    .map(|group| match group {
-                        RayTracingShaderGroup::Raygen(raygen) => vk::RayTracingShaderGroupCreateInfoKHR {
-                            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-                            general_shader: get_stage_index(vk::ShaderStageFlags::RAYGEN_KHR, *raygen),
-                            closest_hit_shader: vk::SHADER_UNUSED_KHR,
-                            any_hit_shader: vk::SHADER_UNUSED_KHR,
-                            intersection_shader: vk::SHADER_UNUSED_KHR,
-                            ..Default::default()
-                        },
-                        RayTracingShaderGroup::Miss(miss) => vk::RayTracingShaderGroupCreateInfoKHR {
-                            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-                            general_shader: get_stage_index(vk::ShaderStageFlags::MISS_KHR, *miss),
-                            closest_hit_shader: vk::SHADER_UNUSED_KHR,
-                            any_hit_shader: vk::SHADER_UNUSED_KHR,
-                            intersection_shader: vk::SHADER_UNUSED_KHR,
-                            ..Default::default()
-                        },
-                        RayTracingShaderGroup::Hit {
-                            closest_hit,
-                            any_hit,
-                            intersection,
-                        } => vk::RayTracingShaderGroupCreateInfoKHR {
-                            ty: if intersection.is_some() {
-                                vk::RayTracingShaderGroupTypeKHR::PROCEDURAL_HIT_GROUP
-                            } else {
-                                vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP
-                            },
-                            general_shader: vk::SHADER_UNUSED_KHR,
-                            closest_hit_shader: get_stage_index(vk::ShaderStageFlags::CLOSEST_HIT_KHR, *closest_hit),
-                            any_hit_shader: any_hit.map_or(vk::SHADER_UNUSED_KHR, |module| {
-                                get_stage_index(vk::ShaderStageFlags::ANY_HIT_KHR, module)
-                            }),
-                            intersection_shader: intersection.map_or(vk::SHADER_UNUSED_KHR, |module| {
-                                get_stage_index(vk::ShaderStageFlags::INTERSECTION_KHR, module)
-                            }),
-                            ..Default::default()
-                        },
-                        RayTracingShaderGroup::Callable(callable) => vk::RayTracingShaderGroupCreateInfoKHR {
-                            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-                            general_shader: get_stage_index(vk::ShaderStageFlags::CALLABLE_KHR, *callable),
-                            closest_hit_shader: vk::SHADER_UNUSED_KHR,
-                            any_hit_shader: vk::SHADER_UNUSED_KHR,
-                            intersection_shader: vk::SHADER_UNUSED_KHR,
-                            ..Default::default()
-                        },
-                    })
-                    .collect();
-
-                let pipeline_create_info = vk::RayTracingPipelineCreateInfoKHR::builder()
-                    .p_stages(&shader_stage_create_info)
-                    .p_groups(&shader_group_create_info)
-                    .layout(pipeline_layout)
-                    .max_pipeline_ray_recursion_depth(0);
-
-                unsafe {
-                    self.context.device.create_ray_tracing_pipelines_khr_single(
-                        None,
-                        Some(self.pipeline_cache),
-                        &pipeline_create_info,
-                        None,
-                    )
+        *self.pipelines.borrow_mut().entry(key).or_insert_with(|| {
+            let shader_entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
+            let mut shader_stage_create_info = Vec::new();
+            let mut get_stage_index = |stage, module| {
+                if let Some(i) = shader_stage_create_info.iter().enumerate().find_map(
+                    |(i, info): (usize, &vk::PipelineShaderStageCreateInfo)| {
+                        if stage == info.stage && Some(module) == info.module {
+                            Some(i as u32)
+                        } else {
+                            None
+                        }
+                    },
+                ) {
+                    i
+                } else {
+                    shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
+                        stage,
+                        module: Some(module),
+                        p_name: shader_entry_name.as_ptr(),
+                        ..Default::default()
+                    });
+                    (shader_stage_create_info.len() - 1) as u32
                 }
-                .unwrap()
-            })
+            };
+
+            let shader_group_create_info: Vec<_> = shader_groups
+                .iter()
+                .map(|group| match group {
+                    RayTracingShaderGroup::Raygen(raygen) => vk::RayTracingShaderGroupCreateInfoKHR {
+                        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                        general_shader: get_stage_index(vk::ShaderStageFlags::RAYGEN_KHR, *raygen),
+                        closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                        any_hit_shader: vk::SHADER_UNUSED_KHR,
+                        intersection_shader: vk::SHADER_UNUSED_KHR,
+                        ..Default::default()
+                    },
+                    RayTracingShaderGroup::Miss(miss) => vk::RayTracingShaderGroupCreateInfoKHR {
+                        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                        general_shader: get_stage_index(vk::ShaderStageFlags::MISS_KHR, *miss),
+                        closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                        any_hit_shader: vk::SHADER_UNUSED_KHR,
+                        intersection_shader: vk::SHADER_UNUSED_KHR,
+                        ..Default::default()
+                    },
+                    RayTracingShaderGroup::Hit {
+                        closest_hit,
+                        any_hit,
+                        intersection,
+                    } => vk::RayTracingShaderGroupCreateInfoKHR {
+                        ty: if intersection.is_some() {
+                            vk::RayTracingShaderGroupTypeKHR::PROCEDURAL_HIT_GROUP
+                        } else {
+                            vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP
+                        },
+                        general_shader: vk::SHADER_UNUSED_KHR,
+                        closest_hit_shader: get_stage_index(vk::ShaderStageFlags::CLOSEST_HIT_KHR, *closest_hit),
+                        any_hit_shader: any_hit.map_or(vk::SHADER_UNUSED_KHR, |module| {
+                            get_stage_index(vk::ShaderStageFlags::ANY_HIT_KHR, module)
+                        }),
+                        intersection_shader: intersection.map_or(vk::SHADER_UNUSED_KHR, |module| {
+                            get_stage_index(vk::ShaderStageFlags::INTERSECTION_KHR, module)
+                        }),
+                        ..Default::default()
+                    },
+                    RayTracingShaderGroup::Callable(callable) => vk::RayTracingShaderGroupCreateInfoKHR {
+                        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+                        general_shader: get_stage_index(vk::ShaderStageFlags::CALLABLE_KHR, *callable),
+                        closest_hit_shader: vk::SHADER_UNUSED_KHR,
+                        any_hit_shader: vk::SHADER_UNUSED_KHR,
+                        intersection_shader: vk::SHADER_UNUSED_KHR,
+                        ..Default::default()
+                    },
+                })
+                .collect();
+
+            let pipeline_create_info = vk::RayTracingPipelineCreateInfoKHR::builder()
+                .p_stages(&shader_stage_create_info)
+                .p_groups(&shader_group_create_info)
+                .layout(pipeline_layout)
+                .max_pipeline_ray_recursion_depth(0);
+
+            unsafe {
+                self.context.device.create_ray_tracing_pipelines_khr_single(
+                    None,
+                    Some(self.pipeline_cache),
+                    &pipeline_create_info,
+                    None,
+                )
+            }
+            .unwrap()
         })
     }
 
@@ -792,29 +771,22 @@ impl PipelineCache {
 
         ui.text("pipeline");
         ui.next_column();
-        ui.text(format!("{}", self.current_pipelines.len()));
+        ui.text(format!("{}", self.pipelines.borrow_mut().len()));
         ui.next_column();
     }
 }
 
 impl Drop for PipelineCache {
     fn drop(&mut self) {
-        for (_, pipeline) in self
-            .new_pipelines
-            .lock()
-            .unwrap()
-            .drain()
-            .chain(self.current_pipelines.drain())
-        {
+        let device = &self.context.device;
+        for (_, pipeline) in self.pipelines.borrow_mut().drain() {
             unsafe {
-                self.context.device.destroy_pipeline(Some(pipeline), None);
+                device.destroy_pipeline(Some(pipeline), None);
             }
         }
         unsafe {
             // TODO: save to file
-            self.context
-                .device
-                .destroy_pipeline_cache(Some(self.pipeline_cache), None)
+            device.destroy_pipeline_cache(Some(self.pipeline_cache), None)
         }
     }
 }
