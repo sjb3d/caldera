@@ -1,9 +1,13 @@
-use crate::command_buffer::CommandBufferPool;
-use crate::context::SharedContext;
+use crate::{command_buffer::CommandBufferPool, context::SharedContext};
 use arrayvec::ArrayVec;
 use imgui::{ProgressBar, Ui};
-use spark::{vk, Builder};
-use std::{cell::Cell, slice};
+use spark::{vk, Builder, Device};
+use std::{
+    any::TypeId,
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    slice,
+};
 
 fn align_up(x: u32, alignment: u32) -> u32 {
     (x + alignment - 1) & !(alignment - 1)
@@ -156,6 +160,12 @@ impl Drop for UniformDataPool {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct DescriptorSet {
+    pub layout: vk::DescriptorSetLayout,
+    pub set: vk::DescriptorSet,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum DescriptorSetLayoutBinding {
     Sampler,
@@ -194,6 +204,123 @@ pub enum DescriptorSetBindingData<'a> {
     },
 }
 
+fn create_descriptor_set_layout(
+    device: &Device,
+    use_inline_uniform_block: bool,
+    bindings: &[DescriptorSetLayoutBinding],
+) -> vk::DescriptorSetLayout {
+    let mut bindings_vk = Vec::new();
+    for (i, binding) in bindings.iter().enumerate() {
+        match binding {
+            DescriptorSetLayoutBinding::Sampler => {
+                bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
+                    descriptor_type: vk::DescriptorType::SAMPLER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                });
+            }
+            DescriptorSetLayoutBinding::SampledImage => {
+                bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
+                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                });
+            }
+            DescriptorSetLayoutBinding::CombinedImageSampler => {
+                bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                });
+            }
+            DescriptorSetLayoutBinding::StorageImage { count } => {
+                bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                    binding: i as u32,
+                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                    descriptor_count: *count,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                });
+            }
+            DescriptorSetLayoutBinding::UniformData { size } => {
+                if use_inline_uniform_block {
+                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                        binding: i as u32,
+                        descriptor_type: vk::DescriptorType::INLINE_UNIFORM_BLOCK_EXT,
+                        descriptor_count: *size,
+                        stage_flags: vk::ShaderStageFlags::ALL,
+                        ..Default::default()
+                    });
+                } else {
+                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                        binding: i as u32,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::ALL,
+                        ..Default::default()
+                    });
+                }
+            }
+            DescriptorSetLayoutBinding::StorageBuffer => bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                binding: i as u32,
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::ALL,
+                ..Default::default()
+            }),
+            DescriptorSetLayoutBinding::AccelerationStructure => bindings_vk.push(vk::DescriptorSetLayoutBinding {
+                binding: i as u32,
+                descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::ALL,
+                ..Default::default()
+            }),
+        }
+    }
+    let create_info = vk::DescriptorSetLayoutCreateInfo::builder().p_bindings(&bindings_vk);
+    unsafe { device.create_descriptor_set_layout(&create_info, None) }.unwrap()
+}
+
+struct DescriptorSetLayoutCache2 {
+    context: SharedContext,
+    use_inline_uniform_block: bool,
+    layouts: HashMap<TypeId, vk::DescriptorSetLayout>,
+}
+
+impl DescriptorSetLayoutCache2 {
+    fn new(context: &SharedContext, use_inline_uniform_block: bool) -> Self {
+        Self {
+            context: SharedContext::clone(context),
+            use_inline_uniform_block,
+            layouts: HashMap::new(),
+        }
+    }
+
+    pub fn get_layout(&mut self, key: TypeId, bindings: &[DescriptorSetLayoutBinding]) -> vk::DescriptorSetLayout {
+        let device = &self.context.device;
+        let use_inline_uniform_block = self.use_inline_uniform_block;
+        *self
+            .layouts
+            .entry(key)
+            .or_insert_with(|| create_descriptor_set_layout(device, use_inline_uniform_block, bindings))
+    }
+}
+
+impl Drop for DescriptorSetLayoutCache2 {
+    fn drop(&mut self) {
+        let device = &self.context.device;
+        for (_, layout) in self.layouts.drain() {
+            unsafe { device.destroy_descriptor_set_layout(Some(layout), None) };
+        }
+    }
+}
+
 pub struct DescriptorSetLayoutCache {
     context: SharedContext,
     use_inline_uniform_block: bool,
@@ -213,83 +340,8 @@ impl DescriptorSetLayoutCache {
     }
 
     pub fn create_descriptor_set_layout(&mut self, bindings: &[DescriptorSetLayoutBinding]) -> vk::DescriptorSetLayout {
-        let mut bindings_vk = Vec::new();
-        for (i, binding) in bindings.iter().enumerate() {
-            match binding {
-                DescriptorSetLayoutBinding::Sampler => {
-                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                        binding: i as u32,
-                        descriptor_type: vk::DescriptorType::SAMPLER,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::ALL,
-                        ..Default::default()
-                    });
-                }
-                DescriptorSetLayoutBinding::SampledImage => {
-                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                        binding: i as u32,
-                        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::ALL,
-                        ..Default::default()
-                    });
-                }
-                DescriptorSetLayoutBinding::CombinedImageSampler => {
-                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                        binding: i as u32,
-                        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::ALL,
-                        ..Default::default()
-                    });
-                }
-                DescriptorSetLayoutBinding::StorageImage { count } => {
-                    bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                        binding: i as u32,
-                        descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                        descriptor_count: *count,
-                        stage_flags: vk::ShaderStageFlags::ALL,
-                        ..Default::default()
-                    });
-                }
-                DescriptorSetLayoutBinding::UniformData { size } => {
-                    if self.use_inline_uniform_block {
-                        bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                            binding: i as u32,
-                            descriptor_type: vk::DescriptorType::INLINE_UNIFORM_BLOCK_EXT,
-                            descriptor_count: *size,
-                            stage_flags: vk::ShaderStageFlags::ALL,
-                            ..Default::default()
-                        });
-                    } else {
-                        bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                            binding: i as u32,
-                            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                            descriptor_count: 1,
-                            stage_flags: vk::ShaderStageFlags::ALL,
-                            ..Default::default()
-                        });
-                    }
-                }
-                DescriptorSetLayoutBinding::StorageBuffer => bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                    binding: i as u32,
-                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::ALL,
-                    ..Default::default()
-                }),
-                DescriptorSetLayoutBinding::AccelerationStructure => bindings_vk.push(vk::DescriptorSetLayoutBinding {
-                    binding: i as u32,
-                    descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::ALL,
-                    ..Default::default()
-                }),
-            }
-        }
-        let create_info = vk::DescriptorSetLayoutCreateInfo::builder().p_bindings(&bindings_vk);
         let descriptor_set_layout =
-            unsafe { self.context.device.create_descriptor_set_layout(&create_info, None) }.unwrap();
+            create_descriptor_set_layout(&self.context.device, self.use_inline_uniform_block, bindings);
         self.descriptor_set_layouts.push(descriptor_set_layout);
         descriptor_set_layout
     }
@@ -327,6 +379,7 @@ impl Drop for DescriptorSetLayoutCache {
 
 pub struct DescriptorPool {
     context: SharedContext,
+    layout_cache: RefCell<DescriptorSetLayoutCache2>,
     pools: [vk::DescriptorPool; Self::COUNT],
     pool_index: usize,
     uniform_data_pool: Option<UniformDataPool>,
@@ -348,6 +401,8 @@ impl DescriptorPool {
         if use_inline_uniform_block {
             println!("using inline uniform block for uniform data");
         }
+
+        let layout_cache = DescriptorSetLayoutCache2::new(context, use_inline_uniform_block);
 
         let pools = {
             let mut descriptor_pool_sizes = Vec::new();
@@ -416,6 +471,7 @@ impl DescriptorPool {
         };
         Self {
             context: SharedContext::clone(context),
+            layout_cache: RefCell::new(layout_cache),
             pools,
             pool_index: 0,
             uniform_data_pool: if use_inline_uniform_block {
@@ -436,6 +492,14 @@ impl DescriptorPool {
         if let Some(uniform_data_pool) = self.uniform_data_pool.as_mut() {
             uniform_data_pool.begin_frame();
         }
+    }
+
+    pub fn get_descriptor_set_layout(
+        &self,
+        key: TypeId,
+        bindings: &[DescriptorSetLayoutBinding],
+    ) -> vk::DescriptorSetLayout {
+        self.layout_cache.borrow_mut().get_layout(key, bindings)
     }
 
     pub fn create_descriptor_set(

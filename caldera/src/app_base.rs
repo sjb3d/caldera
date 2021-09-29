@@ -53,6 +53,31 @@ pub fn dispatch_helper(
     }
 }
 
+pub fn dispatch_helper2(
+    device: &Device,
+    pipeline_cache: &PipelineCache,
+    cmd: vk::CommandBuffer,
+    shader_name: &str,
+    constants: &[SpecializationConstant],
+    descriptor_set: DescriptorSet,
+    grid_size: UVec2,
+) {
+    let pipeline_layout = pipeline_cache.get_pipeline_layout(slice::from_ref(&descriptor_set.layout));
+    let pipeline = pipeline_cache.get_compute(shader_name, constants, pipeline_layout);
+    unsafe {
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::COMPUTE,
+            pipeline_layout,
+            0,
+            slice::from_ref(&descriptor_set.set),
+            &[],
+        );
+        device.cmd_dispatch(cmd, grid_size.x, grid_size.y, 1);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw_helper(
     device: &Device,
@@ -79,6 +104,38 @@ pub fn draw_helper(
             pipeline_layout,
             0,
             slice::from_ref(&descriptor_set),
+            &[],
+        );
+        device.cmd_draw(cmd, vertex_count, 1, 0, 0);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_helper2(
+    device: &Device,
+    pipeline_cache: &PipelineCache,
+    cmd: vk::CommandBuffer,
+    state: &GraphicsPipelineState,
+    vertex_shader_name: &str,
+    fragment_shader_name: &str,
+    descriptor_set: DescriptorSet,
+    vertex_count: u32,
+) {
+    let pipeline_layout = pipeline_cache.get_pipeline_layout(slice::from_ref(&descriptor_set.layout));
+    let pipeline = pipeline_cache.get_graphics(
+        VertexShaderDesc::standard(vertex_shader_name),
+        fragment_shader_name,
+        pipeline_layout,
+        state,
+    );
+    unsafe {
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::GRAPHICS,
+            pipeline_layout,
+            0,
+            slice::from_ref(&descriptor_set.set),
             &[],
         );
         device.cmd_draw(cmd, vertex_count, 1, 0, 0);

@@ -4,7 +4,9 @@ use imgui::Ui;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use spark::{vk, Builder, Device};
 use std::{
+    cell::RefCell,
     collections::HashMap,
+    convert::TryInto,
     ffi::CStr,
     fs::File,
     io::{self, prelude::*},
@@ -139,6 +141,43 @@ impl Drop for ShaderLoader {
             unsafe {
                 self.context.device.destroy_shader_module(Some(shader), None);
             }
+        }
+    }
+}
+
+const MAX_DESCRIPTOR_SETS_PER_PIPELINE: usize = 2;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PipelineLayoutKey(ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS_PER_PIPELINE>);
+
+struct PipelineLayoutCache {
+    context: SharedContext,
+    layouts: HashMap<PipelineLayoutKey, vk::PipelineLayout>,
+}
+
+impl PipelineLayoutCache {
+    fn new(context: &SharedContext) -> Self {
+        Self {
+            context: SharedContext::clone(&context),
+            layouts: HashMap::new(),
+        }
+    }
+
+    fn get_layout(&mut self, descriptor_set_layouts: &[vk::DescriptorSetLayout]) -> vk::PipelineLayout {
+        let device = &self.context.device;
+        let key = PipelineLayoutKey(descriptor_set_layouts.try_into().unwrap());
+        *self.layouts.entry(key).or_insert_with(|| {
+            let create_info = vk::PipelineLayoutCreateInfo::builder().p_set_layouts(descriptor_set_layouts);
+            unsafe { device.create_pipeline_layout(&create_info, None) }.unwrap()
+        })
+    }
+}
+
+impl Drop for PipelineLayoutCache {
+    fn drop(&mut self) {
+        let device = &self.context.device;
+        for (_, layout) in self.layouts.drain() {
+            unsafe { device.destroy_pipeline_layout(Some(layout), None) };
         }
     }
 }
@@ -346,6 +385,7 @@ enum PipelineCacheKey {
 pub struct PipelineCache {
     context: SharedContext,
     shader_loader: ShaderLoader,
+    layout_cache: RefCell<PipelineLayoutCache>,
     pipeline_cache: vk::PipelineCache,
     current_pipelines: HashMap<PipelineCacheKey, vk::Pipeline>,
     new_pipelines: Mutex<HashMap<PipelineCacheKey, vk::Pipeline>>,
@@ -353,6 +393,7 @@ pub struct PipelineCache {
 
 impl PipelineCache {
     pub fn new<P: AsRef<Path>>(context: &SharedContext, path: P) -> Self {
+        let layout_cache = PipelineLayoutCache::new(context);
         let pipeline_cache = {
             // TODO: load from file
             let create_info = vk::PipelineCacheCreateInfo {
@@ -368,6 +409,7 @@ impl PipelineCache {
         Self {
             context: SharedContext::clone(context),
             shader_loader: ShaderLoader::new(context, path),
+            layout_cache: RefCell::new(layout_cache),
             pipeline_cache,
             current_pipelines: HashMap::new(),
             new_pipelines: Mutex::new(HashMap::new()),
@@ -381,6 +423,10 @@ impl PipelineCache {
         for (k, v) in new_pipelines.drain() {
             self.current_pipelines.insert(k, v);
         }
+    }
+
+    pub fn get_pipeline_layout(&self, descriptor_set_layouts: &[vk::DescriptorSetLayout]) -> vk::PipelineLayout {
+        self.layout_cache.borrow_mut().get_layout(descriptor_set_layouts)
     }
 
     pub fn get_compute(
