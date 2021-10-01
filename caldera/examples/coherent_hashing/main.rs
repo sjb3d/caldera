@@ -222,13 +222,13 @@ impl App {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
-                let circles = self.circles;
+                let circles = &self.circles;
                 move |params, cmd| {
                     let input_image_view = params.get_image_view(input_image);
 
                     let descriptor_set = GenerateImageDescriptorSet::create(
                         descriptor_pool,
-                        |buf: &mut GenerateImageUniforms| *buf = GenerateImageUniforms { circles },
+                        |buf: &mut GenerateImageUniforms| *buf = GenerateImageUniforms { circles: *circles },
                         input_image_view,
                     );
 

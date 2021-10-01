@@ -2145,8 +2145,6 @@ impl Renderer {
         let wavelength_inv_cdf_image_view = resource_loader.get_image_view(self.wavelength_inv_cdf_image)?;
         let wavelength_pdf_image_view = resource_loader.get_image_view(self.wavelength_pdf_image)?;
         let xyz_matching_image_view = resource_loader.get_image_view(self.xyz_matching_image)?;
-        let clamp_point_sampler = self.clamp_point_sampler;
-        let clamp_linear_sampler = self.clamp_linear_sampler;
 
         // do a pass
         if !progress.done(&self.params) {
@@ -2256,17 +2254,17 @@ impl Renderer {
                             pmj_samples_image_view,
                             sobol_samples_image_view,
                             illuminants_image_view,
-                            clamp_linear_sampler,
+                            self.clamp_linear_sampler,
                             conductors_image_view,
-                            clamp_linear_sampler,
+                            self.clamp_linear_sampler,
                             smits_table_image_view,
-                            clamp_point_sampler,
+                            self.clamp_point_sampler,
                             wavelength_inv_cdf_image_view,
-                            clamp_linear_sampler,
+                            self.clamp_linear_sampler,
                             wavelength_pdf_image_view,
-                            clamp_point_sampler,
+                            self.clamp_point_sampler,
                             xyz_matching_image_view,
-                            clamp_linear_sampler,
+                            self.clamp_linear_sampler,
                             &temp_image_views,
                         );
 
