@@ -1,19 +1,23 @@
-use crate::{heap::*, prelude::*, resource::*};
+use crate::{heap::*, prelude::*};
 use bytemuck::Pod;
 use imgui::Ui;
+use slotmap::{new_key_type, SlotMap};
 use spark::vk;
-use std::collections::VecDeque;
-use std::slice;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
-use std::thread::JoinHandle;
+use std::{
+    collections::VecDeque,
+    slice,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+    },
+    thread::{self, JoinHandle},
+};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct StaticBufferHandle(ResourceHandle);
+new_key_type! {
+    pub struct StaticBufferHandle;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct StaticImageHandle(ResourceHandle);
+    pub struct StaticImageHandle;
+}
 
 enum StaticBufferResource {
     Empty,
@@ -68,8 +72,8 @@ unsafe impl Sync for ResourceStagingMapping {}
 struct ResourceLoaderShared {
     context: SharedContext,
     exit_signal: AtomicBool,
-    buffers: Mutex<ResourceVec<StaticBufferResource>>,
-    images: Mutex<ResourceVec<StaticImageResource>>,
+    buffers: Mutex<SlotMap<StaticBufferHandle, StaticBufferResource>>,
+    images: Mutex<SlotMap<StaticImageHandle, StaticImageResource>>,
     staging_buffer: UniqueBuffer,
     staging_mapping: ResourceStagingMapping,
     staging_size: u32,
@@ -152,8 +156,8 @@ impl ResourceLoader {
         let shared = Arc::new(ResourceLoaderShared {
             context: SharedContext::clone(context),
             exit_signal: AtomicBool::new(false),
-            buffers: Mutex::new(ResourceVec::new()),
-            images: Mutex::new(ResourceVec::new()),
+            buffers: Mutex::new(SlotMap::with_key()),
+            images: Mutex::new(SlotMap::with_key()),
             staging_buffer,
             staging_mapping: ResourceStagingMapping(staging_mapping),
             staging_size,
@@ -185,12 +189,12 @@ impl ResourceLoader {
 
     pub fn create_buffer(&mut self) -> StaticBufferHandle {
         let mut buffers = self.shared.buffers.lock().unwrap();
-        StaticBufferHandle(buffers.allocate(StaticBufferResource::Empty))
+        buffers.insert(StaticBufferResource::Empty)
     }
 
     pub fn create_image(&mut self) -> StaticImageHandle {
         let mut images = self.shared.images.lock().unwrap();
-        StaticImageHandle(images.allocate(StaticImageResource::Empty))
+        images.insert(StaticImageResource::Empty)
     }
 
     pub fn async_load(&mut self, loader: impl FnOnce(&mut ResourceAllocator) + Send + 'static) {
@@ -266,7 +270,7 @@ impl ResourceLoader {
                     );
 
                     let mut buffers = self.shared.buffers.lock().unwrap();
-                    let resource = buffers.get_mut(handle.0).unwrap();
+                    let resource = buffers.get_mut(handle).unwrap();
                     assert!(matches!(resource, StaticBufferResource::Mapped));
                     *resource = StaticBufferResource::Ready { desc, buffer };
                 }
@@ -330,7 +334,7 @@ impl ResourceLoader {
                     );
 
                     let mut images = self.shared.images.lock().unwrap();
-                    let resource = images.get_mut(handle.0).unwrap();
+                    let resource = images.get_mut(handle).unwrap();
                     assert!(matches!(resource, StaticImageResource::Mapped));
                     *resource = StaticImageResource::Ready {
                         desc,
@@ -350,7 +354,7 @@ impl ResourceLoader {
     pub fn get_buffer_desc(&self, handle: StaticBufferHandle) -> Option<BufferDesc> {
         let buffers = self.shared.buffers.lock().unwrap();
         buffers
-            .get(handle.0)
+            .get(handle)
             .and_then(|r| match r {
                 StaticBufferResource::Ready { desc, .. } => Some(desc),
                 _ => None,
@@ -360,7 +364,7 @@ impl ResourceLoader {
 
     pub fn get_buffer(&self, handle: StaticBufferHandle) -> Option<vk::Buffer> {
         let buffers = self.shared.buffers.lock().unwrap();
-        buffers.get(handle.0).and_then(|r| match r {
+        buffers.get(handle).and_then(|r| match r {
             StaticBufferResource::Ready { buffer, .. } => Some(buffer.0),
             _ => None,
         })
@@ -369,7 +373,7 @@ impl ResourceLoader {
     pub fn get_image_desc(&self, handle: StaticImageHandle) -> Option<ImageDesc> {
         let images = self.shared.images.lock().unwrap();
         images
-            .get(handle.0)
+            .get(handle)
             .and_then(|r| match r {
                 StaticImageResource::Ready { desc, .. } => Some(desc),
                 _ => None,
@@ -379,7 +383,7 @@ impl ResourceLoader {
 
     pub fn get_image(&self, handle: StaticImageHandle) -> Option<vk::Image> {
         let images = self.shared.images.lock().unwrap();
-        images.get(handle.0).and_then(|r| match r {
+        images.get(handle).and_then(|r| match r {
             StaticImageResource::Ready { image, .. } => Some(image.0),
             _ => None,
         })
@@ -387,7 +391,7 @@ impl ResourceLoader {
 
     pub fn get_image_view(&self, handle: StaticImageHandle) -> Option<vk::ImageView> {
         let images = self.shared.images.lock().unwrap();
-        images.get(handle.0).and_then(|r| match r {
+        images.get(handle).and_then(|r| match r {
             StaticImageResource::Ready { image_view, .. } => Some(image_view.0),
             _ => None,
         })
@@ -396,12 +400,12 @@ impl ResourceLoader {
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
         ui.text("loader buffers");
         ui.next_column();
-        ui.text(format!("{}", self.shared.buffers.lock().unwrap().active_count()));
+        ui.text(format!("{}", self.shared.buffers.lock().unwrap().len()));
         ui.next_column();
 
         ui.text("loader images");
         ui.next_column();
-        ui.text(format!("{}", self.shared.images.lock().unwrap().active_count()));
+        ui.text(format!("{}", self.shared.images.lock().unwrap().len()));
         ui.next_column();
 
         self.resource_cache.ui_stats_table_rows(ui, "loader");
@@ -514,7 +518,7 @@ impl ResourceAllocator {
     ) -> Option<ResourceWriter<'_>> {
         {
             let mut buffers = self.shared.buffers.lock().unwrap();
-            let resource = buffers.get_mut(handle.0).unwrap();
+            let resource = buffers.get_mut(handle).unwrap();
             assert!(matches!(resource, StaticBufferResource::Empty));
             *resource = StaticBufferResource::Mapped;
         }
@@ -542,7 +546,7 @@ impl ResourceAllocator {
     ) -> Option<ResourceWriter<'_>> {
         {
             let mut images = self.shared.images.lock().unwrap();
-            let resource = images.get_mut(handle.0).unwrap();
+            let resource = images.get_mut(handle).unwrap();
             assert!(matches!(resource, StaticImageResource::Empty));
             *resource = StaticImageResource::Mapped;
         }

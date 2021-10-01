@@ -20,6 +20,7 @@ ultraviolet = { version = "0.8.1", features = ["int", "bytemuck"] }
 bitvec = "0.22"
 structopt = "0.3"
 strum = { version = "0.21", features = ["derive"] }
+slotmap = "1.0"
  
 [dev-dependencies]
 ply-rs = "0.1.3"

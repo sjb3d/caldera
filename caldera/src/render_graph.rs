@@ -1,6 +1,7 @@
-use crate::{prelude::*, resource::*};
+use crate::prelude::*;
 use arrayvec::ArrayVec;
 use imgui::Ui;
+use slotmap::{new_key_type, SlotMap};
 use spark::{vk, Builder, Device};
 use std::{ffi::CStr, mem};
 
@@ -31,11 +32,11 @@ use std::{ffi::CStr, mem};
     * Vulkan draw and dispatch commands
 */
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct BufferHandle(ResourceHandle);
+new_key_type! {
+    pub struct BufferHandle;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ImageHandle(ResourceHandle);
+    pub struct ImageHandle;
+}
 
 enum BufferResource {
     Temporary {
@@ -194,13 +195,17 @@ impl ResourceSet {
         }
     }
 
-    fn begin_frame(&mut self, buffers: &mut ResourceVec<BufferResource>, images: &mut ResourceVec<ImageResource>) {
+    fn begin_frame(
+        &mut self,
+        buffers: &mut SlotMap<BufferHandle, BufferResource>,
+        images: &mut SlotMap<ImageHandle, ImageResource>,
+    ) {
         self.allocator.reset();
         for buffer in self.buffers.drain(..) {
-            buffers.free(buffer.0);
+            buffers.remove(buffer).unwrap();
         }
         for image in self.images.drain(..) {
-            images.free(image.0);
+            images.remove(image).unwrap();
         }
     }
 }
@@ -208,8 +213,8 @@ impl ResourceSet {
 pub struct RenderGraph {
     resource_cache: ResourceCache,
     render_cache: RenderCache,
-    buffers: ResourceVec<BufferResource>,
-    images: ResourceVec<ImageResource>,
+    buffers: SlotMap<BufferHandle, BufferResource>,
+    images: SlotMap<ImageHandle, ImageResource>,
     temp_allocator: Allocator,
     ping_pong_current_set: ResourceSet,
     ping_pong_prev_set: ResourceSet,
@@ -221,8 +226,8 @@ impl RenderGraph {
         Self {
             resource_cache: ResourceCache::new(context),
             render_cache: RenderCache::new(context),
-            buffers: ResourceVec::new(),
-            images: ResourceVec::new(),
+            buffers: SlotMap::with_key(),
+            images: SlotMap::with_key(),
             temp_allocator: Allocator::new(context, temp_chunk_size),
             ping_pong_current_set: ResourceSet::new(context, ping_pong_chunk_size),
             ping_pong_prev_set: ResourceSet::new(context, ping_pong_chunk_size),
@@ -237,12 +242,12 @@ impl RenderGraph {
         buffer: UniqueBuffer,
         current_usage: BufferUsage,
     ) -> BufferHandle {
-        BufferHandle(self.buffers.allocate(BufferResource::Ready {
+        self.buffers.insert(BufferResource::Ready {
             desc: *desc,
             buffer,
             current_usage,
             all_usage_check: all_usage,
-        }))
+        })
     }
 
     pub fn create_buffer(
@@ -262,7 +267,7 @@ impl RenderGraph {
     }
 
     fn allocate_temporary_buffer(&mut self, handle: BufferHandle) {
-        let buffer_resource = self.buffers.get_mut(handle.0).unwrap();
+        let buffer_resource = self.buffers.get_mut(handle).unwrap();
         *buffer_resource = match buffer_resource {
             BufferResource::Temporary { desc, all_usage } => {
                 let all_usage_flags = all_usage.as_flags();
@@ -282,11 +287,11 @@ impl RenderGraph {
     }
 
     pub fn get_buffer_desc(&self, handle: BufferHandle) -> &BufferDesc {
-        self.buffers.get(handle.0).unwrap().desc()
+        self.buffers.get(handle).unwrap().desc()
     }
 
     fn free_buffer(&mut self, handle: BufferHandle) {
-        self.buffers.free(handle.0);
+        self.buffers.remove(handle).unwrap();
     }
 
     fn create_ready_image(
@@ -297,13 +302,13 @@ impl RenderGraph {
         current_usage: ImageUsage,
     ) -> ImageHandle {
         let image_view = self.resource_cache.get_image_view(desc, image);
-        ImageHandle(self.images.allocate(ImageResource::Ready {
+        self.images.insert(ImageResource::Ready {
             desc: *desc,
             image,
             image_view,
             current_usage,
             all_usage_check: all_usage,
-        }))
+        })
     }
 
     pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage, allocator: &mut Allocator) -> ImageHandle {
@@ -318,7 +323,7 @@ impl RenderGraph {
     }
 
     fn allocate_temporary_image(&mut self, handle: ImageHandle) {
-        let image_resource = self.images.get_mut(handle.0).unwrap();
+        let image_resource = self.images.get_mut(handle).unwrap();
         *image_resource = match image_resource {
             ImageResource::Temporary { desc, all_usage } => {
                 let all_usage_flags = all_usage.as_flags();
@@ -340,11 +345,11 @@ impl RenderGraph {
     }
 
     pub fn get_image_desc(&self, handle: ImageHandle) -> &ImageDesc {
-        self.images.get(handle.0).unwrap().desc()
+        self.images.get(handle).unwrap().desc()
     }
 
     fn free_image(&mut self, handle: ImageHandle) {
-        self.images.free(handle.0);
+        self.images.remove(handle).unwrap();
     }
 
     pub fn begin_frame(&mut self) {
@@ -363,7 +368,7 @@ impl RenderGraph {
         cmd: vk::CommandBuffer,
     ) {
         self.buffers
-            .get_mut(handle.0)
+            .get_mut(handle)
             .unwrap()
             .transition_usage(new_usage, &context.device, cmd);
     }
@@ -378,7 +383,7 @@ impl RenderGraph {
     ) {
         cmd.notify_image_use(handle, query_pool);
         self.images
-            .get_mut(handle.0)
+            .get_mut(handle)
             .unwrap()
             .transition_usage(new_usage, &context.device, cmd.current);
     }
@@ -386,12 +391,12 @@ impl RenderGraph {
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
         ui.text("graph buffers");
         ui.next_column();
-        ui.text(format!("{}", self.buffers.active_count()));
+        ui.text(format!("{}", self.buffers.len()));
         ui.next_column();
 
         ui.text("graph images");
         ui.next_column();
-        ui.text(format!("{}", self.images.active_count()));
+        ui.text(format!("{}", self.images.len()));
         ui.next_column();
 
         self.resource_cache.ui_stats_table_rows(ui, "graph");
@@ -516,11 +521,11 @@ impl<'a> RenderParameterAccess<'a> {
     }
 
     pub fn get_buffer(&self, handle: BufferHandle) -> vk::Buffer {
-        self.0.buffers.get(handle.0).unwrap().buffer().unwrap().0
+        self.0.buffers.get(handle).unwrap().buffer().unwrap().0
     }
 
     pub fn get_image_view(&self, handle: ImageHandle) -> vk::ImageView {
-        self.0.images.get(handle.0).unwrap().image_view().unwrap().0
+        self.0.images.get(handle).unwrap().image_view().unwrap().0
     }
 }
 
@@ -566,7 +571,7 @@ impl<'a> RenderSchedule<'a> {
     }
 
     pub fn get_buffer_hack(&self, handle: BufferHandle) -> vk::Buffer {
-        self.render_graph.buffers.get(handle.0).unwrap().buffer().unwrap().0
+        self.render_graph.buffers.get(handle).unwrap().buffer().unwrap().0
     }
 
     pub fn import_buffer(
@@ -589,10 +594,10 @@ impl<'a> RenderSchedule<'a> {
     }
 
     pub fn describe_buffer(&mut self, desc: &BufferDesc) -> BufferHandle {
-        let handle = BufferHandle(self.render_graph.buffers.allocate(BufferResource::Temporary {
+        let handle = self.render_graph.buffers.insert(BufferResource::Temporary {
             desc: *desc,
             all_usage: BufferUsage::empty(),
-        }));
+        });
         self.temporaries.push(TemporaryHandle::Buffer(handle));
         handle
     }
@@ -617,10 +622,10 @@ impl<'a> RenderSchedule<'a> {
     }
 
     pub fn describe_image(&mut self, desc: &ImageDesc) -> ImageHandle {
-        let handle = ImageHandle(self.render_graph.images.allocate(ImageResource::Temporary {
+        let handle = self.render_graph.images.insert(ImageResource::Temporary {
             desc: *desc,
             all_usage: ImageUsage::empty(),
-        }));
+        });
         self.temporaries.push(TemporaryHandle::Image(handle));
         handle
     }
@@ -670,20 +675,20 @@ impl<'a> RenderSchedule<'a> {
                 Command::Graphics { common, state, .. } => {
                     self.render_graph
                         .images
-                        .get_mut(state.color_output.0)
+                        .get_mut(state.color_output)
                         .unwrap()
                         .declare_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
                     if let Some(handle) = state.color_temp {
                         self.render_graph
                             .images
-                            .get_mut(handle.0)
+                            .get_mut(handle)
                             .unwrap()
                             .declare_usage(ImageUsage::TRANSIENT_COLOR_ATTACHMENT);
                     }
                     if let Some(handle) = state.depth_temp {
                         self.render_graph
                             .images
-                            .get_mut(handle.0)
+                            .get_mut(handle)
                             .unwrap()
                             .declare_usage(ImageUsage::TRANSIENT_DEPTH_ATTACHMENT)
                     }
@@ -695,16 +700,12 @@ impl<'a> RenderSchedule<'a> {
                     ParameterDesc::Buffer { handle, usage } => {
                         self.render_graph
                             .buffers
-                            .get_mut(handle.0)
+                            .get_mut(*handle)
                             .unwrap()
                             .declare_usage(*usage);
                     }
                     ParameterDesc::Image { handle, usage } => {
-                        self.render_graph
-                            .images
-                            .get_mut(handle.0)
-                            .unwrap()
-                            .declare_usage(*usage);
+                        self.render_graph.images.get_mut(*handle).unwrap().declare_usage(*usage);
                     }
                 }
             }
@@ -780,13 +781,13 @@ impl<'a> RenderSchedule<'a> {
 
                     // color output (always present for now)
                     clear_values.push(color_clear_value);
-                    let color_output_resource = self.render_graph.images.get(state.color_output.0).unwrap();
+                    let color_output_resource = self.render_graph.images.get(state.color_output).unwrap();
                     let color_output_desc = color_output_resource.desc();
                     let color_output_image_view = color_output_resource.image_view().unwrap();
 
                     // color temp (if present)
                     let (samples, color_temp_image_view) = if let Some(color_temp) = state.color_temp {
-                        let color_temp_resource = self.render_graph.images.get(color_temp.0).unwrap();
+                        let color_temp_resource = self.render_graph.images.get(color_temp).unwrap();
                         let color_temp_desc = color_temp_resource.desc();
                         let color_temp_image_view = color_temp_resource.image_view().unwrap();
 
@@ -802,7 +803,7 @@ impl<'a> RenderSchedule<'a> {
 
                     // depth temp (if present)
                     let (depth_format, depth_temp_image_view) = if let Some(depth_temp) = state.depth_temp {
-                        let depth_temp_resource = self.render_graph.images.get(depth_temp.0).unwrap();
+                        let depth_temp_resource = self.render_graph.images.get(depth_temp).unwrap();
                         let depth_temp_desc = depth_temp_resource.desc();
                         let depth_temp_image_view = depth_temp_resource.image_view().unwrap();
 
@@ -857,7 +858,7 @@ impl<'a> RenderSchedule<'a> {
                     // TODO: final layout as part of render pass
                     self.render_graph
                         .images
-                        .get_mut(state.color_output.0)
+                        .get_mut(state.color_output)
                         .unwrap()
                         .force_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
                 }

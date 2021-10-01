@@ -12,7 +12,6 @@ mod pipeline_cache;
 mod query;
 mod render_cache;
 mod render_graph;
-mod resource;
 mod swapchain;
 pub mod window_surface;
 
