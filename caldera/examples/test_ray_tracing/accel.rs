@@ -37,19 +37,18 @@ struct AccelerationStructureInstance {
 struct AccelLevel {
     context: SharedContext,
     accel: vk::AccelerationStructureKHR,
-    buffer: BufferHandle,
+    buffer_id: BufferId,
 }
 
 impl AccelLevel {
-    fn new_bottom_level<'a>(
-        context: &'a SharedContext,
-        mesh_info: &MeshInfo,
-        mesh_buffers: &MeshBuffers,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
-    ) -> AccelLevel {
-        let vertex_buffer_address = unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.position) };
-        let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.index) };
+    async fn new_bottom_level(resource_loader: &ResourceLoader, mesh_info: &MeshInfo) -> Self {
+        let context = resource_loader.context();
+        let vertex_buffer_address = unsafe {
+            context
+                .device
+                .get_buffer_device_address_helper(mesh_info.position_buffer)
+        };
+        let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(mesh_info.index_buffer) };
 
         let geometry_triangles_data = vk::AccelerationStructureGeometryTrianglesDataKHR {
             vertex_format: vk::Format::R32G32B32_SFLOAT,
@@ -100,85 +99,92 @@ impl AccelLevel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
-        let buffer = schedule.create_buffer(
-            &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE
-                | BufferUsage::ACCELERATION_STRUCTURE_READ
-                | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
-            global_allocator,
-        );
-        let accel = {
-            let create_info = vk::AccelerationStructureCreateInfoKHR {
-                buffer: Some(schedule.get_buffer_hack(buffer)),
-                size: buffer_desc.size as vk::DeviceSize,
-                ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                ..Default::default()
-            };
-            unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-        };
+        let triangle_count = mesh_info.triangle_count;
+        let (buffer_id, accel) = resource_loader
+            .graphics(move |ctx: GraphicsTaskContext| {
+                let context = ctx.context;
+                let schedule = ctx.schedule;
 
-        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
-
-        schedule.add_compute(
-            command_name!("build"),
-            |params| {
-                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
-                params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
-            },
-            {
-                let triangle_count = mesh_info.triangle_count;
-                move |params, cmd| {
-                    let scratch_buffer = params.get_buffer(scratch_buffer);
-
-                    let scratch_buffer_address =
-                        unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
-
-                    let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+                let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
+                let buffer_id = schedule.create_buffer(
+                    &buffer_desc,
+                    BufferUsage::ACCELERATION_STRUCTURE_WRITE
+                        | BufferUsage::ACCELERATION_STRUCTURE_READ
+                        | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                );
+                let accel = {
+                    let create_info = vk::AccelerationStructureCreateInfoKHR {
+                        buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                        size: buffer_desc.size as vk::DeviceSize,
                         ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                        flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
-                        mode: vk::BuildAccelerationStructureModeKHR::BUILD,
-                        dst_acceleration_structure: Some(accel),
-                        geometry_count: 1,
-                        p_geometries: &geometry,
-                        scratch_data: vk::DeviceOrHostAddressKHR {
-                            device_address: scratch_buffer_address,
-                        },
                         ..Default::default()
                     };
+                    unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+                };
 
-                    let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
-                        primitive_count: triangle_count,
-                        primitive_offset: 0,
-                        first_vertex: 0,
-                        transform_offset: 0,
-                    };
+                let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
-                    unsafe {
-                        context.device.cmd_build_acceleration_structures_khr(
-                            cmd,
-                            slice::from_ref(&build_info),
-                            &[&build_range_info],
-                        )
-                    };
-                }
-            },
-        );
+                schedule.add_compute(
+                    command_name!("build"),
+                    |params| {
+                        params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                        params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
+                    },
+                    {
+                        move |params, cmd| {
+                            let scratch_buffer = params.get_buffer(scratch_buffer);
+
+                            let scratch_buffer_address =
+                                unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
+
+                            let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+                                ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                                flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                                mode: vk::BuildAccelerationStructureModeKHR::BUILD,
+                                dst_acceleration_structure: Some(accel),
+                                geometry_count: 1,
+                                p_geometries: &geometry,
+                                scratch_data: vk::DeviceOrHostAddressKHR {
+                                    device_address: scratch_buffer_address,
+                                },
+                                ..Default::default()
+                            };
+
+                            let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
+                                primitive_count: triangle_count,
+                                primitive_offset: 0,
+                                first_vertex: 0,
+                                transform_offset: 0,
+                            };
+
+                            unsafe {
+                                context.device.cmd_build_acceleration_structures_khr(
+                                    cmd,
+                                    slice::from_ref(&build_info),
+                                    &[&build_range_info],
+                                )
+                            };
+                        }
+                    },
+                );
+
+                (buffer_id, accel)
+            })
+            .await;
 
         Self {
-            context: SharedContext::clone(context),
+            context,
             accel,
-            buffer,
+            buffer_id,
         }
     }
 
-    fn new_top_level<'a>(
-        context: &'a SharedContext,
-        bottom_level_buffer: BufferHandle,
+    async fn new_top_level(
+        resource_loader: &ResourceLoader,
+        bottom_level_buffer_id: BufferId,
         instance_buffer: vk::Buffer,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
     ) -> Self {
+        let context = resource_loader.context();
         let instance_buffer_address = unsafe { context.device.get_buffer_device_address_helper(instance_buffer) };
 
         let geometry_instance_data = vk::AccelerationStructureGeometryInstancesDataKHR {
@@ -222,70 +228,79 @@ impl AccelLevel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
-        let buffer = schedule.create_buffer(
-            &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
-            global_allocator,
-        );
-        let accel = {
-            let create_info = vk::AccelerationStructureCreateInfoKHR {
-                buffer: Some(schedule.get_buffer_hack(buffer)),
-                size: buffer_desc.size as vk::DeviceSize,
-                ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-                ..Default::default()
-            };
-            unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-        };
+        let (buffer_id, accel) = resource_loader
+            .graphics(move |ctx: GraphicsTaskContext| {
+                let context = ctx.context;
+                let schedule = ctx.schedule;
 
-        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
+                let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
+                let buffer_id = schedule.create_buffer(
+                    &buffer_desc,
+                    BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                );
+                let accel = {
+                    let create_info = vk::AccelerationStructureCreateInfoKHR {
+                        buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                        size: buffer_desc.size as vk::DeviceSize,
+                        ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                        ..Default::default()
+                    };
+                    unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+                };
 
-        schedule.add_compute(
-            command_name!("build"),
-            |params| {
-                params.add_buffer(bottom_level_buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
-                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
-                params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
-            },
-            move |params, cmd| {
-                let scratch_buffer = params.get_buffer(scratch_buffer);
+                let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
-                let scratch_buffer_address = unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
-
-                let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
-                    ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-                    flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
-                    mode: vk::BuildAccelerationStructureModeKHR::BUILD,
-                    dst_acceleration_structure: Some(accel),
-                    geometry_count: 1,
-                    p_geometries: &geometry,
-                    scratch_data: vk::DeviceOrHostAddressKHR {
-                        device_address: scratch_buffer_address,
+                schedule.add_compute(
+                    command_name!("build"),
+                    |params| {
+                        params.add_buffer(bottom_level_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                        params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                        params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
                     },
-                    ..Default::default()
-                };
+                    move |params, cmd| {
+                        let scratch_buffer = params.get_buffer(scratch_buffer);
 
-                let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
-                    primitive_count: instance_count,
-                    primitive_offset: 0,
-                    first_vertex: 0,
-                    transform_offset: 0,
-                };
+                        let scratch_buffer_address =
+                            unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
 
-                unsafe {
-                    context.device.cmd_build_acceleration_structures_khr(
-                        cmd,
-                        slice::from_ref(&build_info),
-                        &[&build_range_info],
-                    )
-                };
-            },
-        );
+                        let build_info = vk::AccelerationStructureBuildGeometryInfoKHR {
+                            ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                            flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                            mode: vk::BuildAccelerationStructureModeKHR::BUILD,
+                            dst_acceleration_structure: Some(accel),
+                            geometry_count: 1,
+                            p_geometries: &geometry,
+                            scratch_data: vk::DeviceOrHostAddressKHR {
+                                device_address: scratch_buffer_address,
+                            },
+                            ..Default::default()
+                        };
+
+                        let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
+                            primitive_count: instance_count,
+                            primitive_offset: 0,
+                            first_vertex: 0,
+                            transform_offset: 0,
+                        };
+
+                        unsafe {
+                            context.device.cmd_build_acceleration_structures_khr(
+                                cmd,
+                                slice::from_ref(&build_info),
+                                &[&build_range_info],
+                            )
+                        };
+                    },
+                );
+
+                (buffer_id, accel)
+            })
+            .await;
 
         Self {
-            context: SharedContext::clone(context),
+            context,
             accel,
-            buffer,
+            buffer_id,
         }
     }
 }
@@ -317,46 +332,49 @@ impl ShaderBindingRegion {
 pub struct AccelInfo {
     trace_pipeline_layout: vk::PipelineLayout,
     trace_pipeline: vk::Pipeline,
-    shader_binding_table: StaticBufferHandle,
+    shader_binding_table_buffer: vk::Buffer,
     shader_binding_raygen_region: ShaderBindingRegion,
     shader_binding_miss_region: ShaderBindingRegion,
     shader_binding_hit_region: ShaderBindingRegion,
     bottom_level: AccelLevel,
-    instance_buffer: StaticBufferHandle,
-    top_level: Option<AccelLevel>,
+    top_level: AccelLevel,
 }
 
 impl AccelInfo {
-    pub fn new<'a>(
-        context: &'a SharedContext,
-        descriptor_pool: &DescriptorPool,
-        pipeline_cache: &PipelineCache,
-        resource_loader: &mut ResourceLoader,
-        mesh_info: &'a MeshInfo,
-        mesh_buffers: &'a MeshBuffers,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
-    ) -> Self {
+    pub async fn new(resource_loader: &ResourceLoader, mesh_info: &MeshInfo) -> Self {
+        let context = resource_loader.context();
         let index_buffer_device_address =
-            unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.index) };
-        let attribute_buffer_device_address =
-            unsafe { context.device.get_buffer_device_address_helper(mesh_buffers.attribute) };
+            unsafe { context.device.get_buffer_device_address_helper(mesh_info.index_buffer) };
+        let attribute_buffer_device_address = unsafe {
+            context
+                .device
+                .get_buffer_device_address_helper(mesh_info.attribute_buffer)
+        };
 
         // TODO: figure out live reload, needs to regenerate SBT!
-        let trace_descriptor_set_layout = TraceDescriptorSet::layout(descriptor_pool);
-        let trace_pipeline_layout = pipeline_cache.get_pipeline_layout(slice::from_ref(&trace_descriptor_set_layout));
-        let trace_pipeline = pipeline_cache.get_ray_tracing(
-            &[
-                RayTracingShaderGroupDesc::Raygen("test_ray_tracing/trace.rgen.spv"),
-                RayTracingShaderGroupDesc::Miss("test_ray_tracing/trace.rmiss.spv"),
-                RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "test_ray_tracing/trace.rchit.spv",
-                    any_hit: None,
-                    intersection: None,
-                },
-            ],
-            trace_pipeline_layout,
-        );
+        let (trace_pipeline_layout, trace_pipeline) = resource_loader
+            .graphics(move |ctx: GraphicsTaskContext| {
+                let descriptor_pool = ctx.descriptor_pool;
+                let pipeline_cache = ctx.pipeline_cache;
+                let trace_descriptor_set_layout = TraceDescriptorSet::layout(descriptor_pool);
+                let trace_pipeline_layout = ctx
+                    .pipeline_cache
+                    .get_pipeline_layout(slice::from_ref(&trace_descriptor_set_layout));
+                let trace_pipeline = pipeline_cache.get_ray_tracing(
+                    &[
+                        RayTracingShaderGroupDesc::Raygen("test_ray_tracing/trace.rgen.spv"),
+                        RayTracingShaderGroupDesc::Miss("test_ray_tracing/trace.rmiss.spv"),
+                        RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "test_ray_tracing/trace.rchit.spv",
+                            any_hit: None,
+                            intersection: None,
+                        },
+                    ],
+                    trace_pipeline_layout,
+                );
+                (trace_pipeline_layout, trace_pipeline)
+            })
+            .await;
 
         let (
             shader_binding_raygen_region,
@@ -413,61 +431,55 @@ impl AccelInfo {
             (raygen_region, miss_region, hit_region, next_offset)
         };
 
-        let shader_binding_table = resource_loader.create_buffer();
-        resource_loader.async_load({
-            let context = SharedContext::clone(context);
-            move |allocator| {
-                let rtpp = &context
-                    .physical_device_extra_properties
-                    .as_ref()
-                    .unwrap()
-                    .ray_tracing_pipeline;
-                let shader_group_count = 3;
-                let handle_size = rtpp.shader_group_handle_size as usize;
-                let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
-                unsafe {
-                    context.device.get_ray_tracing_shader_group_handles_khr(
-                        trace_pipeline,
-                        0,
-                        shader_group_count,
-                        &mut handle_data,
-                    )
-                }
-                .unwrap();
-
-                let remain = handle_data.as_slice();
-                let (raygen_group_handle, remain) = remain.split_at(handle_size);
-                let (miss_group_handle, remain) = remain.split_at(handle_size);
-                let hit_group_handle = remain;
-
-                let hit_data = HitRecordData {
-                    index_buffer_address: index_buffer_device_address,
-                    attribute_buffer_address: attribute_buffer_device_address,
-                };
-
-                let desc = BufferDesc::new(shader_binding_table_size as usize);
-                let mut writer = allocator
-                    .map_buffer(
-                        shader_binding_table,
-                        &desc,
-                        BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE,
-                    )
-                    .unwrap();
-
-                assert_eq!(shader_binding_raygen_region.offset, 0);
-                writer.write(raygen_group_handle);
-
-                writer.write_zeros(shader_binding_miss_region.offset as usize - writer.written());
-                writer.write(miss_group_handle);
-
-                writer.write_zeros(shader_binding_hit_region.offset as usize - writer.written());
-                writer.write(hit_group_handle);
-                writer.write(&hit_data);
+        let shader_binding_table_buffer_id = {
+            let rtpp = &context
+                .physical_device_extra_properties
+                .as_ref()
+                .unwrap()
+                .ray_tracing_pipeline;
+            let shader_group_count = 3;
+            let handle_size = rtpp.shader_group_handle_size as usize;
+            let mut handle_data = vec![0u8; (shader_group_count as usize) * handle_size];
+            unsafe {
+                context.device.get_ray_tracing_shader_group_handles_khr(
+                    trace_pipeline,
+                    0,
+                    shader_group_count,
+                    &mut handle_data,
+                )
             }
-        });
+            .unwrap();
 
-        let bottom_level = AccelLevel::new_bottom_level(context, mesh_info, mesh_buffers, global_allocator, schedule);
+            let remain = handle_data.as_slice();
+            let (raygen_group_handle, remain) = remain.split_at(handle_size);
+            let (miss_group_handle, remain) = remain.split_at(handle_size);
+            let hit_group_handle = remain;
 
+            let hit_data = HitRecordData {
+                index_buffer_address: index_buffer_device_address,
+                attribute_buffer_address: attribute_buffer_device_address,
+            };
+
+            let desc = BufferDesc::new(shader_binding_table_size as usize);
+            let mut writer = resource_loader
+                .buffer_writer(&desc, BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE)
+                .await;
+
+            assert_eq!(shader_binding_raygen_region.offset, 0);
+            writer.write(raygen_group_handle);
+
+            writer.write_zeros(shader_binding_miss_region.offset as usize - writer.written());
+            writer.write(miss_group_handle);
+
+            writer.write_zeros(shader_binding_hit_region.offset as usize - writer.written());
+            writer.write(hit_group_handle);
+            writer.write(&hit_data);
+
+            writer.finish().await
+        };
+        let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_table_buffer_id);
+
+        let bottom_level = AccelLevel::new_bottom_level(&resource_loader, mesh_info).await;
         let bottom_level_device_address = {
             let info = vk::AccelerationStructureDeviceAddressInfoKHR {
                 acceleration_structure: Some(bottom_level.accel),
@@ -476,74 +488,51 @@ impl AccelInfo {
             unsafe { context.device.get_acceleration_structure_device_address_khr(&info) }
         };
 
-        let instance_buffer = resource_loader.create_buffer();
-        resource_loader.async_load({
-            let instances = mesh_info.instances;
-            move |allocator| {
-                let desc =
-                    BufferDesc::new(MeshInfo::INSTANCE_COUNT * mem::size_of::<vk::AccelerationStructureInstanceKHR>());
-                let mut writer = allocator
-                    .map_buffer(instance_buffer, &desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
-                    .unwrap();
-
-                for src in instances.iter() {
-                    let instance = AccelerationStructureInstance {
-                        transform: src.into_transform().transposed(),
-                        instance_custom_index_and_mask: 0xff_00_00_00,
-                        instance_shader_binding_table_record_offset_and_flags: 0,
-                        acceleration_structure_reference: bottom_level_device_address,
-                    };
-                    writer.write(&instance);
-                }
+        let instance_buffer_id = {
+            let desc =
+                BufferDesc::new(MeshInfo::INSTANCE_COUNT * mem::size_of::<vk::AccelerationStructureInstanceKHR>());
+            let mut writer = resource_loader
+                .buffer_writer(&desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
+                .await;
+            for src in mesh_info.instances.iter() {
+                let instance = AccelerationStructureInstance {
+                    transform: src.into_transform().transposed(),
+                    instance_custom_index_and_mask: 0xff_00_00_00,
+                    instance_shader_binding_table_record_offset_and_flags: 0,
+                    acceleration_structure_reference: bottom_level_device_address,
+                };
+                writer.write(&instance);
             }
-        });
+            writer.finish().await
+        };
+        let instance_buffer = resource_loader.get_buffer(instance_buffer_id);
+
+        let top_level = AccelLevel::new_top_level(&resource_loader, bottom_level.buffer_id, instance_buffer).await;
 
         Self {
             trace_pipeline_layout,
             trace_pipeline,
-            shader_binding_table,
+            shader_binding_table_buffer,
             shader_binding_raygen_region,
             shader_binding_miss_region,
             shader_binding_hit_region,
             bottom_level,
-            instance_buffer,
-            top_level: None,
-        }
-    }
-
-    pub fn update<'a>(
-        &mut self,
-        context: &'a SharedContext,
-        resource_loader: &ResourceLoader,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
-    ) {
-        if self.top_level.is_none() {
-            if let Some(instance_buffer) = resource_loader.get_buffer(self.instance_buffer) {
-                self.top_level = Some(AccelLevel::new_top_level(
-                    context,
-                    self.bottom_level.buffer,
-                    instance_buffer,
-                    global_allocator,
-                    schedule,
-                ));
-            }
+            top_level,
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn dispatch<'a>(
-        &'a self,
-        context: &'a Context,
-        resource_loader: &ResourceLoader,
-        schedule: &mut RenderSchedule<'a>,
-        descriptor_pool: &'a DescriptorPool,
+    pub fn dispatch<'graph>(
+        &'graph self,
+        context: &'graph Context,
+        schedule: &mut RenderSchedule<'graph>,
+        descriptor_pool: &'graph DescriptorPool,
         swap_size: UVec2,
         ray_origin: Vec3,
         ray_vec_from_coord: Mat3,
-    ) -> Option<ImageHandle> {
-        let top_level = self.top_level.as_ref()?;
-        let shader_binding_table_buffer = resource_loader.get_buffer(self.shader_binding_table)?;
+    ) -> ImageId {
+        let top_level = &self.top_level;
+        let shader_binding_table_buffer = self.shader_binding_table_buffer;
 
         let shader_binding_table_address = unsafe {
             context
@@ -552,20 +541,20 @@ impl AccelInfo {
         };
 
         let output_desc = ImageDesc::new_2d(swap_size, vk::Format::R32_UINT, vk::ImageAspectFlags::COLOR);
-        let output_image = schedule.describe_image(&output_desc);
+        let output_image_id = schedule.describe_image(&output_desc);
 
         schedule.add_compute(
             command_name!("trace"),
             |params| {
                 params.add_buffer(
-                    self.bottom_level.buffer,
+                    self.bottom_level.buffer_id,
                     BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
                 );
-                params.add_buffer(top_level.buffer, BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE);
-                params.add_image(output_image, ImageUsage::RAY_TRACING_STORAGE_WRITE);
+                params.add_buffer(top_level.buffer_id, BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE);
+                params.add_image(output_image_id, ImageUsage::RAY_TRACING_STORAGE_WRITE);
             },
             move |params, cmd| {
-                let output_image_view = params.get_image_view(output_image);
+                let output_image_view = params.get_image_view(output_image_id);
 
                 let trace_descriptor_set = TraceDescriptorSet::create(
                     descriptor_pool,
@@ -618,6 +607,6 @@ impl AccelInfo {
             },
         );
 
-        Some(output_image)
+        output_image_id
     }
 }

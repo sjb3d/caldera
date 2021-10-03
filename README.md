@@ -37,6 +37,6 @@ Screenshot | Description
 ## Potential Future Work
 
 - [ ] Buffer views?
-- [ ] Use futures for async loading
+- [x] Use futures for async loading
 - [ ] Occlusion culling in mesh shader example
 - [ ] Many path tracer features (tracked [here](caldera/examples/path_tracer#potential-future-work))

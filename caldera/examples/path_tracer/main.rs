@@ -173,7 +173,7 @@ struct App {
     context: SharedContext,
 
     scene: Arc<Scene>,
-    renderer: Renderer,
+    renderer: TaskOutput<Renderer>,
     progress: RenderProgress,
 
     show_debug_ui: bool,
@@ -184,20 +184,17 @@ impl App {
     fn new(base: &mut AppBase, scene: Scene, renderer_params: RendererParams) -> Self {
         let context = SharedContext::clone(&base.context);
 
+        let fov_y_override = renderer_params.fov_y_override;
+
         let scene = Arc::new(scene);
-        let renderer = Renderer::new(
-            &context,
-            &scene,
-            &base.systems.descriptor_pool,
-            &base.systems.pipeline_cache,
-            &mut base.systems.resource_loader,
-            &mut base.systems.render_graph,
-            &mut base.systems.global_allocator,
-            renderer_params,
-        );
+        let renderer = base.systems.task_system.task({
+            let resource_loader = base.systems.resource_loader.clone();
+            let scene = Arc::clone(&scene);
+            Renderer::new(resource_loader, scene, renderer_params)
+        });
         let progress = RenderProgress::new();
 
-        let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), renderer.params.fov_y_override);
+        let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), fov_y_override);
         Self {
             context,
             scene,
@@ -221,15 +218,24 @@ impl App {
             .position([5.0, 5.0], imgui::Condition::FirstUseEver)
             .size([350.0, 150.0], imgui::Condition::FirstUseEver)
             .build(&ui, || {
-                self.renderer.debug_ui(&mut self.progress, &ui);
+                let mut renderer = self.renderer.get_mut();
+                if let Some(ref mut renderer) = renderer {
+                    renderer.debug_ui(&mut self.progress, &ui);
+                }
                 let mut needs_reset = false;
                 if CollapsingHeader::new("Camera").default_open(true).build(&ui) {
                     let scene = self.scene.deref();
                     ui.text("Cameras:");
                     for camera_ref in scene.camera_ref_iter() {
                         if ui.small_button(format!("Camera {}", camera_ref.0)) {
-                            self.view_adjust =
-                                ViewAdjust::new(scene.camera(camera_ref), self.renderer.params.fov_y_override);
+                            self.view_adjust = ViewAdjust::new(
+                                scene.camera(camera_ref),
+                                if let Some(ref mut renderer) = renderer {
+                                    renderer.params.fov_y_override
+                                } else {
+                                    None
+                                },
+                            );
                             needs_reset = true;
                         }
                     }
@@ -260,23 +266,27 @@ impl App {
 
         base.systems.draw_ui(&ui);
 
-        let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
-
-        self.renderer.update(
-            &base.context,
-            &mut schedule,
-            &mut base.systems.resource_loader,
-            &mut base.systems.global_allocator,
-        );
-        let result_image = self.renderer.render(
-            &mut self.progress,
-            &base.context,
-            &mut schedule,
-            &base.systems.pipeline_cache,
+        let mut schedule = base.systems.resource_loader.begin_schedule(
+            &mut base.systems.render_graph,
+            base.context.as_ref(),
             &base.systems.descriptor_pool,
-            &base.systems.resource_loader,
-            &self.view_adjust.to_camera(),
+            &base.systems.pipeline_cache,
         );
+
+        let renderer = self.renderer.get();
+
+        let result_image = if let Some(renderer) = renderer {
+            Some(renderer.render(
+                &mut self.progress,
+                &base.context,
+                &mut schedule,
+                &base.systems.pipeline_cache,
+                &base.systems.descriptor_pool,
+                &self.view_adjust.to_camera(),
+            ))
+        } else {
+            None
+        };
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
         let swap_size = base.display.swapchain.get_size();
@@ -308,11 +318,11 @@ impl App {
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 let show_debug_ui = self.show_debug_ui;
-                let renderer_params = &self.renderer.params;
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_size);
 
                     if let Some(result_image) = result_image {
+                        let renderer_params = &renderer.unwrap().params;
                         let result_image_view = params.get_image_view(result_image);
 
                         let rec709_from_xyz = rec709_from_xyz_matrix()
@@ -470,7 +480,7 @@ struct CommandlineApp {
     context: SharedContext,
     systems: AppSystems,
     scene: Arc<Scene>,
-    renderer: Renderer,
+    renderer: TaskOutput<Renderer>,
     progress: RenderProgress,
 
     capture_buffer: CaptureBuffer,
@@ -479,24 +489,19 @@ struct CommandlineApp {
 impl CommandlineApp {
     fn new(context_params: &ContextParams, scene: Scene, renderer_params: RendererParams) -> Self {
         let context = Context::new(None, context_params);
-        let mut systems = AppSystems::new(&context);
+        let systems = AppSystems::new(&context);
+
+        let capture_buffer_size = renderer_params.width * renderer_params.height * 3;
 
         let scene = Arc::new(scene);
-
-        let renderer = Renderer::new(
-            &context,
-            &scene,
-            &systems.descriptor_pool,
-            &systems.pipeline_cache,
-            &mut systems.resource_loader,
-            &mut systems.render_graph,
-            &mut systems.global_allocator,
-            renderer_params,
-        );
-
+        let renderer = systems.task_system.task({
+            let resource_loader = systems.resource_loader.clone();
+            let scene = Arc::clone(&scene);
+            Renderer::new(resource_loader, scene, renderer_params)
+        });
         let progress = RenderProgress::new();
 
-        let capture_buffer = CaptureBuffer::new(&context, renderer.params.width * renderer.params.height * 3);
+        let capture_buffer = CaptureBuffer::new(&context, capture_buffer_size);
 
         Self {
             context,
@@ -509,50 +514,48 @@ impl CommandlineApp {
     }
 
     fn run(&mut self, filename: &Path) {
-        let mut camera = *self.scene.cameras.first().unwrap();
-        if let Some(fov_y_override) = self.renderer.params.fov_y_override {
-            *match &mut camera {
-                Camera::Pinhole { fov_y, .. } => fov_y,
-                Camera::ThinLens { fov_y, .. } => fov_y,
-            } = fov_y_override;
-        }
-
         let mut render_started = false;
         loop {
             let cbar = self.systems.acquire_command_buffer();
 
-            let mut schedule = RenderSchedule::new(&mut self.systems.render_graph);
-
-            self.renderer.update(
-                &self.context,
-                &mut schedule,
-                &mut self.systems.resource_loader,
-                &mut self.systems.global_allocator,
+            let mut schedule = self.systems.resource_loader.begin_schedule(
+                &mut self.systems.render_graph,
+                self.context.as_ref(),
+                &self.systems.descriptor_pool,
+                &self.systems.pipeline_cache,
             );
 
             let mut copy_done = false;
-            if let Some(result_image) = self.renderer.render(
-                &mut self.progress,
-                &self.context,
-                &mut schedule,
-                &self.systems.pipeline_cache,
-                &self.systems.descriptor_pool,
-                &self.systems.resource_loader,
-                &camera,
-            ) {
+            if let Some(renderer) = self.renderer.get() {
+                let mut camera = *self.scene.cameras.first().unwrap();
+                if let Some(fov_y_override) = renderer.params.fov_y_override {
+                    *match &mut camera {
+                        Camera::Pinhole { fov_y, .. } => fov_y,
+                        Camera::ThinLens { fov_y, .. } => fov_y,
+                    } = fov_y_override;
+                }
+                let result_image = renderer.render(
+                    &mut self.progress,
+                    &self.context,
+                    &mut schedule,
+                    &self.systems.pipeline_cache,
+                    &self.systems.descriptor_pool,
+                    &camera,
+                );
+
                 if !render_started {
                     println!("starting render");
                     render_started = true;
                 }
 
-                if self.progress.done(&self.renderer.params) {
+                if self.progress.done(&renderer.params) {
                     let capture_desc = BufferDesc::new(self.capture_buffer.size as usize);
                     let capture_buffer = schedule.import_buffer(
                         &capture_desc,
-                        BufferUsage::COMPUTE_STORAGE_WRITE | BufferUsage::HOST_READ,
+                        BufferUsage::COMPUTE_STORAGE_WRITE,
                         self.capture_buffer.buffer,
                         BufferUsage::empty(),
-                        BufferUsage::HOST_READ,
+                        BufferUsage::empty(),
                     );
 
                     schedule.add_compute(
@@ -565,7 +568,7 @@ impl CommandlineApp {
                             let pipeline_cache = &self.systems.pipeline_cache;
                             let descriptor_pool = &self.systems.descriptor_pool;
                             let context = &self.context;
-                            let renderer_params = &self.renderer.params;
+                            let renderer_params = &renderer.params;
                             move |params, cmd| {
                                 let result_image_view = params.get_image_view(result_image);
                                 let capture_buffer = params.get_buffer(capture_buffer);
@@ -637,23 +640,24 @@ impl CommandlineApp {
         self.systems.command_buffer_pool.wait_after_submit();
 
         println!("saving image to {:?}", filename);
+        let params = &self.renderer.get().unwrap().params;
         match filename.extension().unwrap().to_str().unwrap() {
             "png" => {
                 stb::image_write::stbi_write_png(
                     CString::new(filename.to_str().unwrap()).unwrap().as_c_str(),
-                    self.renderer.params.width as i32,
-                    self.renderer.params.height as i32,
+                    params.width as i32,
+                    params.height as i32,
                     3,
                     self.capture_buffer.mapping(),
-                    (self.renderer.params.width * 3) as i32,
+                    (params.width * 3) as i32,
                 )
                 .unwrap();
             }
             "tga" => {
                 stb::image_write::stbi_write_tga(
                     CString::new(filename.to_str().unwrap()).unwrap().as_c_str(),
-                    self.renderer.params.width as i32,
-                    self.renderer.params.height as i32,
+                    params.width as i32,
+                    params.height as i32,
                     3,
                     self.capture_buffer.mapping(),
                 )
@@ -663,8 +667,8 @@ impl CommandlineApp {
                 let quality = 95;
                 stb::image_write::stbi_write_jpg(
                     CString::new(filename.to_str().unwrap()).unwrap().as_c_str(),
-                    self.renderer.params.width as i32,
-                    self.renderer.params.height as i32,
+                    params.width as i32,
+                    params.height as i32,
                     3,
                     self.capture_buffer.mapping(),
                     quality,

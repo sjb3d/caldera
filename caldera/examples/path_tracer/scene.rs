@@ -261,6 +261,10 @@ impl Scene {
         (0..self.geometries.len()).map(|i| GeometryRef(i as u32))
     }
 
+    pub fn material_ref_iter(&self) -> impl Iterator<Item = MaterialRef> {
+        (0..self.materials.len()).map(|i| MaterialRef(i as u32))
+    }
+
     pub fn instance_ref_iter(&self) -> impl Iterator<Item = InstanceRef> {
         (0..self.instances.len()).map(|i| InstanceRef(i as u32))
     }

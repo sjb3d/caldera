@@ -43,8 +43,8 @@ descriptor_set!(CopyDescriptorSet {
 struct App {
     context: SharedContext,
 
-    sample_image: StaticImageHandle,
-    trace_images: (ImageHandle, ImageHandle, ImageHandle),
+    sample_image_view: TaskOutput<vk::ImageView>,
+    trace_image_ids: (ImageId, ImageId, ImageId),
 
     log2_exposure_scale: f32,
     target_pass_count: u32,
@@ -61,8 +61,8 @@ impl App {
     }
 
     fn new(base: &mut AppBase) -> Self {
-        let sample_image = base.systems.resource_loader.create_image();
-        base.systems.resource_loader.async_load(move |allocator| {
+        let resource_loader = base.systems.resource_loader.clone();
+        let sample_image_view = base.systems.task_system.task(async move {
             let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
                 .into_par_iter()
                 .map(|i| {
@@ -76,36 +76,36 @@ impl App {
                 vk::Format::R32G32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = allocator
-                .map_image(sample_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
-                .unwrap();
+            let mut writer = resource_loader
+                .image_writer(&desc, ImageUsage::COMPUTE_STORAGE_READ)
+                .await;
 
             for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
                 let pixel: [f32; 2] = [sample.x(), sample.y()];
                 writer.write(&pixel);
             }
-        });
 
-        let trace_images = {
+            resource_loader.get_image_view(writer.finish().await)
+        });
+        let trace_image_ids = {
             let size = Self::trace_image_size();
             let desc = ImageDesc::new_2d(size, vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
             let usage = ImageUsage::FRAGMENT_STORAGE_READ
                 | ImageUsage::COMPUTE_STORAGE_READ
                 | ImageUsage::COMPUTE_STORAGE_WRITE;
             let render_graph = &mut base.systems.render_graph;
-            let global_allocator = &mut base.systems.global_allocator;
             (
-                render_graph.create_image(&desc, usage, global_allocator),
-                render_graph.create_image(&desc, usage, global_allocator),
-                render_graph.create_image(&desc, usage, global_allocator),
+                render_graph.create_image(&desc, usage),
+                render_graph.create_image(&desc, usage),
+                render_graph.create_image(&desc, usage),
             )
         };
 
         Self {
             context: SharedContext::clone(&base.context),
 
-            sample_image,
-            trace_images,
+            sample_image_view,
+            trace_image_ids,
 
             log2_exposure_scale: 0f32,
             target_pass_count: 16,
@@ -141,9 +141,14 @@ impl App {
 
         base.systems.draw_ui(&ui);
 
-        let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
+        let mut schedule = base.systems.resource_loader.begin_schedule(
+            &mut base.systems.render_graph,
+            base.context.as_ref(),
+            &base.systems.descriptor_pool,
+            &base.systems.pipeline_cache,
+        );
 
-        let sample_image_view = base.systems.resource_loader.get_image_view(self.sample_image);
+        let sample_image_view = self.sample_image_view.get().copied();
 
         let trace_image_size = Self::trace_image_size();
         let pass_count = if let Some(sample_image_view) =
@@ -156,15 +161,15 @@ impl App {
                 command_name!("trace"),
                 |params| {
                     params.add_image(
-                        self.trace_images.0,
+                        self.trace_image_ids.0,
                         ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
                     );
                     params.add_image(
-                        self.trace_images.1,
+                        self.trace_image_ids.1,
                         ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
                     );
                     params.add_image(
-                        self.trace_images.2,
+                        self.trace_image_ids.2,
                         ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
                     );
                 },
@@ -172,14 +177,14 @@ impl App {
                     let context = base.context.as_ref();
                     let descriptor_pool = &base.systems.descriptor_pool;
                     let pipeline_cache = &base.systems.pipeline_cache;
-                    let trace_images = &self.trace_images;
+                    let trace_image_ids = &self.trace_image_ids;
                     let next_pass_index = self.next_pass_index;
                     move |params, cmd| {
                         let sample_image_view = sample_image_view;
                         let trace_image_views = [
-                            params.get_image_view(trace_images.0),
-                            params.get_image_view(trace_images.1),
-                            params.get_image_view(trace_images.2),
+                            params.get_image_view(trace_image_ids.0),
+                            params.get_image_view(trace_image_ids.1),
+                            params.get_image_view(trace_image_ids.2),
                         ];
 
                         let descriptor_set = TraceDescriptorSet::create(
@@ -231,15 +236,15 @@ impl App {
             command_name!("main"),
             main_render_state,
             |params| {
-                params.add_image(self.trace_images.0, ImageUsage::FRAGMENT_STORAGE_READ);
-                params.add_image(self.trace_images.1, ImageUsage::FRAGMENT_STORAGE_READ);
-                params.add_image(self.trace_images.2, ImageUsage::FRAGMENT_STORAGE_READ);
+                params.add_image(self.trace_image_ids.0, ImageUsage::FRAGMENT_STORAGE_READ);
+                params.add_image(self.trace_image_ids.1, ImageUsage::FRAGMENT_STORAGE_READ);
+                params.add_image(self.trace_image_ids.2, ImageUsage::FRAGMENT_STORAGE_READ);
             },
             {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
-                let trace_images = &self.trace_images;
+                let trace_images = &self.trace_image_ids;
                 let log2_exposure_scale = self.log2_exposure_scale;
                 let window = &base.window;
                 let ui_platform = &mut base.ui_platform;

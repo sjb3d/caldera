@@ -3,7 +3,11 @@ use arrayvec::ArrayVec;
 use imgui::Ui;
 use slotmap::{new_key_type, SlotMap};
 use spark::{vk, Builder, Device};
-use std::{ffi::CStr, mem};
+use std::{
+    ffi::CStr,
+    mem,
+    sync::{Arc, Mutex},
+};
 
 /*
     The goal is to manage:
@@ -33,18 +37,19 @@ use std::{ffi::CStr, mem};
 */
 
 new_key_type! {
-    pub struct BufferHandle;
+    pub struct BufferId;
 
-    pub struct ImageHandle;
+    pub struct ImageId;
 }
 
-enum BufferResource {
-    Temporary {
+pub(crate) enum BufferResource {
+    Described {
         desc: BufferDesc,
         all_usage: BufferUsage,
     },
-    Ready {
+    Active {
         desc: BufferDesc,
+        alloc: Option<Alloc>,
         buffer: UniqueBuffer,
         current_usage: BufferUsage,
         all_usage_check: BufferUsage,
@@ -52,26 +57,33 @@ enum BufferResource {
 }
 
 impl BufferResource {
-    fn desc(&self) -> &BufferDesc {
+    pub(crate) fn desc(&self) -> &BufferDesc {
         match self {
-            BufferResource::Temporary { desc, .. } => desc,
-            BufferResource::Ready { desc, .. } => desc,
+            BufferResource::Described { desc, .. } => desc,
+            BufferResource::Active { desc, .. } => desc,
         }
     }
 
-    fn buffer(&self) -> Option<UniqueBuffer> {
+    pub(crate) fn buffer(&self) -> UniqueBuffer {
         match self {
-            BufferResource::Ready { buffer, .. } => Some(*buffer),
-            _ => None,
+            BufferResource::Described { .. } => panic!("buffer is only described"),
+            BufferResource::Active { buffer, .. } => *buffer,
+        }
+    }
+
+    pub(crate) fn alloc(&self) -> Option<Alloc> {
+        match self {
+            BufferResource::Described { .. } => panic!("buffer is only described"),
+            BufferResource::Active { alloc, .. } => *alloc,
         }
     }
 
     fn declare_usage(&mut self, usage: BufferUsage) {
         match self {
-            BufferResource::Temporary { ref mut all_usage, .. } => {
+            BufferResource::Described { ref mut all_usage, .. } => {
                 *all_usage |= usage;
             }
-            BufferResource::Ready { all_usage_check, .. } => {
+            BufferResource::Active { all_usage_check, .. } => {
                 if !all_usage_check.contains(usage) {
                     panic!("buffer usage {:?} was not declared in {:?}", usage, all_usage_check);
                 }
@@ -79,9 +91,9 @@ impl BufferResource {
         }
     }
 
-    fn transition_usage(&mut self, new_usage: BufferUsage, device: &Device, cmd: vk::CommandBuffer) {
+    pub(crate) fn transition_usage(&mut self, new_usage: BufferUsage, device: &Device, cmd: vk::CommandBuffer) {
         match self {
-            BufferResource::Ready {
+            BufferResource::Active {
                 buffer,
                 ref mut current_usage,
                 all_usage_check,
@@ -100,13 +112,14 @@ impl BufferResource {
     }
 }
 
-enum ImageResource {
-    Temporary {
+pub(crate) enum ImageResource {
+    Described {
         desc: ImageDesc,
         all_usage: ImageUsage,
     },
-    Ready {
+    Active {
         desc: ImageDesc,
+        _alloc: Option<Alloc>,
         image: UniqueImage,
         image_view: UniqueImageView,
         current_usage: ImageUsage,
@@ -115,26 +128,33 @@ enum ImageResource {
 }
 
 impl ImageResource {
-    fn desc(&self) -> &ImageDesc {
+    pub(crate) fn desc(&self) -> &ImageDesc {
         match self {
-            ImageResource::Temporary { desc, .. } => desc,
-            ImageResource::Ready { desc, .. } => desc,
+            ImageResource::Described { desc, .. } => desc,
+            ImageResource::Active { desc, .. } => desc,
         }
     }
 
-    fn image_view(&self) -> Option<UniqueImageView> {
+    pub(crate) fn image(&self) -> UniqueImage {
         match self {
-            ImageResource::Ready { image_view, .. } => Some(*image_view),
-            _ => None,
+            ImageResource::Described { .. } => panic!("image is only described"),
+            ImageResource::Active { image, .. } => *image,
+        }
+    }
+
+    pub(crate) fn image_view(&self) -> UniqueImageView {
+        match self {
+            ImageResource::Described { .. } => panic!("image is only described"),
+            ImageResource::Active { image_view, .. } => *image_view,
         }
     }
 
     fn declare_usage(&mut self, usage: ImageUsage) {
         match self {
-            ImageResource::Temporary { ref mut all_usage, .. } => {
+            ImageResource::Described { ref mut all_usage, .. } => {
                 *all_usage |= usage;
             }
-            ImageResource::Ready { all_usage_check, .. } => {
+            ImageResource::Active { all_usage_check, .. } => {
                 if !all_usage_check.contains(usage) {
                     panic!("image usage {:?} was not declared in {:?}", usage, all_usage_check);
                 }
@@ -142,9 +162,9 @@ impl ImageResource {
         }
     }
 
-    fn transition_usage(&mut self, new_usage: ImageUsage, device: &Device, cmd: vk::CommandBuffer) {
+    pub(crate) fn transition_usage(&mut self, new_usage: ImageUsage, device: &Device, cmd: vk::CommandBuffer) {
         match self {
-            ImageResource::Ready {
+            ImageResource::Active {
                 desc,
                 image,
                 ref mut current_usage,
@@ -165,7 +185,7 @@ impl ImageResource {
 
     fn force_usage(&mut self, new_usage: ImageUsage) {
         match self {
-            ImageResource::Ready {
+            ImageResource::Active {
                 all_usage_check,
                 ref mut current_usage,
                 ..
@@ -182,101 +202,100 @@ impl ImageResource {
 
 struct ResourceSet {
     allocator: Allocator,
-    buffers: Vec<BufferHandle>,
-    images: Vec<ImageHandle>,
+    buffer_ids: Vec<BufferId>,
+    image_ids: Vec<ImageId>,
 }
 
 impl ResourceSet {
     fn new(context: &SharedContext, chunk_size: u32) -> Self {
         Self {
             allocator: Allocator::new(context, chunk_size),
-            buffers: Vec::new(),
-            images: Vec::new(),
+            buffer_ids: Vec::new(),
+            image_ids: Vec::new(),
         }
     }
 
-    fn begin_frame(
-        &mut self,
-        buffers: &mut SlotMap<BufferHandle, BufferResource>,
-        images: &mut SlotMap<ImageHandle, ImageResource>,
-    ) {
+    fn begin_frame(&mut self, resources: &mut Resources) {
         self.allocator.reset();
-        for buffer in self.buffers.drain(..) {
-            buffers.remove(buffer).unwrap();
+        for id in self.buffer_ids.drain(..) {
+            resources.remove_buffer(id);
         }
-        for image in self.images.drain(..) {
-            images.remove(image).unwrap();
+        for id in self.image_ids.drain(..) {
+            resources.remove_image(id);
         }
     }
 }
 
-pub struct RenderGraph {
+pub(crate) struct Resources {
+    global_allocator: Allocator,
     resource_cache: ResourceCache,
-    render_cache: RenderCache,
-    buffers: SlotMap<BufferHandle, BufferResource>,
-    images: SlotMap<ImageHandle, ImageResource>,
-    temp_allocator: Allocator,
-    ping_pong_current_set: ResourceSet,
-    ping_pong_prev_set: ResourceSet,
-    import_set: ResourceSet,
+    buffers: SlotMap<BufferId, BufferResource>,
+    images: SlotMap<ImageId, ImageResource>,
 }
 
-impl RenderGraph {
-    pub fn new(context: &SharedContext, temp_chunk_size: u32, ping_pong_chunk_size: u32) -> Self {
+impl Resources {
+    pub(crate) fn new(context: &SharedContext, global_chunk_size: u32) -> Self {
         Self {
+            global_allocator: Allocator::new(context, global_chunk_size),
             resource_cache: ResourceCache::new(context),
-            render_cache: RenderCache::new(context),
             buffers: SlotMap::with_key(),
             images: SlotMap::with_key(),
-            temp_allocator: Allocator::new(context, temp_chunk_size),
-            ping_pong_current_set: ResourceSet::new(context, ping_pong_chunk_size),
-            ping_pong_prev_set: ResourceSet::new(context, ping_pong_chunk_size),
-            import_set: ResourceSet::new(context, 0),
         }
     }
 
-    fn create_ready_buffer(
+    fn add_buffer(
         &mut self,
         desc: &BufferDesc,
+        alloc: Option<Alloc>,
         all_usage: BufferUsage,
         buffer: UniqueBuffer,
         current_usage: BufferUsage,
-    ) -> BufferHandle {
-        self.buffers.insert(BufferResource::Ready {
+    ) -> BufferId {
+        self.buffers.insert(BufferResource::Active {
             desc: *desc,
+            alloc,
             buffer,
             current_usage,
             all_usage_check: all_usage,
         })
     }
 
-    pub fn create_buffer(
+    pub(crate) fn create_buffer(
         &mut self,
         desc: &BufferDesc,
         all_usage: BufferUsage,
-        allocator: &mut Allocator,
-    ) -> BufferHandle {
-        let buffer = {
-            let all_usage_flags = all_usage.as_flags();
-            let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
-            let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
-            let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
-            self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags)
-        };
-        self.create_ready_buffer(desc, all_usage, buffer, BufferUsage::empty())
+        memory_property_flags: vk::MemoryPropertyFlags,
+        allocator: Option<&mut Allocator>,
+    ) -> BufferId {
+        let all_usage_flags = all_usage.as_flags();
+        let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
+        let alloc = allocator
+            .unwrap_or(&mut self.global_allocator)
+            .allocate(&info.mem_req, memory_property_flags);
+        let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
+        self.add_buffer(desc, Some(alloc), all_usage, buffer, BufferUsage::empty())
     }
 
-    fn allocate_temporary_buffer(&mut self, handle: BufferHandle) {
-        let buffer_resource = self.buffers.get_mut(handle).unwrap();
+    pub(crate) fn buffer_resource(&self, id: BufferId) -> &BufferResource {
+        self.buffers.get(id).unwrap()
+    }
+
+    pub(crate) fn buffer_resource_mut(&mut self, id: BufferId) -> &mut BufferResource {
+        self.buffers.get_mut(id).unwrap()
+    }
+
+    fn allocate_temporary_buffer(&mut self, id: BufferId, allocator: &mut Allocator) {
+        let buffer_resource = self.buffers.get_mut(id).unwrap();
         *buffer_resource = match buffer_resource {
-            BufferResource::Temporary { desc, all_usage } => {
+            BufferResource::Described { desc, all_usage } => {
                 let all_usage_flags = all_usage.as_flags();
                 let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
                 let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
-                let alloc = self.temp_allocator.allocate(&info.mem_req, memory_property_flags);
+                let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
                 let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
-                BufferResource::Ready {
+                BufferResource::Active {
                     desc: *desc,
+                    alloc: Some(alloc),
                     buffer,
                     current_usage: BufferUsage::empty(),
                     all_usage_check: *all_usage,
@@ -286,24 +305,22 @@ impl RenderGraph {
         };
     }
 
-    pub fn get_buffer_desc(&self, handle: BufferHandle) -> &BufferDesc {
-        self.buffers.get(handle).unwrap().desc()
+    fn remove_buffer(&mut self, id: BufferId) {
+        self.buffers.remove(id).unwrap();
     }
 
-    fn free_buffer(&mut self, handle: BufferHandle) {
-        self.buffers.remove(handle).unwrap();
-    }
-
-    fn create_ready_image(
+    fn add_image(
         &mut self,
         desc: &ImageDesc,
+        alloc: Option<Alloc>,
         all_usage: ImageUsage,
         image: UniqueImage,
         current_usage: ImageUsage,
-    ) -> ImageHandle {
+    ) -> ImageId {
         let image_view = self.resource_cache.get_image_view(desc, image);
-        self.images.insert(ImageResource::Ready {
+        self.images.insert(ImageResource::Active {
             desc: *desc,
+            _alloc: alloc,
             image,
             image_view,
             current_usage,
@@ -311,29 +328,43 @@ impl RenderGraph {
         })
     }
 
-    pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage, allocator: &mut Allocator) -> ImageHandle {
-        let image = {
-            let all_usage_flags = all_usage.as_flags();
-            let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
-            let info = self.resource_cache.get_image_info(desc, all_usage_flags);
-            let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
-            self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags)
-        };
-        self.create_ready_image(desc, all_usage, image, ImageUsage::empty())
+    pub fn create_image(
+        &mut self,
+        desc: &ImageDesc,
+        all_usage: ImageUsage,
+        allocator: Option<&mut Allocator>,
+    ) -> ImageId {
+        let all_usage_flags = all_usage.as_flags();
+        let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+        let info = self.resource_cache.get_image_info(desc, all_usage_flags);
+        let alloc = allocator
+            .unwrap_or(&mut self.global_allocator)
+            .allocate(&info.mem_req, memory_property_flags);
+        let image = self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags);
+        self.add_image(desc, Some(alloc), all_usage, image, ImageUsage::empty())
     }
 
-    fn allocate_temporary_image(&mut self, handle: ImageHandle) {
-        let image_resource = self.images.get_mut(handle).unwrap();
+    pub(crate) fn image_resource(&self, id: ImageId) -> &ImageResource {
+        self.images.get(id).unwrap()
+    }
+
+    pub(crate) fn image_resource_mut(&mut self, id: ImageId) -> &mut ImageResource {
+        self.images.get_mut(id).unwrap()
+    }
+
+    fn allocate_temporary_image(&mut self, id: ImageId, allocator: &mut Allocator) {
+        let image_resource = self.images.get_mut(id).unwrap();
         *image_resource = match image_resource {
-            ImageResource::Temporary { desc, all_usage } => {
+            ImageResource::Described { desc, all_usage } => {
                 let all_usage_flags = all_usage.as_flags();
                 let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
                 let info = self.resource_cache.get_image_info(desc, all_usage_flags);
-                let alloc = self.temp_allocator.allocate(&info.mem_req, memory_property_flags);
+                let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
                 let image = self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags);
                 let image_view = self.resource_cache.get_image_view(desc, image);
-                ImageResource::Ready {
+                ImageResource::Active {
                     desc: *desc,
+                    _alloc: Some(alloc),
                     image,
                     image_view,
                     current_usage: ImageUsage::empty(),
@@ -344,62 +375,111 @@ impl RenderGraph {
         };
     }
 
-    pub fn get_image_desc(&self, handle: ImageHandle) -> &ImageDesc {
-        self.images.get(handle).unwrap().desc()
-    }
-
-    fn free_image(&mut self, handle: ImageHandle) {
-        self.images.remove(handle).unwrap();
-    }
-
-    pub fn begin_frame(&mut self) {
-        mem::swap(&mut self.ping_pong_current_set, &mut self.ping_pong_prev_set);
-        self.ping_pong_current_set
-            .begin_frame(&mut self.buffers, &mut self.images);
-
-        self.import_set.begin_frame(&mut self.buffers, &mut self.images);
+    fn remove_image(&mut self, id: ImageId) {
+        self.images.remove(id).unwrap();
     }
 
     fn transition_buffer_usage(
         &mut self,
-        handle: BufferHandle,
+        id: BufferId,
         new_usage: BufferUsage,
         context: &Context,
         cmd: vk::CommandBuffer,
     ) {
         self.buffers
-            .get_mut(handle)
+            .get_mut(id)
             .unwrap()
             .transition_usage(new_usage, &context.device, cmd);
     }
 
     fn transition_image_usage(
         &mut self,
-        handle: ImageHandle,
+        id: ImageId,
         new_usage: ImageUsage,
         context: &Context,
         cmd: &mut SplitCommandBuffer,
         query_pool: &mut QueryPool,
     ) {
-        cmd.notify_image_use(handle, query_pool);
+        cmd.notify_image_use(id, query_pool);
         self.images
-            .get_mut(handle)
+            .get_mut(id)
             .unwrap()
             .transition_usage(new_usage, &context.device, cmd.current);
     }
+}
+
+pub struct RenderGraph {
+    resources: Arc<Mutex<Resources>>,
+    render_cache: RenderCache,
+    temp_allocator: Allocator,
+    ping_pong_current_set: ResourceSet,
+    ping_pong_prev_set: ResourceSet,
+    import_set: ResourceSet,
+}
+
+impl RenderGraph {
+    pub fn new(
+        context: &SharedContext,
+        global_chunk_size: u32,
+        temp_chunk_size: u32,
+        ping_pong_chunk_size: u32,
+    ) -> Self {
+        Self {
+            resources: Arc::new(Mutex::new(Resources::new(context, global_chunk_size))),
+            render_cache: RenderCache::new(context),
+            temp_allocator: Allocator::new(context, temp_chunk_size),
+            ping_pong_current_set: ResourceSet::new(context, ping_pong_chunk_size),
+            ping_pong_prev_set: ResourceSet::new(context, ping_pong_chunk_size),
+            import_set: ResourceSet::new(context, 0),
+        }
+    }
+
+    pub(crate) fn resources_hack(&self) -> &Arc<Mutex<Resources>> {
+        &self.resources
+    }
+
+    pub fn create_buffer(&mut self, desc: &BufferDesc, all_usage: BufferUsage) -> BufferId {
+        self.resources
+            .lock()
+            .unwrap()
+            .create_buffer(desc, all_usage, vk::MemoryPropertyFlags::DEVICE_LOCAL, None)
+    }
+
+    pub fn get_buffer_desc(&self, id: BufferId) -> BufferDesc {
+        *self.resources.lock().unwrap().buffers.get(id).unwrap().desc()
+    }
+
+    pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
+        self.resources.lock().unwrap().create_image(desc, all_usage, None)
+    }
+
+    pub fn get_image_desc(&self, id: ImageId) -> ImageDesc {
+        *self.resources.lock().unwrap().images.get(id).unwrap().desc()
+    }
+
+    pub fn begin_frame(&mut self) {
+        mem::swap(&mut self.ping_pong_current_set, &mut self.ping_pong_prev_set);
+        let mut resources = self.resources.lock().unwrap();
+        self.ping_pong_current_set.begin_frame(&mut resources);
+        self.import_set.begin_frame(&mut resources);
+    }
 
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
+        let resources = self.resources.lock().unwrap();
+
+        resources.global_allocator.ui_stats_table_rows(ui, "global memory");
+
         ui.text("graph buffers");
         ui.next_column();
-        ui.text(format!("{}", self.buffers.len()));
+        ui.text(format!("{}", resources.buffers.len()));
         ui.next_column();
 
         ui.text("graph images");
         ui.next_column();
-        ui.text(format!("{}", self.images.len()));
+        ui.text(format!("{}", resources.images.len()));
         ui.next_column();
 
-        self.resource_cache.ui_stats_table_rows(ui, "graph");
+        resources.resource_cache.ui_stats_table_rows(ui, "graph");
         self.render_cache.ui_stats_table_rows(ui);
 
         self.temp_allocator.ui_stats_table_rows(ui, "temp memory");
@@ -410,12 +490,12 @@ impl RenderGraph {
 
         ui.text("ping pong buffer");
         ui.next_column();
-        ui.text(format!("{}", self.ping_pong_prev_set.buffers.len()));
+        ui.text(format!("{}", self.ping_pong_prev_set.buffer_ids.len()));
         ui.next_column();
 
         ui.text("ping pong image");
         ui.next_column();
-        ui.text(format!("{}", self.ping_pong_prev_set.images.len()));
+        ui.text(format!("{}", self.ping_pong_prev_set.image_ids.len()));
         ui.next_column();
     }
 }
@@ -423,37 +503,37 @@ impl RenderGraph {
 /// State for a batch of draw calls, becomes a Vulkan sub-pass
 #[derive(Clone, Copy)]
 pub struct RenderState {
-    pub color_output: ImageHandle,
+    pub color_output_id: ImageId,
     pub color_clear_value: [f32; 4],
-    pub color_temp: Option<ImageHandle>,
-    pub depth_temp: Option<ImageHandle>,
+    pub color_temp_id: Option<ImageId>,
+    pub depth_temp_id: Option<ImageId>,
 }
 
 impl RenderState {
-    pub fn new(color_output: ImageHandle, color_clear_value: &[f32; 4]) -> Self {
+    pub fn new(color_output_id: ImageId, color_clear_value: &[f32; 4]) -> Self {
         Self {
-            color_output,
+            color_output_id,
             color_clear_value: *color_clear_value,
-            color_temp: None,
-            depth_temp: None,
+            color_temp_id: None,
+            depth_temp_id: None,
         }
     }
 
-    pub fn with_color_temp(mut self, image: ImageHandle) -> Self {
-        self.color_temp = Some(image);
+    pub fn with_color_temp(mut self, image_id: ImageId) -> Self {
+        self.color_temp_id = Some(image_id);
         self
     }
 
-    pub fn with_depth_temp(mut self, image: ImageHandle) -> Self {
-        self.depth_temp = Some(image);
+    pub fn with_depth_temp(mut self, image_id: ImageId) -> Self {
+        self.depth_temp_id = Some(image_id);
         self
     }
 }
 
 #[derive(Clone, Copy)]
 enum ParameterDesc {
-    Buffer { handle: BufferHandle, usage: BufferUsage },
-    Image { handle: ImageHandle, usage: ImageUsage },
+    Buffer { id: BufferId, usage: BufferUsage },
+    Image { id: ImageId, usage: ImageUsage },
 }
 
 struct CommandCommon {
@@ -461,38 +541,38 @@ struct CommandCommon {
     params: RenderParameterDeclaration,
 }
 
-enum Command<'a> {
+enum Command<'graph> {
     Compute {
         common: CommandCommon,
-        callback: Box<dyn FnOnce(RenderParameterAccess, vk::CommandBuffer) + 'a>,
+        callback: Box<dyn FnOnce(RenderParameterAccess, vk::CommandBuffer) + 'graph>,
     },
     Graphics {
         common: CommandCommon,
         state: RenderState,
-        callback: Box<dyn FnOnce(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'a>,
+        callback: Box<dyn FnOnce(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'graph>,
     },
 }
 
 struct SplitCommandBuffer {
     current: vk::CommandBuffer,
     next: Option<vk::CommandBuffer>,
-    swap_image: Option<ImageHandle>,
+    swap_image_id: Option<ImageId>,
 }
 
 impl SplitCommandBuffer {
-    fn new(first: vk::CommandBuffer, second: vk::CommandBuffer, swap_image: Option<ImageHandle>) -> Self {
+    fn new(first: vk::CommandBuffer, second: vk::CommandBuffer, swap_image_id: Option<ImageId>) -> Self {
         Self {
             current: first,
             next: Some(second),
-            swap_image,
+            swap_image_id,
         }
     }
 
-    fn notify_image_use(&mut self, handle: ImageHandle, query_pool: &mut QueryPool) {
-        if self.swap_image == Some(handle) {
+    fn notify_image_use(&mut self, image_id: ImageId, query_pool: &mut QueryPool) {
+        if self.swap_image_id == Some(image_id) {
             query_pool.end_command_buffer(self.current);
             self.current = self.next.take().unwrap();
-            self.swap_image = None;
+            self.swap_image_id = None;
         }
     }
 }
@@ -504,50 +584,52 @@ impl RenderParameterDeclaration {
         Self(Vec::new())
     }
 
-    pub fn add_buffer(&mut self, handle: BufferHandle, usage: BufferUsage) {
-        self.0.push(ParameterDesc::Buffer { handle, usage });
+    pub fn add_buffer(&mut self, id: BufferId, usage: BufferUsage) {
+        self.0.push(ParameterDesc::Buffer { id, usage });
     }
 
-    pub fn add_image(&mut self, handle: ImageHandle, usage: ImageUsage) {
-        self.0.push(ParameterDesc::Image { handle, usage })
+    pub fn add_image(&mut self, id: ImageId, usage: ImageUsage) {
+        self.0.push(ParameterDesc::Image { id, usage })
     }
 }
 
-pub struct RenderParameterAccess<'a>(&'a RenderGraph);
+pub struct RenderParameterAccess<'graph>(&'graph RenderGraph);
 
-impl<'a> RenderParameterAccess<'a> {
-    fn new(render_graph: &'a RenderGraph) -> Self {
+impl<'graph> RenderParameterAccess<'graph> {
+    fn new(render_graph: &'graph RenderGraph) -> Self {
         Self(render_graph)
     }
 
-    pub fn get_buffer(&self, handle: BufferHandle) -> vk::Buffer {
-        self.0.buffers.get(handle).unwrap().buffer().unwrap().0
+    pub fn get_buffer(&self, id: BufferId) -> vk::Buffer {
+        // TODO: cache these, avoid lock per parameter
+        self.0.resources.lock().unwrap().buffer_resource(id).buffer().0
     }
 
-    pub fn get_image_view(&self, handle: ImageHandle) -> vk::ImageView {
-        self.0.images.get(handle).unwrap().image_view().unwrap().0
+    pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {
+        // TODO: cache these, avoid lock per parameter
+        self.0.resources.lock().unwrap().image_resource(id).image_view().0
     }
 }
 
-enum TemporaryHandle {
-    Buffer(BufferHandle),
-    Image(ImageHandle),
+enum TemporaryId {
+    Buffer(BufferId),
+    Image(ImageId),
 }
 
 enum FinalUsage {
-    Buffer { handle: BufferHandle, usage: BufferUsage },
-    Image { handle: ImageHandle, usage: ImageUsage },
+    Buffer { id: BufferId, usage: BufferUsage },
+    Image { id: ImageId, usage: ImageUsage },
 }
 
-pub struct RenderSchedule<'a> {
-    render_graph: &'a mut RenderGraph,
-    temporaries: Vec<TemporaryHandle>,
-    commands: Vec<Command<'a>>,
+pub struct RenderSchedule<'graph> {
+    render_graph: &'graph mut RenderGraph,
+    temporaries: Vec<TemporaryId>,
+    commands: Vec<Command<'graph>>,
     final_usage: Vec<FinalUsage>,
 }
 
-impl<'a> RenderSchedule<'a> {
-    pub fn new(render_graph: &'a mut RenderGraph) -> Self {
+impl<'graph> RenderSchedule<'graph> {
+    pub(crate) fn new(render_graph: &'graph mut RenderGraph) -> Self {
         render_graph.temp_allocator.reset();
         RenderSchedule {
             render_graph,
@@ -561,17 +643,32 @@ impl<'a> RenderSchedule<'a> {
         self.render_graph
     }
 
-    pub fn create_buffer(
-        &mut self,
-        desc: &BufferDesc,
-        all_usage: BufferUsage,
-        allocator: &mut Allocator,
-    ) -> BufferHandle {
-        self.render_graph.create_buffer(desc, all_usage, allocator)
+    pub fn get_buffer_hack(&self, id: BufferId) -> vk::Buffer {
+        self.render_graph
+            .resources
+            .lock()
+            .unwrap()
+            .buffer_resource(id)
+            .buffer()
+            .0
     }
 
-    pub fn get_buffer_hack(&self, handle: BufferHandle) -> vk::Buffer {
-        self.render_graph.buffers.get(handle).unwrap().buffer().unwrap().0
+    pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {
+        self.render_graph
+            .resources
+            .lock()
+            .unwrap()
+            .image_resource(id)
+            .image_view()
+            .0
+    }
+
+    pub fn create_buffer(&mut self, desc: &BufferDesc, all_usage: BufferUsage) -> BufferId {
+        self.render_graph.create_buffer(desc, all_usage)
+    }
+
+    pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
+        self.render_graph.create_image(desc, all_usage)
     }
 
     pub fn import_buffer(
@@ -581,25 +678,36 @@ impl<'a> RenderSchedule<'a> {
         buffer: UniqueBuffer,
         current_usage: BufferUsage,
         final_usage: BufferUsage,
-    ) -> BufferHandle {
-        let handle = self
-            .render_graph
-            .create_ready_buffer(desc, all_usage, buffer, current_usage);
-        self.render_graph.import_set.buffers.push(handle);
-        self.final_usage.push(FinalUsage::Buffer {
-            handle,
-            usage: final_usage,
-        });
-        handle
+    ) -> BufferId {
+        let buffer_id =
+            self.render_graph
+                .resources
+                .lock()
+                .unwrap()
+                .add_buffer(desc, None, all_usage, buffer, current_usage);
+        self.render_graph.import_set.buffer_ids.push(buffer_id);
+        if !final_usage.is_empty() {
+            self.final_usage.push(FinalUsage::Buffer {
+                id: buffer_id,
+                usage: final_usage,
+            });
+        }
+        buffer_id
     }
 
-    pub fn describe_buffer(&mut self, desc: &BufferDesc) -> BufferHandle {
-        let handle = self.render_graph.buffers.insert(BufferResource::Temporary {
-            desc: *desc,
-            all_usage: BufferUsage::empty(),
-        });
-        self.temporaries.push(TemporaryHandle::Buffer(handle));
-        handle
+    pub fn describe_buffer(&mut self, desc: &BufferDesc) -> BufferId {
+        let buffer_id = self
+            .render_graph
+            .resources
+            .lock()
+            .unwrap()
+            .buffers
+            .insert(BufferResource::Described {
+                desc: *desc,
+                all_usage: BufferUsage::empty(),
+            });
+        self.temporaries.push(TemporaryId::Buffer(buffer_id));
+        buffer_id
     }
 
     pub fn import_image(
@@ -609,32 +717,43 @@ impl<'a> RenderSchedule<'a> {
         image: UniqueImage,
         current_usage: ImageUsage,
         final_usage: ImageUsage,
-    ) -> ImageHandle {
-        let handle = self
-            .render_graph
-            .create_ready_image(desc, all_usage, image, current_usage);
-        self.render_graph.import_set.images.push(handle);
-        self.final_usage.push(FinalUsage::Image {
-            handle,
-            usage: final_usage,
-        });
-        handle
+    ) -> ImageId {
+        let image_id =
+            self.render_graph
+                .resources
+                .lock()
+                .unwrap()
+                .add_image(desc, None, all_usage, image, current_usage);
+        self.render_graph.import_set.image_ids.push(image_id);
+        if !final_usage.is_empty() {
+            self.final_usage.push(FinalUsage::Image {
+                id: image_id,
+                usage: final_usage,
+            });
+        }
+        image_id
     }
 
-    pub fn describe_image(&mut self, desc: &ImageDesc) -> ImageHandle {
-        let handle = self.render_graph.images.insert(ImageResource::Temporary {
-            desc: *desc,
-            all_usage: ImageUsage::empty(),
-        });
-        self.temporaries.push(TemporaryHandle::Image(handle));
-        handle
+    pub fn describe_image(&mut self, desc: &ImageDesc) -> ImageId {
+        let image_id = self
+            .render_graph
+            .resources
+            .lock()
+            .unwrap()
+            .images
+            .insert(ImageResource::Described {
+                desc: *desc,
+                all_usage: ImageUsage::empty(),
+            });
+        self.temporaries.push(TemporaryId::Image(image_id));
+        image_id
     }
 
     pub fn add_compute(
         &mut self,
         name: &'static CStr,
         decl: impl FnOnce(&mut RenderParameterDeclaration),
-        callback: impl FnOnce(RenderParameterAccess, vk::CommandBuffer) + 'a,
+        callback: impl FnOnce(RenderParameterAccess, vk::CommandBuffer) + 'graph,
     ) {
         let mut params = RenderParameterDeclaration::new();
         decl(&mut params);
@@ -649,7 +768,7 @@ impl<'a> RenderSchedule<'a> {
         name: &'static CStr,
         state: RenderState,
         decl: impl FnOnce(&mut RenderParameterDeclaration),
-        callback: impl FnOnce(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'a,
+        callback: impl FnOnce(RenderParameterAccess, vk::CommandBuffer, vk::RenderPass) + 'graph,
     ) {
         let mut params = RenderParameterDeclaration::new();
         decl(&mut params);
@@ -665,57 +784,57 @@ impl<'a> RenderSchedule<'a> {
         context: &Context,
         pre_swapchain_cmd: vk::CommandBuffer,
         post_swapchain_cmd: vk::CommandBuffer,
-        swap_image: Option<ImageHandle>,
+        swap_image_id: Option<ImageId>,
         query_pool: &mut QueryPool,
     ) {
         // loop over commands to set usage for all resources
-        for command in &self.commands {
-            let common = match command {
-                Command::Compute { common, .. } => common,
-                Command::Graphics { common, state, .. } => {
-                    self.render_graph
-                        .images
-                        .get_mut(state.color_output)
-                        .unwrap()
-                        .declare_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
-                    if let Some(handle) = state.color_temp {
-                        self.render_graph
+        {
+            let mut resources = self.render_graph.resources.lock().unwrap();
+            for command in &self.commands {
+                let common = match command {
+                    Command::Compute { common, .. } => common,
+                    Command::Graphics { common, state, .. } => {
+                        resources
                             .images
-                            .get_mut(handle)
+                            .get_mut(state.color_output_id)
                             .unwrap()
-                            .declare_usage(ImageUsage::TRANSIENT_COLOR_ATTACHMENT);
+                            .declare_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
+                        if let Some(id) = state.color_temp_id {
+                            resources
+                                .images
+                                .get_mut(id)
+                                .unwrap()
+                                .declare_usage(ImageUsage::TRANSIENT_COLOR_ATTACHMENT);
+                        }
+                        if let Some(id) = state.depth_temp_id {
+                            resources
+                                .images
+                                .get_mut(id)
+                                .unwrap()
+                                .declare_usage(ImageUsage::TRANSIENT_DEPTH_ATTACHMENT)
+                        }
+                        common
                     }
-                    if let Some(handle) = state.depth_temp {
-                        self.render_graph
-                            .images
-                            .get_mut(handle)
-                            .unwrap()
-                            .declare_usage(ImageUsage::TRANSIENT_DEPTH_ATTACHMENT)
-                    }
-                    common
-                }
-            };
-            for parameter_desc in &common.params.0 {
-                match parameter_desc {
-                    ParameterDesc::Buffer { handle, usage } => {
-                        self.render_graph
-                            .buffers
-                            .get_mut(*handle)
-                            .unwrap()
-                            .declare_usage(*usage);
-                    }
-                    ParameterDesc::Image { handle, usage } => {
-                        self.render_graph.images.get_mut(*handle).unwrap().declare_usage(*usage);
+                };
+                for parameter_desc in &common.params.0 {
+                    match parameter_desc {
+                        ParameterDesc::Buffer { id, usage } => {
+                            resources.buffers.get_mut(*id).unwrap().declare_usage(*usage);
+                        }
+                        ParameterDesc::Image { id, usage } => {
+                            resources.images.get_mut(*id).unwrap().declare_usage(*usage);
+                        }
                     }
                 }
             }
-        }
 
-        // allocate temporaries
-        for handle in &self.temporaries {
-            match handle {
-                TemporaryHandle::Buffer(handle) => self.render_graph.allocate_temporary_buffer(*handle),
-                TemporaryHandle::Image(handle) => self.render_graph.allocate_temporary_image(*handle),
+            // allocate temporaries
+            let temp_allocator = &mut self.render_graph.temp_allocator;
+            for id in &self.temporaries {
+                match id {
+                    TemporaryId::Buffer(id) => resources.allocate_temporary_buffer(*id, temp_allocator),
+                    TemporaryId::Image(id) => resources.allocate_temporary_image(*id, temp_allocator),
+                }
             }
         }
 
@@ -730,7 +849,7 @@ impl<'a> RenderSchedule<'a> {
 
             TODO: think about how to do sub-passes... probably explicit is better?
         */
-        let mut cmd = SplitCommandBuffer::new(pre_swapchain_cmd, post_swapchain_cmd, swap_image);
+        let mut cmd = SplitCommandBuffer::new(pre_swapchain_cmd, post_swapchain_cmd, swap_image_id);
         for command in self.commands.drain(..) {
             let common = match &command {
                 Command::Compute { common, .. } => common,
@@ -746,15 +865,16 @@ impl<'a> RenderSchedule<'a> {
                 unsafe { context.instance.cmd_begin_debug_utils_label_ext(cmd.current, &label) };
             }
 
-            for parameter_desc in &common.params.0 {
-                match parameter_desc {
-                    ParameterDesc::Buffer { handle, usage } => {
-                        self.render_graph
-                            .transition_buffer_usage(*handle, *usage, context, cmd.current);
-                    }
-                    ParameterDesc::Image { handle, usage } => {
-                        self.render_graph
-                            .transition_image_usage(*handle, *usage, context, &mut cmd, query_pool);
+            {
+                let mut resources = self.render_graph.resources.lock().unwrap();
+                for parameter_desc in &common.params.0 {
+                    match parameter_desc {
+                        ParameterDesc::Buffer { id, usage } => {
+                            resources.transition_buffer_usage(*id, *usage, context, cmd.current);
+                        }
+                        ParameterDesc::Image { id, usage } => {
+                            resources.transition_image_usage(*id, *usage, context, &mut cmd, query_pool);
+                        }
                     }
                 }
             }
@@ -766,87 +886,95 @@ impl<'a> RenderSchedule<'a> {
                     (callback)(RenderParameterAccess::new(self.render_graph), cmd.current);
                 }
                 Command::Graphics { state, callback, .. } => {
-                    // TODO: initial layout as part of render pass (assumes UNDEFINED for now)
-                    cmd.notify_image_use(state.color_output, query_pool);
+                    let render_pass = {
+                        let resources = self.render_graph.resources.lock().unwrap();
 
-                    let mut clear_values = ArrayVec::<_, { RenderCache::MAX_ATTACHMENTS }>::new();
-                    let color_clear_value = vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: state.color_clear_value,
-                        },
-                    };
-                    let depth_clear_value = vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
-                    };
+                        // TODO: initial layout as part of render pass (assumes UNDEFINED for now)
+                        cmd.notify_image_use(state.color_output_id, query_pool);
 
-                    // color output (always present for now)
-                    clear_values.push(color_clear_value);
-                    let color_output_resource = self.render_graph.images.get(state.color_output).unwrap();
-                    let color_output_desc = color_output_resource.desc();
-                    let color_output_image_view = color_output_resource.image_view().unwrap();
+                        let mut clear_values = ArrayVec::<_, { RenderCache::MAX_ATTACHMENTS }>::new();
+                        let color_clear_value = vk::ClearValue {
+                            color: vk::ClearColorValue {
+                                float32: state.color_clear_value,
+                            },
+                        };
+                        let depth_clear_value = vk::ClearValue {
+                            depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
+                        };
 
-                    // color temp (if present)
-                    let (samples, color_temp_image_view) = if let Some(color_temp) = state.color_temp {
-                        let color_temp_resource = self.render_graph.images.get(color_temp).unwrap();
-                        let color_temp_desc = color_temp_resource.desc();
-                        let color_temp_image_view = color_temp_resource.image_view().unwrap();
-
-                        assert_eq!(color_output_desc.size(), color_temp_desc.size());
-                        assert_eq!(color_output_desc.format, color_temp_desc.format);
-
+                        // color output (always present for now)
                         clear_values.push(color_clear_value);
+                        let color_output_resource = resources.images.get(state.color_output_id).unwrap();
+                        let color_output_desc = color_output_resource.desc();
+                        let color_output_image_view = color_output_resource.image_view();
 
-                        (color_temp_desc.samples, Some(color_temp_image_view))
-                    } else {
-                        (vk::SampleCountFlags::N1, None)
-                    };
+                        // color temp (if present)
+                        let (samples, color_temp_image_view) = if let Some(color_temp_id) = state.color_temp_id {
+                            let color_temp_resource = resources.images.get(color_temp_id).unwrap();
+                            let color_temp_desc = color_temp_resource.desc();
+                            let color_temp_image_view = color_temp_resource.image_view();
 
-                    // depth temp (if present)
-                    let (depth_format, depth_temp_image_view) = if let Some(depth_temp) = state.depth_temp {
-                        let depth_temp_resource = self.render_graph.images.get(depth_temp).unwrap();
-                        let depth_temp_desc = depth_temp_resource.desc();
-                        let depth_temp_image_view = depth_temp_resource.image_view().unwrap();
+                            assert_eq!(color_output_desc.size(), color_temp_desc.size());
+                            assert_eq!(color_output_desc.format, color_temp_desc.format);
 
-                        assert_eq!(color_output_desc.size(), depth_temp_desc.size());
-                        assert_eq!(samples, depth_temp_desc.samples);
+                            clear_values.push(color_clear_value);
 
-                        clear_values.push(depth_clear_value);
+                            (color_temp_desc.samples, Some(color_temp_image_view))
+                        } else {
+                            (vk::SampleCountFlags::N1, None)
+                        };
 
-                        (Some(depth_temp_desc.format), Some(depth_temp_image_view))
-                    } else {
-                        (None, None)
-                    };
+                        // depth temp (if present)
+                        let (depth_format, depth_temp_image_view) = if let Some(depth_temp_id) = state.depth_temp_id {
+                            let depth_temp_resource = resources.images.get(depth_temp_id).unwrap();
+                            let depth_temp_desc = depth_temp_resource.desc();
+                            let depth_temp_image_view = depth_temp_resource.image_view();
 
-                    let render_pass =
-                        self.render_graph
-                            .render_cache
-                            .get_render_pass(color_output_desc.format, depth_format, samples);
+                            assert_eq!(color_output_desc.size(), depth_temp_desc.size());
+                            assert_eq!(samples, depth_temp_desc.samples);
 
-                    let framebuffer = self.render_graph.render_cache.get_framebuffer(
-                        render_pass,
-                        color_output_desc.size(),
-                        color_output_image_view,
-                        color_temp_image_view,
-                        depth_temp_image_view,
-                    );
+                            clear_values.push(depth_clear_value);
 
-                    let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-                        .render_pass(render_pass.0)
-                        .framebuffer(framebuffer.0)
-                        .render_area(vk::Rect2D {
-                            offset: Default::default(),
-                            extent: color_output_desc.extent_2d(),
-                        })
-                        .p_clear_values(&clear_values);
-                    unsafe {
-                        context.device.cmd_begin_render_pass(
-                            cmd.current,
-                            &render_pass_begin_info,
-                            vk::SubpassContents::INLINE,
-                        )
+                            (Some(depth_temp_desc.format), Some(depth_temp_image_view))
+                        } else {
+                            (None, None)
+                        };
+
+                        let render_pass = self.render_graph.render_cache.get_render_pass(
+                            color_output_desc.format,
+                            depth_format,
+                            samples,
+                        );
+
+                        let framebuffer = self.render_graph.render_cache.get_framebuffer(
+                            render_pass,
+                            color_output_desc.size(),
+                            color_output_image_view,
+                            color_temp_image_view,
+                            depth_temp_image_view,
+                        );
+
+                        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
+                            .render_pass(render_pass.0)
+                            .framebuffer(framebuffer.0)
+                            .render_area(vk::Rect2D {
+                                offset: Default::default(),
+                                extent: color_output_desc.extent_2d(),
+                            })
+                            .p_clear_values(&clear_values);
+                        unsafe {
+                            context.device.cmd_begin_render_pass(
+                                cmd.current,
+                                &render_pass_begin_info,
+                                vk::SubpassContents::INLINE,
+                            )
+                        };
+
+                        render_pass
                     };
 
                     query_pool.emit_timestamp(cmd.current, timestamp_name);
+
                     (callback)(
                         RenderParameterAccess::new(self.render_graph),
                         cmd.current,
@@ -857,8 +985,11 @@ impl<'a> RenderSchedule<'a> {
 
                     // TODO: final layout as part of render pass
                     self.render_graph
+                        .resources
+                        .lock()
+                        .unwrap()
                         .images
-                        .get_mut(state.color_output)
+                        .get_mut(state.color_output_id)
                         .unwrap()
                         .force_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
                 }
@@ -869,24 +1000,26 @@ impl<'a> RenderSchedule<'a> {
             }
         }
 
-        // free temporaries
-        for handle in self.temporaries.drain(..) {
-            match handle {
-                TemporaryHandle::Buffer(handle) => self.render_graph.free_buffer(handle),
-                TemporaryHandle::Image(handle) => self.render_graph.free_image(handle),
-            }
-        }
+        {
+            let mut resources = self.render_graph.resources.lock().unwrap();
 
-        // emit any last barriers (usually at least the swap chain image)
-        for final_usage in self.final_usage.drain(..) {
-            match final_usage {
-                FinalUsage::Buffer { handle, usage } => {
-                    self.render_graph
-                        .transition_buffer_usage(handle, usage, context, cmd.current);
+            // free temporaries
+            for id in self.temporaries.drain(..) {
+                match id {
+                    TemporaryId::Buffer(id) => resources.remove_buffer(id),
+                    TemporaryId::Image(id) => resources.remove_image(id),
                 }
-                FinalUsage::Image { handle, usage } => {
-                    self.render_graph
-                        .transition_image_usage(handle, usage, context, &mut cmd, query_pool);
+            }
+
+            // emit any last barriers (usually at least the swap chain image)
+            for final_usage in self.final_usage.drain(..) {
+                match final_usage {
+                    FinalUsage::Buffer { id, usage } => {
+                        resources.transition_buffer_usage(id, usage, context, cmd.current);
+                    }
+                    FinalUsage::Image { id, usage } => {
+                        resources.transition_image_usage(id, usage, context, &mut cmd, query_pool);
+                    }
                 }
             }
         }

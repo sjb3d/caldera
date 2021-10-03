@@ -10,7 +10,7 @@ use spark::{vk, Builder};
 use std::{
     collections::HashMap,
     fs::File,
-    mem,
+    io, mem,
     ops::{BitOr, BitOrAssign},
     path::PathBuf,
     slice,
@@ -225,10 +225,17 @@ struct ShaderData {
 }
 
 #[derive(Clone, Copy, Default)]
+struct GeometryAttribRequirements {
+    normal_buffer: bool,
+    uv_buffer: bool,
+    alias_table: bool,
+}
+
+#[derive(Clone, Copy, Default)]
 struct GeometryAttribData {
-    normal_buffer: Option<StaticBufferHandle>,
-    uv_buffer: Option<StaticBufferHandle>,
-    alias_table: Option<StaticBufferHandle>,
+    normal_buffer: Option<vk::Buffer>,
+    uv_buffer: Option<vk::Buffer>,
+    alias_table: Option<vk::Buffer>,
 }
 
 #[derive(Clone, Copy)]
@@ -452,8 +459,8 @@ struct ShaderBindingData {
     raygen_region: ShaderBindingRegion,
     miss_region: ShaderBindingRegion,
     hit_region: ShaderBindingRegion,
-    shader_binding_table: StaticBufferHandle,
-    light_info_table: StaticBufferHandle,
+    shader_binding_table: vk::Buffer,
+    light_info_table: vk::Buffer,
     sampled_light_count: u32,
     external_light_begin: u32,
     external_light_end: u32,
@@ -465,12 +472,10 @@ struct TextureBindingSet {
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
-    images: Vec<StaticImageHandle>,
-    is_written: bool,
 }
 
 impl TextureBindingSet {
-    fn new(context: &SharedContext, images: Vec<StaticImageHandle>) -> Self {
+    fn new(context: &SharedContext, image_views: &[vk::ImageView]) -> Self {
         // create a separate descriptor pool for bindless textures
         let linear_sampler = {
             let create_info = vk::SamplerCreateInfo {
@@ -483,7 +488,7 @@ impl TextureBindingSet {
         let descriptor_set_layout = {
             let bindings = [vk::DescriptorSetLayoutBinding {
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: images.len() as u32,
+                descriptor_count: image_views.len() as u32,
                 stage_flags: vk::ShaderStageFlags::ALL,
                 ..Default::default()
             }];
@@ -493,7 +498,7 @@ impl TextureBindingSet {
         let descriptor_pool = {
             let pool_sizes = [vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: (images.len() as u32).max(1),
+                descriptor_count: (image_views.len() as u32).max(1),
             }];
             let create_info = vk::DescriptorPoolCreateInfo::builder()
                 .max_sets(1)
@@ -501,7 +506,7 @@ impl TextureBindingSet {
             unsafe { context.device.create_descriptor_pool(&create_info, None) }.unwrap()
         };
         let descriptor_set = {
-            let variable_count = images.len() as u32;
+            let variable_count = image_views.len() as u32;
             let mut variable_count_allocate_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
                 .p_descriptor_counts(slice::from_ref(&variable_count));
 
@@ -513,48 +518,29 @@ impl TextureBindingSet {
             unsafe { context.device.allocate_descriptor_sets_single(&allocate_info) }.unwrap()
         };
 
+        let mut image_info = Vec::new();
+        for &image_view in image_views.iter() {
+            image_info.push(vk::DescriptorImageInfo {
+                sampler: Some(linear_sampler),
+                image_view: Some(image_view),
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            });
+        }
+        if !image_info.is_empty() {
+            let write = vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_set)
+                .p_image_info(&image_info)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+            unsafe { context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
+        }
+
         Self {
             context: SharedContext::clone(context),
             linear_sampler,
             descriptor_set_layout,
             descriptor_pool,
             descriptor_set,
-            images,
-            is_written: false,
-        }
-    }
-
-    fn try_write(&mut self, resource_loader: &ResourceLoader) -> Option<()> {
-        let mut image_info = Vec::new();
-        for image in self.images.iter().copied() {
-            image_info.push(vk::DescriptorImageInfo {
-                sampler: Some(self.linear_sampler),
-                image_view: Some(resource_loader.get_image_view(image)?),
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            });
-        }
-        if !image_info.is_empty() {
-            let write = vk::WriteDescriptorSet::builder()
-                .dst_set(self.descriptor_set)
-                .p_image_info(&image_info)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
-
-            unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
-        }
-        Some(())
-    }
-
-    fn update(&mut self, resource_loader: &ResourceLoader) {
-        if !self.is_written && self.try_write(resource_loader).is_some() {
-            self.is_written = true;
-        }
-    }
-
-    fn descriptor_set(&self) -> Option<vk::DescriptorSet> {
-        if self.is_written {
-            Some(self.descriptor_set)
-        } else {
-            None
         }
     }
 }
@@ -801,7 +787,6 @@ impl Iterator for AliasTableIterator {
 
 pub struct Renderer {
     context: SharedContext,
-    scene: Arc<Scene>,
     accel: SceneAccel,
 
     path_trace_pipeline_layout: vk::PipelineLayout,
@@ -811,21 +796,84 @@ pub struct Renderer {
     clamp_linear_sampler: vk::Sampler,
 
     texture_binding_set: TextureBindingSet,
-    shader_data: Vec<ShaderData>,
-    geometry_attrib_data: Vec<GeometryAttribData>,
-    shader_binding_data: Option<ShaderBindingData>,
+    shader_binding_data: ShaderBindingData,
 
-    pmj_samples_image: StaticImageHandle,
-    sobol_samples_image: StaticImageHandle,
-    smits_table_image: StaticImageHandle,
-    illuminants_image: StaticImageHandle,
-    conductors_image: StaticImageHandle,
-    wavelength_inv_cdf_image: StaticImageHandle,
-    wavelength_pdf_image: StaticImageHandle,
-    xyz_matching_image: StaticImageHandle,
-    result_image: ImageHandle,
+    pmj_samples_image_view: vk::ImageView,
+    sobol_samples_image_view: vk::ImageView,
+    smits_table_image_view: vk::ImageView,
+    illuminants_image_view: vk::ImageView,
+    conductors_image_view: vk::ImageView,
+    wavelength_inv_cdf_image_view: vk::ImageView,
+    wavelength_pdf_image_view: vk::ImageView,
+    xyz_matching_image_view: vk::ImageView,
+    result_image_id: ImageId,
 
     pub params: RendererParams,
+}
+
+fn image_load_from_reader<R>(reader: &mut R) -> (stb::image::Info, Vec<u8>)
+where
+    R: io::Read + io::Seek,
+{
+    let (info, data) = stb::image::stbi_load_from_reader(reader, stb::image::Channels::RgbAlpha).unwrap();
+    (info, data.as_slice().to_vec())
+}
+
+async fn image_load(resource_loader: ResourceLoader, filename: PathBuf) -> vk::ImageView {
+    let mut reader = File::open(&filename).unwrap();
+    let (info, data) = image_load_from_reader(&mut reader);
+    let can_bc_compress = (info.width % 4) == 0 && (info.height % 4) == 0;
+    let size_in_pixels = UVec2::new(info.width as u32, info.height as u32);
+    println!(
+        "loaded {:?}: {}x{} ({})",
+        filename.file_name().unwrap(),
+        size_in_pixels.x,
+        size_in_pixels.y,
+        if can_bc_compress { "bc1" } else { "rgba" }
+    );
+
+    let image_id = if can_bc_compress {
+        // compress on write
+        let image_desc = ImageDesc::new_2d(
+            size_in_pixels,
+            vk::Format::BC1_RGB_SRGB_BLOCK,
+            vk::ImageAspectFlags::COLOR,
+        );
+        let mut writer = resource_loader
+            .image_writer(&image_desc, ImageUsage::RAY_TRACING_SAMPLED)
+            .await;
+        let size_in_blocks = size_in_pixels / 4;
+        let mut tmp_rgba = [0xffu8; 16 * 4];
+        let mut dst_bc1 = [0u8; 8];
+        for block_y in 0..size_in_blocks.y {
+            for block_x in 0..size_in_blocks.x {
+                for pixel_y in 0..4 {
+                    let tmp_offset = (pixel_y * 4 * 4) as usize;
+                    let tmp_row = &mut tmp_rgba[tmp_offset..(tmp_offset + 16)];
+                    let src_offset = (((block_y * 4 + pixel_y) * size_in_pixels.x + block_x * 4) * 4) as usize;
+                    let src_row = &data.as_slice()[src_offset..(src_offset + 16)];
+                    for pixel_x in 0..4 {
+                        for component in 0..3 {
+                            let row_offset = (4 * pixel_x + component) as usize;
+                            unsafe { *tmp_row.get_unchecked_mut(row_offset) = *src_row.get_unchecked(row_offset) };
+                        }
+                    }
+                }
+                stb::dxt::stb_compress_dxt_block(&mut dst_bc1, &tmp_rgba, 0, stb::dxt::CompressionMode::Normal);
+                writer.write(&dst_bc1);
+            }
+        }
+        writer.finish().await
+    } else {
+        // load uncompressed
+        let image_desc = ImageDesc::new_2d(size_in_pixels, vk::Format::R8G8B8A8_SRGB, vk::ImageAspectFlags::COLOR);
+        let mut writer = resource_loader
+            .image_writer(&image_desc, ImageUsage::RAY_TRACING_SAMPLED)
+            .await;
+        writer.write(data.as_slice());
+        writer.finish().await
+    };
+    resource_loader.get_image_view(image_id)
 }
 
 impl Renderer {
@@ -838,26 +886,21 @@ impl Renderer {
     const MISS_ENTRY_COUNT: u32 = 2;
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        context: &SharedContext,
-        scene: &Arc<Scene>,
-        descriptor_pool: &DescriptorPool,
-        pipeline_cache: &PipelineCache,
-        resource_loader: &mut ResourceLoader,
-        render_graph: &mut RenderGraph,
-        global_allocator: &mut Allocator,
-        mut params: RendererParams,
-    ) -> Self {
-        let accel = SceneAccel::new(context, scene, resource_loader);
+    pub async fn new(resource_loader: ResourceLoader, scene: Arc<Scene>, mut params: RendererParams) -> Self {
+        let context = resource_loader.context();
+        let accel = SceneAccel::new(
+            resource_loader.clone(),
+            Arc::clone(&scene),
+            Self::HIT_ENTRY_COUNT_PER_INSTANCE,
+        )
+        .await;
 
         // sanitise parameters
         params.log2_sample_count = params.log2_sample_count.min(Self::LOG2_MAX_SAMPLES_PER_SEQUENCE);
 
-        // start loading textures and attributes for all meshes
-        let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
-        let mut texture_images = Vec::new();
-        let mut shader_data = vec![ShaderData::default(); scene.materials.len()];
-        let mut geometry_attrib_data = vec![GeometryAttribData::default(); scene.geometries.len()];
+        // load textures and attributes for all meshes
+        let mut geometry_attrib_req = vec![GeometryAttribRequirements::default(); scene.geometries.len()];
+        let mut shader_needs_texture = vec![false; scene.materials.len()];
         for instance_ref in accel.clusters().instance_iter().copied() {
             let instance = scene.instance(instance_ref);
             let material_ref = instance.material_ref;
@@ -871,195 +914,144 @@ impl Renderer {
             let has_emissive_triangles =
                 matches!(geometry, Geometry::TriangleMesh { .. }) && material.emission.is_some();
 
-            if has_normals {
-                geometry_attrib_data
-                    .get_mut(geometry_ref.0 as usize)
-                    .unwrap()
-                    .normal_buffer = {
-                    let normal_buffer = resource_loader.create_buffer();
-                    resource_loader.async_load({
-                        let scene = Arc::clone(scene);
-                        move |allocator| {
-                            let normals = match scene.geometry(geometry_ref) {
-                                Geometry::TriangleMesh {
-                                    normals: Some(normals), ..
-                                } => normals.as_slice(),
-                                _ => unreachable!(),
-                            };
+            let req = &mut geometry_attrib_req[geometry_ref.0 as usize];
+            req.normal_buffer |= has_normals;
+            req.uv_buffer |= has_uvs_and_texture;
+            req.alias_table |= has_emissive_triangles;
 
-                            let buffer_desc = BufferDesc::new(normals.len() * mem::size_of::<Vec3>());
-                            let mut mapping = allocator
-                                .map_buffer(normal_buffer, &buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
-                                .unwrap();
-                            for n in normals.iter() {
-                                mapping.write(n);
-                            }
+            shader_needs_texture[material_ref.0 as usize] |= has_uvs_and_texture;
+        }
+
+        let mut geometry_attrib_tasks = Vec::new();
+        for geometry_ref in scene.geometry_ref_iter() {
+            geometry_attrib_tasks.push({
+                let loader = resource_loader.clone();
+                let scene = Arc::clone(&scene);
+                let req = geometry_attrib_req[geometry_ref.0 as usize];
+                resource_loader.spawn(async move {
+                    let normal_buffer = if req.normal_buffer {
+                        let normals = match scene.geometry(geometry_ref) {
+                            Geometry::TriangleMesh {
+                                normals: Some(normals), ..
+                            } => normals.as_slice(),
+                            _ => unreachable!(),
+                        };
+
+                        let buffer_desc = BufferDesc::new(normals.len() * mem::size_of::<Vec3>());
+                        let mut writer = loader
+                            .buffer_writer(&buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                            .await;
+                        for n in normals.iter() {
+                            writer.write(n);
                         }
-                    });
-                    Some(normal_buffer)
-                };
-            }
+                        let normal_buffer_id = writer.finish();
+                        Some(loader.get_buffer(normal_buffer_id.await))
+                    } else {
+                        None
+                    };
 
-            if has_uvs_and_texture {
-                geometry_attrib_data.get_mut(geometry_ref.0 as usize).unwrap().uv_buffer = {
-                    let uv_buffer = resource_loader.create_buffer();
-                    resource_loader.async_load({
-                        let scene = Arc::clone(scene);
-                        move |allocator| {
-                            let uvs = match scene.geometry(geometry_ref) {
-                                Geometry::TriangleMesh { uvs: Some(uvs), .. } => uvs.as_slice(),
-                                _ => unreachable!(),
-                            };
+                    let uv_buffer = if req.uv_buffer {
+                        let uvs = match scene.geometry(geometry_ref) {
+                            Geometry::TriangleMesh { uvs: Some(uvs), .. } => uvs.as_slice(),
+                            _ => unreachable!(),
+                        };
 
-                            let buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
-                            let mut mapping = allocator
-                                .map_buffer(uv_buffer, &buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
-                                .unwrap();
-                            for uv in uvs.iter() {
-                                mapping.write(uv);
-                            }
+                        let buffer_desc = BufferDesc::new(uvs.len() * mem::size_of::<Vec2>());
+                        let mut writer = loader
+                            .buffer_writer(&buffer_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                            .await;
+                        for uv in uvs.iter() {
+                            writer.write(uv);
                         }
-                    });
-                    Some(uv_buffer)
-                };
+                        let uv_buffer_id = writer.finish();
+                        Some(loader.get_buffer(uv_buffer_id.await))
+                    } else {
+                        None
+                    };
 
-                shader_data
-                    .get_mut(material_ref.0 as usize)
-                    .unwrap()
-                    .reflectance_texture = match &material.reflectance {
-                    Reflectance::Texture(filename) => {
-                        Some(*texture_indices.entry(filename.clone()).or_insert_with(|| {
-                            let image_handle = resource_loader.create_image();
-                            resource_loader.async_load({
-                                let filename = filename.clone();
-                                move |allocator| {
-                                    let mut reader = File::open(&filename).unwrap();
-                                    let (info, data) =
-                                        stb::image::stbi_load_from_reader(&mut reader, stb::image::Channels::RgbAlpha)
-                                            .unwrap();
-                                    let can_bc_compress = (info.width % 4) == 0 && (info.height % 4) == 0;
-                                    let size_in_pixels = UVec2::new(info.width as u32, info.height as u32);
-                                    println!(
-                                        "loaded {:?}: {}x{} ({})",
-                                        filename.file_name().unwrap(),
-                                        size_in_pixels.x,
-                                        size_in_pixels.y,
-                                        if can_bc_compress { "bc1" } else { "rgba" }
-                                    );
-                                    if can_bc_compress {
-                                        // compress on write
-                                        let image_desc = ImageDesc::new_2d(
-                                            size_in_pixels,
-                                            vk::Format::BC1_RGB_SRGB_BLOCK,
-                                            vk::ImageAspectFlags::COLOR,
-                                        );
-                                        let mut mapping = allocator
-                                            .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
-                                            .unwrap();
-                                        let size_in_blocks = size_in_pixels / 4;
-                                        let mut tmp_rgba = [0xffu8; 16 * 4];
-                                        let mut dst_bc1 = [0u8; 8];
-                                        for block_y in 0..size_in_blocks.y {
-                                            for block_x in 0..size_in_blocks.x {
-                                                for pixel_y in 0..4 {
-                                                    let tmp_offset = (pixel_y * 4 * 4) as usize;
-                                                    let tmp_row = &mut tmp_rgba[tmp_offset..(tmp_offset + 16)];
-                                                    let src_offset = (((block_y * 4 + pixel_y) * size_in_pixels.x
-                                                        + block_x * 4)
-                                                        * 4)
-                                                        as usize;
-                                                    let src_row = &data.as_slice()[src_offset..(src_offset + 16)];
-                                                    for pixel_x in 0..4 {
-                                                        for component in 0..3 {
-                                                            let row_offset = (4 * pixel_x + component) as usize;
-                                                            unsafe {
-                                                                *tmp_row.get_unchecked_mut(row_offset) =
-                                                                    *src_row.get_unchecked(row_offset)
-                                                            };
-                                                        }
-                                                    }
-                                                }
-                                                stb::dxt::stb_compress_dxt_block(
-                                                    &mut dst_bc1,
-                                                    &tmp_rgba,
-                                                    0,
-                                                    stb::dxt::CompressionMode::Normal,
-                                                );
-                                                mapping.write(&dst_bc1);
-                                            }
-                                        }
-                                    } else {
-                                        // load uncompressed
-                                        let image_desc = ImageDesc::new_2d(
-                                            size_in_pixels,
-                                            vk::Format::R8G8B8A8_SRGB,
-                                            vk::ImageAspectFlags::COLOR,
-                                        );
-                                        let mut mapping = allocator
-                                            .map_image(image_handle, &image_desc, ImageUsage::RAY_TRACING_SAMPLED)
-                                            .unwrap();
-                                        mapping.write(data.as_slice());
-                                    }
-                                }
-                            });
+                    let alias_table = if req.alias_table {
+                        let (positions, indices, total_area) = match scene.geometry(geometry_ref) {
+                            Geometry::TriangleMesh {
+                                positions,
+                                indices,
+                                area,
+                                ..
+                            } => (positions, indices, area),
+                            _ => unreachable!(),
+                        };
+                        let triangle_count = indices.len();
 
-                            let texture_index = TextureIndex(texture_images.len() as u16);
-                            texture_images.push(image_handle);
-                            texture_index
-                        }))
+                        let mut alias_table_tmp = AliasTable::new();
+                        for tri in indices.iter() {
+                            let p0 = positions[tri.x as usize];
+                            let p1 = positions[tri.y as usize];
+                            let p2 = positions[tri.z as usize];
+                            let area = 0.5 * (p2 - p1).cross(p0 - p1).mag();
+                            let p = area / total_area;
+                            alias_table_tmp.push(p * (triangle_count as f32));
+                        }
+
+                        let alias_table_desc = BufferDesc::new(triangle_count * mem::size_of::<LightAliasEntry>());
+                        let mut writer = loader
+                            .buffer_writer(&alias_table_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                            .await;
+                        for (u, i, j) in alias_table_tmp.into_iter() {
+                            let entry = LightAliasEntry {
+                                split: u,
+                                indices: (j << 16) | i,
+                            };
+                            writer.write(&entry);
+                        }
+                        let alias_table_id = writer.finish();
+
+                        Some(loader.get_buffer(alias_table_id.await))
+                    } else {
+                        None
+                    };
+
+                    GeometryAttribData {
+                        normal_buffer,
+                        uv_buffer,
+                        alias_table,
                     }
+                })
+            });
+        }
+
+        let mut shader_data = Vec::new();
+        let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
+        let mut texture_image_view_tasks = Vec::new();
+        for material_ref in scene.material_ref_iter() {
+            let texture_index = if shader_needs_texture[material_ref.0 as usize] {
+                let material = scene.material(material_ref);
+                let filename = match &material.reflectance {
+                    Reflectance::Texture(filename) => filename,
                     _ => unreachable!(),
                 };
-            }
-
-            if has_emissive_triangles {
-                geometry_attrib_data
-                    .get_mut(geometry_ref.0 as usize)
-                    .unwrap()
-                    .alias_table = {
-                    let alias_table = resource_loader.create_buffer();
-                    resource_loader.async_load({
-                        let scene = Arc::clone(scene);
-                        move |allocator| {
-                            let (positions, indices, total_area) = match scene.geometry(geometry_ref) {
-                                Geometry::TriangleMesh {
-                                    positions,
-                                    indices,
-                                    area,
-                                    ..
-                                } => (positions, indices, area),
-                                _ => unreachable!(),
-                            };
-                            let triangle_count = indices.len();
-
-                            let alias_table_desc = BufferDesc::new(triangle_count * mem::size_of::<LightAliasEntry>());
-
-                            let mut alias_table_tmp = AliasTable::new();
-                            for tri in indices.iter() {
-                                let p0 = positions[tri.x as usize];
-                                let p1 = positions[tri.y as usize];
-                                let p2 = positions[tri.z as usize];
-                                let area = 0.5 * (p2 - p1).cross(p0 - p1).mag();
-                                let p = area / total_area;
-                                alias_table_tmp.push(p * (triangle_count as f32));
-                            }
-
-                            let mut mapping = allocator
-                                .map_buffer(alias_table, &alias_table_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
-                                .unwrap();
-                            for (u, i, j) in alias_table_tmp.into_iter() {
-                                let entry = LightAliasEntry {
-                                    split: u,
-                                    indices: (j << 16) | i,
-                                };
-                                mapping.write(&entry);
-                            }
-                        }
-                    });
-                    Some(alias_table)
-                };
-            }
+                Some(*texture_indices.entry(filename.clone()).or_insert_with(|| {
+                    let texture_index = TextureIndex(texture_image_view_tasks.len() as u16);
+                    texture_image_view_tasks
+                        .push(resource_loader.spawn(image_load(resource_loader.clone(), filename.clone())));
+                    texture_index
+                }))
+            } else {
+                None
+            };
+            shader_data.push(ShaderData {
+                reflectance_texture: texture_index,
+            });
         }
+
+        let mut geometry_attrib_data = Vec::new();
+        for task in geometry_attrib_tasks.iter_mut() {
+            geometry_attrib_data.push(task.await);
+        }
+        let mut texture_image_views = Vec::new();
+        for task in texture_image_view_tasks.iter_mut() {
+            texture_image_views.push(task.await);
+        }
+
+        let texture_binding_set = TextureBindingSet::new(&context, &texture_image_views);
 
         let clamp_point_sampler = {
             let create_info = vk::SamplerCreateInfo {
@@ -1083,63 +1075,72 @@ impl Renderer {
         };
 
         // make pipeline
-        let path_trace_descriptor_set_layout = PathTraceDescriptorSet::layout(descriptor_pool);
-        let texture_binding_set = TextureBindingSet::new(context, texture_images);
-        let path_trace_pipeline_layout = pipeline_cache.get_pipeline_layout(&[
-            path_trace_descriptor_set_layout,
-            texture_binding_set.descriptor_set_layout,
-        ]);
-        let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
-            .map(|i| match ShaderGroup::from_integer(i).unwrap() {
-                ShaderGroup::RayGenerator => RayTracingShaderGroupDesc::Raygen("path_tracer/path_trace.rgen.spv"),
-                ShaderGroup::ExtendMiss => RayTracingShaderGroupDesc::Miss("path_tracer/extend.rmiss.spv"),
-                ShaderGroup::ExtendHitTriangle => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/extend_triangle.rchit.spv",
-                    any_hit: None,
-                    intersection: None,
-                },
-                ShaderGroup::ExtendHitDisc => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/extend_procedural.rchit.spv",
-                    any_hit: None,
-                    intersection: Some("path_tracer/disc.rint.spv"),
-                },
-                ShaderGroup::ExtendHitSphere => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/extend_procedural.rchit.spv",
-                    any_hit: None,
-                    intersection: Some("path_tracer/sphere.rint.spv"),
-                },
-                ShaderGroup::ExtendHitMandelbulb => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/extend_procedural.rchit.spv",
-                    any_hit: None,
-                    intersection: Some("path_tracer/mandelbulb.rint.spv"),
-                },
-                ShaderGroup::OcclusionMiss => RayTracingShaderGroupDesc::Miss("path_tracer/occlusion.rmiss.spv"),
-                ShaderGroup::OcclusionHitTriangle => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/occlusion.rchit.spv",
-                    any_hit: None,
-                    intersection: None,
-                },
-                ShaderGroup::OcclusionHitDisc => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/occlusion.rchit.spv",
-                    any_hit: None,
-                    intersection: Some("path_tracer/disc.rint.spv"),
-                },
-                ShaderGroup::OcclusionHitSphere => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/occlusion.rchit.spv",
-                    any_hit: None,
-                    intersection: Some("path_tracer/sphere.rint.spv"),
-                },
-                ShaderGroup::OcclusionHitMandelbulb => RayTracingShaderGroupDesc::Hit {
-                    closest_hit: "path_tracer/occlusion.rchit.spv",
-                    any_hit: None,
-                    intersection: Some("path_tracer/mandelbulb.rint.spv"),
-                },
-            })
-            .collect();
-        let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
+        let pipeline_future = resource_loader.graphics({
+            let texture_binding_descriptor_set = texture_binding_set.descriptor_set_layout;
+            move |ctx: GraphicsTaskContext| {
+                let descriptor_pool = ctx.descriptor_pool;
+                let pipeline_cache = ctx.pipeline_cache;
+                let path_trace_descriptor_set_layout = PathTraceDescriptorSet::layout(descriptor_pool);
+                let path_trace_pipeline_layout = pipeline_cache
+                    .get_pipeline_layout(&[path_trace_descriptor_set_layout, texture_binding_descriptor_set]);
+                let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
+                    .map(|i| match ShaderGroup::from_integer(i).unwrap() {
+                        ShaderGroup::RayGenerator => {
+                            RayTracingShaderGroupDesc::Raygen("path_tracer/path_trace.rgen.spv")
+                        }
+                        ShaderGroup::ExtendMiss => RayTracingShaderGroupDesc::Miss("path_tracer/extend.rmiss.spv"),
+                        ShaderGroup::ExtendHitTriangle => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/extend_triangle.rchit.spv",
+                            any_hit: None,
+                            intersection: None,
+                        },
+                        ShaderGroup::ExtendHitDisc => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/extend_procedural.rchit.spv",
+                            any_hit: None,
+                            intersection: Some("path_tracer/disc.rint.spv"),
+                        },
+                        ShaderGroup::ExtendHitSphere => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/extend_procedural.rchit.spv",
+                            any_hit: None,
+                            intersection: Some("path_tracer/sphere.rint.spv"),
+                        },
+                        ShaderGroup::ExtendHitMandelbulb => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/extend_procedural.rchit.spv",
+                            any_hit: None,
+                            intersection: Some("path_tracer/mandelbulb.rint.spv"),
+                        },
+                        ShaderGroup::OcclusionMiss => {
+                            RayTracingShaderGroupDesc::Miss("path_tracer/occlusion.rmiss.spv")
+                        }
+                        ShaderGroup::OcclusionHitTriangle => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/occlusion.rchit.spv",
+                            any_hit: None,
+                            intersection: None,
+                        },
+                        ShaderGroup::OcclusionHitDisc => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/occlusion.rchit.spv",
+                            any_hit: None,
+                            intersection: Some("path_tracer/disc.rint.spv"),
+                        },
+                        ShaderGroup::OcclusionHitSphere => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/occlusion.rchit.spv",
+                            any_hit: None,
+                            intersection: Some("path_tracer/sphere.rint.spv"),
+                        },
+                        ShaderGroup::OcclusionHitMandelbulb => RayTracingShaderGroupDesc::Hit {
+                            closest_hit: "path_tracer/occlusion.rchit.spv",
+                            any_hit: None,
+                            intersection: Some("path_tracer/mandelbulb.rint.spv"),
+                        },
+                    })
+                    .collect();
+                let path_trace_pipeline = pipeline_cache.get_ray_tracing(&group_desc, path_trace_pipeline_layout);
+                (path_trace_pipeline_layout, path_trace_pipeline)
+            }
+        });
 
-        let pmj_samples_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let loader = resource_loader.clone();
+        let pmj_samples_image_view = resource_loader.spawn(async move {
             let sequences: Vec<Vec<_>> = (0..Self::PMJ_SEQUENCE_COUNT)
                 .into_par_iter()
                 .map(|i| {
@@ -1153,26 +1154,22 @@ impl Renderer {
                 vk::Format::R32G32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = allocator
-                .map_image(pmj_samples_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
-                .unwrap();
-
+            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_STORAGE_READ).await;
             for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
                 let pixel: [f32; 2] = [sample.x(), sample.y()];
                 writer.write(&pixel);
             }
+            loader.get_image_view(writer.finish().await)
         });
 
-        let sobol_samples_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let loader = resource_loader.clone();
+        let sobol_samples_image_view = resource_loader.spawn(async move {
             let desc = ImageDesc::new_2d(
                 UVec2::new(Self::MAX_SAMPLES_PER_SEQUENCE, 1),
                 vk::Format::R32G32B32A32_UINT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = allocator
-                .map_image(sobol_samples_image, &desc, ImageUsage::COMPUTE_STORAGE_READ)
-                .unwrap();
+            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_STORAGE_READ).await;
 
             let seq0 = sobol(0);
             let seq1 = sobol(1);
@@ -1188,18 +1185,17 @@ impl Renderer {
                 let pixel: [u32; 4] = [s0, s1, s2, s3];
                 writer.write(&pixel);
             }
+            loader.get_image_view(writer.finish().await)
         });
 
-        let smits_table_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let loader = resource_loader.clone();
+        let smits_table_image_view = resource_loader.spawn(async move {
             let desc = ImageDesc::new_2d(
                 UVec2::new(2, 10),
                 vk::Format::R32G32B32A32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = allocator
-                .map_image(smits_table_image, &desc, ImageUsage::COMPUTE_SAMPLED)
-                .unwrap();
+            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_SAMPLED).await;
 
             // c.f. "An RGB to Spectrum Conversion for Reflectances"
             #[rustfmt::skip]
@@ -1217,6 +1213,8 @@ impl Renderer {
                 1.0000, 0.0000, 0.9959, 0.9840, 1.0149, 0.0025, 0.0496, 0.0,
             ];
             writer.write(SMITS_TABLE);
+
+            loader.get_image_view(writer.finish().await)
         });
 
         const WAVELENGTH_MIN: u32 = 380;
@@ -1231,17 +1229,16 @@ impl Renderer {
 
         const ILLUMINANT_RESOLUTION: u32 = 5;
         const ILLUMINANT_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / ILLUMINANT_RESOLUTION;
-        let illuminants_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let loader = resource_loader.clone();
+        let illuminants_image_view = resource_loader.spawn(async move {
             let desc = ImageDesc::new_1d(
                 ILLUMINANT_PIXEL_COUNT,
                 vk::Format::R32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             )
             .with_layer_count(Illuminant::MAX_VALUE);
-            let mut writer = allocator
-                .map_image(illuminants_image, &desc, ImageUsage::COMPUTE_SAMPLED)
-                .unwrap();
+
+            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_SAMPLED).await;
 
             let wavelength_from_index = |index| {
                 ((WAVELENGTH_MIN + index * ILLUMINANT_RESOLUTION) as f32) + 0.5 * (ILLUMINANT_RESOLUTION as f32)
@@ -1255,12 +1252,14 @@ impl Renderer {
                     writer.write(&sweep.next(wavelength));
                 }
             }
+
+            loader.get_image_view(writer.finish().await)
         });
 
         const CONDUCTOR_RESOLUTION: u32 = 10;
         const CONDUCTOR_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / CONDUCTOR_RESOLUTION;
-        let conductors_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let loader = resource_loader.clone();
+        let conductors_image_view = resource_loader.spawn(async move {
             let desc = ImageDesc::new_1d(
                 CONDUCTOR_PIXEL_COUNT,
                 vk::Format::R32G32_SFLOAT,
@@ -1268,9 +1267,7 @@ impl Renderer {
             )
             .with_layer_count(1 + Conductor::MAX_VALUE - Conductor::MIN_VALUE);
 
-            let mut writer = allocator
-                .map_image(conductors_image, &desc, ImageUsage::COMPUTE_SAMPLED)
-                .unwrap();
+            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_SAMPLED).await;
 
             let wavelength_from_index =
                 |index| ((WAVELENGTH_MIN + index * CONDUCTOR_RESOLUTION) as f32) + 0.5 * (CONDUCTOR_RESOLUTION as f32);
@@ -1310,6 +1307,8 @@ impl Renderer {
                     writer.write(&k_sweep.next(wavelength));
                 }
             }
+
+            loader.get_image_view(writer.finish().await)
         });
 
         // HACK: use the first illuminant in the scene as the pdf for wavelength sampling
@@ -1331,9 +1330,8 @@ impl Renderer {
             .unwrap_or(Illuminant::E);
 
         const WAVELENGTH_SAMPLER_RESOLUTION: u32 = 1024;
-        let wavelength_inv_cdf_image = resource_loader.create_image();
-        let wavelength_pdf_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let loader = resource_loader.clone();
+        let wavelength_pdf_image_views = resource_loader.spawn(async move {
             let mut sweep = illuminant_samples(illuminant_for_pdf).iter().into_sweep();
             let mut prob_samples: Vec<_> = (WAVELENGTH_MIN..=WAVELENGTH_MAX)
                 .map(|wavelength| {
@@ -1347,9 +1345,7 @@ impl Renderer {
                 vk::Format::R32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = allocator
-                .map_image(wavelength_pdf_image, &pdf_desc, ImageUsage::RAY_TRACING_SAMPLED)
-                .unwrap();
+            let mut writer = loader.image_writer(&pdf_desc, ImageUsage::RAY_TRACING_SAMPLED).await;
 
             let prob_sum = prob_samples.iter().map(|(_, p)| p).sum::<f32>();
             let uniform_prob = 1.0 / ((WAVELENGTH_MAX - WAVELENGTH_MIN) as f32);
@@ -1362,6 +1358,7 @@ impl Renderer {
                 let pdf: f32 = prob_sweep.next((wavelength as f32) + 0.5);
                 writer.write(&pdf);
             }
+            let pdf_image_id = writer.finish();
 
             let mut cdf_acc = 0.0;
             let cdf_samples: Vec<_> = prob_samples
@@ -1378,9 +1375,9 @@ impl Renderer {
                 vk::Format::R32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = allocator
-                .map_image(wavelength_inv_cdf_image, &inv_cdf_desc, ImageUsage::RAY_TRACING_SAMPLED)
-                .unwrap();
+            let mut writer = loader
+                .image_writer(&inv_cdf_desc, ImageUsage::RAY_TRACING_SAMPLED)
+                .await;
 
             let mut cdf_sweep = cdf_samples.iter().copied().into_sweep();
             for i in 0..WAVELENGTH_SAMPLER_RESOLUTION {
@@ -1388,113 +1385,122 @@ impl Renderer {
                 let wavelength: f32 = cdf_sweep.next(p);
                 writer.write(&wavelength);
             }
+            let inv_cdf_image_id = writer.finish();
+
+            (
+                loader.get_image_view(pdf_image_id.await),
+                loader.get_image_view(inv_cdf_image_id.await),
+            )
         });
 
-        let xyz_matching_image = resource_loader.create_image();
-        resource_loader.async_load(move |allocator| {
+        let loader = resource_loader.clone();
+        let xyz_matching_image_view = resource_loader.spawn(async move {
             let desc = ImageDesc::new_1d(
                 WAVELENGTH_MAX - WAVELENGTH_MIN,
                 vk::Format::R32G32B32A32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = allocator
-                .map_image(xyz_matching_image, &desc, ImageUsage::COMPUTE_SAMPLED)
-                .unwrap();
+            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_SAMPLED).await;
 
             let mut sweep = xyz_matching_sweep();
             for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
                 writer.write(&sweep.next(wavelength as f32 + 0.5).xyzw());
             }
+            loader.get_image_view(writer.finish().await)
         });
 
-        let result_image = {
-            let desc = ImageDesc::new_2d(
-                params.size(),
-                vk::Format::R32G32B32A32_SFLOAT,
-                vk::ImageAspectFlags::COLOR,
-            );
-            let usage = ImageUsage::FRAGMENT_STORAGE_READ
-                | ImageUsage::COMPUTE_STORAGE_READ
-                | ImageUsage::COMPUTE_STORAGE_WRITE;
-            render_graph.create_image(&desc, usage, global_allocator)
-        };
+        let result_image_id = resource_loader.graphics({
+            let size = params.size();
+            move |ctx: GraphicsTaskContext| {
+                let schedule = ctx.schedule;
+
+                let desc = ImageDesc::new_2d(size, vk::Format::R32G32B32A32_SFLOAT, vk::ImageAspectFlags::COLOR);
+                let usage = ImageUsage::FRAGMENT_STORAGE_READ
+                    | ImageUsage::COMPUTE_STORAGE_READ
+                    | ImageUsage::COMPUTE_STORAGE_WRITE;
+                schedule.create_image(&desc, usage)
+            }
+        });
+
+        let (path_trace_pipeline_layout, path_trace_pipeline) = pipeline_future.await;
+        let shader_binding_data = Renderer::create_shader_binding_data(
+            &resource_loader,
+            Arc::clone(&scene),
+            &accel,
+            &geometry_attrib_data,
+            &shader_data,
+            path_trace_pipeline,
+        );
+
+        let pmj_samples_image_view = pmj_samples_image_view.await;
+        let sobol_samples_image_view = sobol_samples_image_view.await;
+        let smits_table_image_view = smits_table_image_view.await;
+        let illuminants_image_view = illuminants_image_view.await;
+        let conductors_image_view = conductors_image_view.await;
+        let (wavelength_pdf_image_view, wavelength_inv_cdf_image_view) = wavelength_pdf_image_views.await;
+        let xyz_matching_image_view = xyz_matching_image_view.await;
+        let result_image_id = result_image_id.await;
+        let shader_binding_data = shader_binding_data.await;
 
         Self {
-            context: SharedContext::clone(context),
-            scene: Arc::clone(scene),
+            context,
             accel,
             path_trace_pipeline_layout,
             path_trace_pipeline,
             clamp_point_sampler,
             clamp_linear_sampler,
             texture_binding_set,
-            shader_data,
-            geometry_attrib_data,
-            shader_binding_data: None,
-            pmj_samples_image,
-            sobol_samples_image,
-            smits_table_image,
-            illuminants_image,
-            conductors_image,
-            wavelength_inv_cdf_image,
-            wavelength_pdf_image,
-            xyz_matching_image,
-            result_image,
+            shader_binding_data,
+            pmj_samples_image_view,
+            sobol_samples_image_view,
+            smits_table_image_view,
+            illuminants_image_view,
+            conductors_image_view,
+            wavelength_inv_cdf_image_view,
+            wavelength_pdf_image_view,
+            xyz_matching_image_view,
+            result_image_id,
             params,
         }
     }
 
-    fn geometry_attrib_data(&self, geometry_ref: GeometryRef) -> &GeometryAttribData {
-        &self.geometry_attrib_data[geometry_ref.0 as usize]
-    }
-
-    fn create_shader_binding_table(&self, resource_loader: &mut ResourceLoader) -> Option<ShaderBindingData> {
+    async fn create_shader_binding_data(
+        resource_loader: &ResourceLoader,
+        scene: Arc<Scene>,
+        accel: &SceneAccel,
+        geometry_attrib_data: &[GeometryAttribData],
+        shader_data: &[ShaderData],
+        path_trace_pipeline: vk::Pipeline,
+    ) -> ShaderBindingData {
         // gather the data we need for records
-        let mut geometry_records = vec![None; self.scene.geometries.len()];
-        for geometry_ref in self.accel.clusters().geometry_iter().copied() {
-            let geometry_buffer_data = self.accel.geometry_accel_data(geometry_ref)?;
+        let context = resource_loader.context();
+        let mut geometry_records = vec![None; scene.geometries.len()];
+        for geometry_ref in accel.clusters().geometry_iter().copied() {
+            let geometry_buffer_data = accel.geometry_accel_data(geometry_ref).unwrap();
             geometry_records[geometry_ref.0 as usize] = match geometry_buffer_data {
                 GeometryAccelData::Triangles {
                     index_buffer,
                     position_buffer,
                 } => {
-                    let index_buffer_address = unsafe {
-                        self.context
-                            .device
-                            .get_buffer_device_address_helper(resource_loader.get_buffer(*index_buffer)?)
-                    };
-                    let position_buffer_address = unsafe {
-                        self.context
-                            .device
-                            .get_buffer_device_address_helper(resource_loader.get_buffer(*position_buffer)?)
-                    };
+                    let index_buffer_address =
+                        unsafe { context.device.get_buffer_device_address_helper(*index_buffer) };
+                    let position_buffer_address =
+                        unsafe { context.device.get_buffer_device_address_helper(*position_buffer) };
 
-                    let attrib_data = self.geometry_attrib_data(geometry_ref);
+                    let attrib_data = geometry_attrib_data[geometry_ref.0 as usize];
                     let normal_buffer_address = if let Some(buffer) = attrib_data.normal_buffer {
-                        unsafe {
-                            self.context
-                                .device
-                                .get_buffer_device_address_helper(resource_loader.get_buffer(buffer)?)
-                        }
+                        unsafe { context.device.get_buffer_device_address_helper(buffer) }
                     } else {
                         0
                     };
                     let uv_buffer_address = if let Some(buffer) = attrib_data.uv_buffer {
-                        unsafe {
-                            self.context
-                                .device
-                                .get_buffer_device_address_helper(resource_loader.get_buffer(buffer)?)
-                        }
+                        unsafe { context.device.get_buffer_device_address_helper(buffer) }
                     } else {
                         0
                     };
 
                     let alias_table_address = if let Some(alias_table) = attrib_data.alias_table {
-                        unsafe {
-                            self.context
-                                .device
-                                .get_buffer_device_address_helper(resource_loader.get_buffer(alias_table)?)
-                        }
+                        unsafe { context.device.get_buffer_device_address_helper(alias_table) }
                     } else {
                         0
                     };
@@ -1512,8 +1518,7 @@ impl Renderer {
         }
 
         // grab the shader group handles
-        let rtpp = &self
-            .context
+        let rtpp = &context
             .physical_device_extra_properties
             .as_ref()
             .unwrap()
@@ -1522,8 +1527,8 @@ impl Renderer {
         let shader_group_count = 1 + ShaderGroup::MAX_VALUE;
         let mut shader_group_handle_data = vec![0u8; shader_group_count * handle_size];
         unsafe {
-            self.context.device.get_ray_tracing_shader_group_handles_khr(
-                self.path_trace_pipeline,
+            context.device.get_ray_tracing_shader_group_handles_khr(
+                path_trace_pipeline,
                 0,
                 shader_group_count as u32,
                 &mut shader_group_handle_data,
@@ -1532,25 +1537,23 @@ impl Renderer {
         .unwrap();
 
         // count the number of lights
-        let emissive_instance_count = self
-            .accel
+        let emissive_instance_count = accel
             .clusters()
             .instance_iter()
             .copied()
             .filter(|&instance_ref| {
-                let material_ref = self.scene.instance(instance_ref).material_ref;
-                self.scene.material(material_ref).emission.is_some()
+                let material_ref = scene.instance(instance_ref).material_ref;
+                scene.material(material_ref).emission.is_some()
             })
             .count() as u32;
         let external_light_begin = emissive_instance_count;
-        let external_light_end = emissive_instance_count + self.scene.lights.len() as u32;
+        let external_light_end = emissive_instance_count + scene.lights.len() as u32;
         let sampled_light_count =
-            emissive_instance_count + self.scene.lights.iter().filter(|light| light.can_be_sampled()).count() as u32;
+            emissive_instance_count + scene.lights.iter().filter(|light| light.can_be_sampled()).count() as u32;
         let total_light_count = external_light_end;
 
         // figure out the layout
-        let rtpp = &self
-            .context
+        let rtpp = &context
             .physical_device_extra_properties
             .as_ref()
             .unwrap()
@@ -1595,7 +1598,7 @@ impl Renderer {
             rtpp.shader_group_handle_size + hit_record_size,
             rtpp.shader_group_handle_alignment,
         );
-        let hit_entry_count = (self.scene.instances.len() as u32) * Self::HIT_ENTRY_COUNT_PER_INSTANCE;
+        let hit_entry_count = (scene.instances.len() as u32) * Self::HIT_ENTRY_COUNT_PER_INSTANCE;
         let hit_region = ShaderBindingRegion {
             offset: next_offset,
             stride: hit_stride,
@@ -1606,360 +1609,353 @@ impl Renderer {
         let total_size = next_offset;
 
         // write the table
-        let shader_binding_table = resource_loader.create_buffer();
-        let light_info_table = resource_loader.create_buffer();
-        resource_loader.async_load({
-            let scene = Arc::clone(&self.scene);
-            let clusters = Arc::clone(self.accel.clusters());
-            let shader_data = self.shader_data.clone(); // TODO: fix
-            move |allocator| {
-                let shader_group_handle = |group: ShaderGroup| {
-                    let begin = (group.into_integer() as usize) * handle_size;
-                    let end = begin + handle_size;
-                    &shader_group_handle_data[begin..end]
-                };
+        let (shader_binding_table_id, light_info_table_id) = {
+            let shader_group_handle = |group: ShaderGroup| {
+                let begin = (group.into_integer() as usize) * handle_size;
+                let end = begin + handle_size;
+                &shader_group_handle_data[begin..end]
+            };
 
-                let desc = BufferDesc::new(total_size as usize);
-                let mut writer = allocator
-                    .map_buffer(
-                        shader_binding_table,
-                        &desc,
-                        BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE,
-                    )
-                    .unwrap();
+            let shading_binding_table_desc = BufferDesc::new(total_size as usize);
+            let mut writer = resource_loader
+                .buffer_writer(
+                    &shading_binding_table_desc,
+                    BufferUsage::RAY_TRACING_SHADER_BINDING_TABLE,
+                )
+                .await;
 
-                assert_eq!(raygen_region.offset, 0);
-                writer.write(shader_group_handle(ShaderGroup::RayGenerator));
+            assert_eq!(raygen_region.offset, 0);
+            writer.write(shader_group_handle(ShaderGroup::RayGenerator));
 
-                writer.write_zeros(miss_region.offset as usize - writer.written());
-                {
-                    let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write(shader_group_handle(ShaderGroup::ExtendMiss));
-                    writer.write_zeros(end_offset - writer.written());
+            writer.write_zeros(miss_region.offset as usize - writer.written());
+            {
+                let end_offset = writer.written() + miss_region.stride as usize;
+                writer.write(shader_group_handle(ShaderGroup::ExtendMiss));
+                writer.write_zeros(end_offset - writer.written());
 
-                    let end_offset = writer.written() + miss_region.stride as usize;
-                    writer.write(shader_group_handle(ShaderGroup::OcclusionMiss));
-                    writer.write_zeros(end_offset - writer.written());
-                }
+                let end_offset = writer.written() + miss_region.stride as usize;
+                writer.write(shader_group_handle(ShaderGroup::OcclusionMiss));
+                writer.write_zeros(end_offset - writer.written());
+            }
 
-                writer.write_zeros(hit_region.offset as usize - writer.written());
-                let mut light_info = Vec::new();
-                let mut light_params_data = Vec::new();
-                let align16 = |n: usize| (n + 15) & !15;
-                let align16_vec = |v: &mut Vec<u8>| v.resize(align16(v.len()), 0);
-                for instance_ref in clusters.instance_iter().copied() {
-                    let instance = scene.instance(instance_ref);
-                    let geometry = scene.geometry(instance.geometry_ref);
-                    let transform = scene.transform(instance.transform_ref);
-                    let material = scene.material(instance.material_ref);
+            writer.write_zeros(hit_region.offset as usize - writer.written());
+            let mut light_info = Vec::new();
+            let mut light_params_data = Vec::new();
+            let align16 = |n: usize| (n + 15) & !15;
+            let align16_vec = |v: &mut Vec<u8>| v.resize(align16(v.len()), 0);
+            for instance_ref in accel.clusters().instance_iter().copied() {
+                let instance = scene.instance(instance_ref);
+                let geometry = scene.geometry(instance.geometry_ref);
+                let transform = scene.transform(instance.transform_ref);
+                let material = scene.material(instance.material_ref);
 
-                    let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture;
-                    let mut shader = ExtendShader::new(&material.reflectance, &material.surface, reflectance_texture);
-                    if let Some(emission) = material.emission {
-                        shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
-                        shader.light_index = light_info.len() as u32;
+                let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture;
+                let mut shader = ExtendShader::new(&material.reflectance, &material.surface, reflectance_texture);
+                if let Some(emission) = material.emission {
+                    shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
+                    shader.light_index = light_info.len() as u32;
 
-                        let world_from_local = transform.world_from_local;
-                        let unit_scale = geometry.unit_scale(world_from_local);
+                    let world_from_local = transform.world_from_local;
+                    let unit_scale = geometry.unit_scale(world_from_local);
 
-                        let params_offset = light_params_data.len();
-                        let (light_type, area_ws) = match geometry {
-                            Geometry::TriangleMesh { indices, area, .. } => {
-                                let (index_buffer_address, position_buffer_address, alias_table_address) =
-                                    match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
-                                        GeometryRecordData::Triangles {
-                                            index_buffer_address,
-                                            position_buffer_address,
-                                            alias_table_address,
-                                            ..
-                                        } => (index_buffer_address, position_buffer_address, alias_table_address),
-                                        GeometryRecordData::Procedural => panic!("unexpected geometry record"),
-                                    };
-                                let triangle_count = indices.len() as u32;
-                                let area_ws =
-                                    area * transform.world_from_local.scale * transform.world_from_local.scale;
+                    let params_offset = light_params_data.len();
+                    let (light_type, area_ws) = match geometry {
+                        Geometry::TriangleMesh { indices, area, .. } => {
+                            let (index_buffer_address, position_buffer_address, alias_table_address) =
+                                match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
+                                    GeometryRecordData::Triangles {
+                                        index_buffer_address,
+                                        position_buffer_address,
+                                        alias_table_address,
+                                        ..
+                                    } => (index_buffer_address, position_buffer_address, alias_table_address),
+                                    GeometryRecordData::Procedural => panic!("unexpected geometry record"),
+                                };
+                            let triangle_count = indices.len() as u32;
+                            let area_ws = area * transform.world_from_local.scale * transform.world_from_local.scale;
 
-                                light_params_data.extend_from_slice(bytemuck::bytes_of(&TriangleMeshLightParams {
-                                    alias_table_address,
-                                    index_buffer_address,
-                                    position_buffer_address,
-                                    triangle_count,
-                                    world_from_local: transform.world_from_local.into_transform(),
-                                    illuminant_tint: emission.intensity,
-                                    area_pdf: 1.0 / area_ws,
-                                    unit_scale,
-                                }));
-
-                                (LightType::TriangleMesh, area_ws)
-                            }
-                            Geometry::Quad { local_from_quad, size } => {
-                                let world_from_quad = world_from_local * *local_from_quad;
-
-                                let centre_ws = world_from_quad.translation;
-                                let edge0_ws = world_from_quad.transform_vec3(size.x * Vec3::unit_x());
-                                let edge1_ws = world_from_quad.transform_vec3(size.y * Vec3::unit_y());
-                                let normal_ws = world_from_quad.transform_vec3(Vec3::unit_z()).normalized();
-                                let area_ws = (world_from_quad.scale * world_from_quad.scale * size.x * size.y).abs();
-
-                                light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
-                                    illuminant_tint: emission.intensity,
-                                    unit_scale,
-                                    area_pdf: 1.0 / area_ws,
-                                    normal_ws,
-                                    point_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
-                                    vec0_ws: edge0_ws,
-                                    vec1_ws: edge1_ws,
-                                }));
-
-                                (LightType::Quad, area_ws)
-                            }
-                            Geometry::Disc {
-                                local_from_disc,
-                                radius,
-                            } => {
-                                let world_from_disc = world_from_local * *local_from_disc;
-                                let radius_ws = (world_from_disc.scale * *radius).abs();
-                                let area_ws = PI * radius_ws * radius_ws;
-
-                                let centre_ws = world_from_disc.translation;
-                                let radius0_ws = world_from_disc.transform_vec3(*radius * Vec3::unit_x());
-                                let radius1_ws = world_from_disc.transform_vec3(*radius * Vec3::unit_y());
-                                let normal_ws = world_from_disc.transform_vec3(Vec3::unit_z()).normalized();
-
-                                light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
-                                    illuminant_tint: emission.intensity,
-                                    unit_scale,
-                                    area_pdf: 1.0 / area_ws,
-                                    normal_ws,
-                                    point_ws: centre_ws,
-                                    vec0_ws: radius0_ws,
-                                    vec1_ws: radius1_ws,
-                                }));
-
-                                (LightType::Disc, area_ws)
-                            }
-                            Geometry::Sphere { centre, radius } => {
-                                let centre_ws = world_from_local * *centre;
-                                let radius_ws = (world_from_local.scale * *radius).abs();
-                                let area_ws = 4.0 * PI * radius_ws * radius_ws;
-
-                                light_params_data.extend_from_slice(bytemuck::bytes_of(&SphereLightParams {
-                                    illuminant_tint: emission.intensity,
-                                    unit_scale,
-                                    centre_ws,
-                                    radius_ws,
-                                }));
-
-                                (LightType::Sphere, area_ws)
-                            }
-                            Geometry::Mandelbulb { .. } => unimplemented!(),
-                        };
-
-                        align16_vec(&mut light_params_data);
-                        light_info.push(LightInfoEntry {
-                            light_flags: light_type.into_integer() | (emission.illuminant.into_integer() << 8),
-                            probability: area_ws * emission.intensity.luminance() * PI, // HACK
-                            params_offset: params_offset as u32,
-                        });
-                    }
-
-                    let unit_scale = geometry.unit_scale(transform.world_from_local);
-                    match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
-                        GeometryRecordData::Triangles {
-                            index_buffer_address,
-                            position_buffer_address,
-                            normal_buffer_address,
-                            uv_buffer_address,
-                            ..
-                        } => {
-                            if normal_buffer_address != 0 {
-                                shader.flags |= ExtendShaderFlags::HAS_NORMALS;
-                            }
-                            let hit_record = ExtendTriangleHitRecord {
+                            light_params_data.extend_from_slice(bytemuck::bytes_of(&TriangleMeshLightParams {
+                                alias_table_address,
                                 index_buffer_address,
                                 position_buffer_address,
-                                normal_buffer_address,
-                                uv_buffer_address,
+                                triangle_count,
+                                world_from_local: transform.world_from_local.into_transform(),
+                                illuminant_tint: emission.intensity,
+                                area_pdf: 1.0 / area_ws,
                                 unit_scale,
-                                shader,
-                                _pad: 0,
-                            };
-
-                            let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handle(ShaderGroup::ExtendHitTriangle));
-                            writer.write(&hit_record);
-                            writer.write_zeros(end_offset - writer.written());
-
-                            let end_offset = writer.written() + hit_region.stride as usize;
-                            writer.write(shader_group_handle(ShaderGroup::OcclusionHitTriangle));
-                            writer.write_zeros(end_offset - writer.written());
-                        }
-                        GeometryRecordData::Procedural => match scene.geometry(instance.geometry_ref) {
-                            Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => unreachable!(),
-                            Geometry::Disc {
-                                local_from_disc,
-                                radius,
-                            } => {
-                                let hit_record = IntersectDiscRecord {
-                                    header: ProceduralHitRecordHeader { unit_scale, shader },
-                                    centre: local_from_disc.translation,
-                                    normal: local_from_disc.transform_vec3(Vec3::unit_z()).normalized(),
-                                    radius: (local_from_disc.scale * radius).abs(),
-                                };
-
-                                let end_offset = writer.written() + hit_region.stride as usize;
-                                writer.write(shader_group_handle(ShaderGroup::ExtendHitDisc));
-                                writer.write(&hit_record);
-                                writer.write_zeros(end_offset - writer.written());
-
-                                let end_offset = writer.written() + hit_region.stride as usize;
-                                writer.write(shader_group_handle(ShaderGroup::OcclusionHitDisc));
-                                writer.write(&hit_record);
-                                writer.write_zeros(end_offset - writer.written());
-                            }
-                            Geometry::Sphere { centre, radius } => {
-                                let hit_record = IntersectSphereRecord {
-                                    header: ProceduralHitRecordHeader { unit_scale, shader },
-                                    centre: *centre,
-                                    radius: radius.abs(),
-                                };
-
-                                let end_offset = writer.written() + hit_region.stride as usize;
-                                writer.write(shader_group_handle(ShaderGroup::ExtendHitSphere));
-                                writer.write(&hit_record);
-                                writer.write_zeros(end_offset - writer.written());
-
-                                let end_offset = writer.written() + hit_region.stride as usize;
-                                writer.write(shader_group_handle(ShaderGroup::OcclusionHitSphere));
-                                writer.write(&hit_record);
-                                writer.write_zeros(end_offset - writer.written());
-                            }
-                            Geometry::Mandelbulb { local_from_bulb } => {
-                                let hit_record = IntersectMandelbulbRecord {
-                                    header: ProceduralHitRecordHeader { unit_scale, shader },
-                                    centre: local_from_bulb.translation,
-                                };
-
-                                let end_offset = writer.written() + hit_region.stride as usize;
-                                writer.write(shader_group_handle(ShaderGroup::ExtendHitMandelbulb));
-                                writer.write(&hit_record);
-                                writer.write_zeros(end_offset - writer.written());
-
-                                let end_offset = writer.written() + hit_region.stride as usize;
-                                writer.write(shader_group_handle(ShaderGroup::OcclusionHitMandelbulb));
-                                writer.write(&hit_record);
-                                writer.write_zeros(end_offset - writer.written());
-                            }
-                        },
-                    }
-                }
-
-                let local_light_total_power = if light_info.is_empty() {
-                    None
-                } else {
-                    Some(light_info.iter().map(|info| info.probability).sum())
-                };
-
-                for light in scene
-                    .lights
-                    .iter()
-                    .filter(|light| light.can_be_sampled())
-                    .chain(scene.lights.iter().filter(|light| !light.can_be_sampled()))
-                {
-                    let params_offset = light_params_data.len();
-                    let (light_type, illuminant, sampling_power) = match light {
-                        Light::Dome { emission } => {
-                            light_params_data.extend_from_slice(bytemuck::bytes_of(&DomeLightParams {
-                                illuminant_tint: emission.intensity,
                             }));
 
-                            (LightType::Dome, emission.illuminant, 0.0)
+                            (LightType::TriangleMesh, area_ws)
                         }
-                        Light::SolidAngle {
-                            emission,
-                            direction_ws,
-                            solid_angle,
+                        Geometry::Quad { local_from_quad, size } => {
+                            let world_from_quad = world_from_local * *local_from_quad;
+
+                            let centre_ws = world_from_quad.translation;
+                            let edge0_ws = world_from_quad.transform_vec3(size.x * Vec3::unit_x());
+                            let edge1_ws = world_from_quad.transform_vec3(size.y * Vec3::unit_y());
+                            let normal_ws = world_from_quad.transform_vec3(Vec3::unit_z()).normalized();
+                            let area_ws = (world_from_quad.scale * world_from_quad.scale * size.x * size.y).abs();
+
+                            light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
+                                illuminant_tint: emission.intensity,
+                                unit_scale,
+                                area_pdf: 1.0 / area_ws,
+                                normal_ws,
+                                point_ws: centre_ws - 0.5 * (edge0_ws + edge1_ws),
+                                vec0_ws: edge0_ws,
+                                vec1_ws: edge1_ws,
+                            }));
+
+                            (LightType::Quad, area_ws)
+                        }
+                        Geometry::Disc {
+                            local_from_disc,
+                            radius,
                         } => {
-                            let direction_ws = direction_ws.normalized();
-                            let solid_angle = solid_angle.abs();
+                            let world_from_disc = world_from_local * *local_from_disc;
+                            let radius_ws = (world_from_disc.scale * *radius).abs();
+                            let area_ws = PI * radius_ws * radius_ws;
 
-                            light_params_data.extend_from_slice(bytemuck::bytes_of(&SolidAngleLightParams {
+                            let centre_ws = world_from_disc.translation;
+                            let radius0_ws = world_from_disc.transform_vec3(*radius * Vec3::unit_x());
+                            let radius1_ws = world_from_disc.transform_vec3(*radius * Vec3::unit_y());
+                            let normal_ws = world_from_disc.transform_vec3(Vec3::unit_z()).normalized();
+
+                            light_params_data.extend_from_slice(bytemuck::bytes_of(&PlanarLightParams {
                                 illuminant_tint: emission.intensity,
-                                direction_ws,
-                                solid_angle: solid_angle.abs(),
+                                unit_scale,
+                                area_pdf: 1.0 / area_ws,
+                                normal_ws,
+                                point_ws: centre_ws,
+                                vec0_ws: radius0_ws,
+                                vec1_ws: radius1_ws,
                             }));
 
-                            // HACK: use the total local light power to split samples 50/50
-                            // TODO: use scene bounds to estimate the light power?
-                            let fake_power = local_light_total_power.unwrap_or(1.0);
-                            (LightType::SolidAngle, emission.illuminant, fake_power)
+                            (LightType::Disc, area_ws)
                         }
+                        Geometry::Sphere { centre, radius } => {
+                            let centre_ws = world_from_local * *centre;
+                            let radius_ws = (world_from_local.scale * *radius).abs();
+                            let area_ws = 4.0 * PI * radius_ws * radius_ws;
+
+                            light_params_data.extend_from_slice(bytemuck::bytes_of(&SphereLightParams {
+                                illuminant_tint: emission.intensity,
+                                unit_scale,
+                                centre_ws,
+                                radius_ws,
+                            }));
+
+                            (LightType::Sphere, area_ws)
+                        }
+                        Geometry::Mandelbulb { .. } => unimplemented!(),
                     };
 
                     align16_vec(&mut light_params_data);
                     light_info.push(LightInfoEntry {
-                        light_flags: light_type.into_integer() | (illuminant.into_integer() << 8),
-                        probability: sampling_power,
+                        light_flags: light_type.into_integer() | (emission.illuminant.into_integer() << 8),
+                        probability: area_ws * emission.intensity.luminance() * PI, // HACK
                         params_offset: params_offset as u32,
                     });
                 }
-                assert_eq!(light_info.len() as u32, total_light_count);
 
-                let mut next_offset = 0;
-                next_offset += align16(light_info.len().max(1) * mem::size_of::<LightInfoEntry>());
+                let unit_scale = geometry.unit_scale(transform.world_from_local);
+                match geometry_records[instance.geometry_ref.0 as usize].unwrap() {
+                    GeometryRecordData::Triangles {
+                        index_buffer_address,
+                        position_buffer_address,
+                        normal_buffer_address,
+                        uv_buffer_address,
+                        ..
+                    } => {
+                        if normal_buffer_address != 0 {
+                            shader.flags |= ExtendShaderFlags::HAS_NORMALS;
+                        }
+                        let hit_record = ExtendTriangleHitRecord {
+                            index_buffer_address,
+                            position_buffer_address,
+                            normal_buffer_address,
+                            uv_buffer_address,
+                            unit_scale,
+                            shader,
+                            _pad: 0,
+                        };
 
-                let light_alias_offset = next_offset;
-                next_offset += align16((sampled_light_count as usize) * mem::size_of::<LightAliasEntry>());
+                        let end_offset = writer.written() + hit_region.stride as usize;
+                        writer.write(shader_group_handle(ShaderGroup::ExtendHitTriangle));
+                        writer.write(&hit_record);
+                        writer.write_zeros(end_offset - writer.written());
 
-                let light_params_offset = next_offset;
-                next_offset += light_params_data.len();
+                        let end_offset = writer.written() + hit_region.stride as usize;
+                        writer.write(shader_group_handle(ShaderGroup::OcclusionHitTriangle));
+                        writer.write_zeros(end_offset - writer.written());
+                    }
+                    GeometryRecordData::Procedural => match scene.geometry(instance.geometry_ref) {
+                        Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => unreachable!(),
+                        Geometry::Disc {
+                            local_from_disc,
+                            radius,
+                        } => {
+                            let hit_record = IntersectDiscRecord {
+                                header: ProceduralHitRecordHeader { unit_scale, shader },
+                                centre: local_from_disc.translation,
+                                normal: local_from_disc.transform_vec3(Vec3::unit_z()).normalized(),
+                                radius: (local_from_disc.scale * radius).abs(),
+                            };
 
-                let light_info_table_desc = BufferDesc::new(next_offset);
-                let mut writer = allocator
-                    .map_buffer(
-                        light_info_table,
-                        &light_info_table_desc,
-                        BufferUsage::RAY_TRACING_STORAGE_READ,
-                    )
-                    .unwrap();
+                            let end_offset = writer.written() + hit_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::ExtendHitDisc));
+                            writer.write(&hit_record);
+                            writer.write_zeros(end_offset - writer.written());
 
-                let rcp_total_sampled_light_power = 1.0 / light_info.iter().map(|info| info.probability).sum::<f32>();
-                for info in light_info.iter_mut() {
-                    info.probability *= rcp_total_sampled_light_power;
-                    writer.write(info);
+                            let end_offset = writer.written() + hit_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::OcclusionHitDisc));
+                            writer.write(&hit_record);
+                            writer.write_zeros(end_offset - writer.written());
+                        }
+                        Geometry::Sphere { centre, radius } => {
+                            let hit_record = IntersectSphereRecord {
+                                header: ProceduralHitRecordHeader { unit_scale, shader },
+                                centre: *centre,
+                                radius: radius.abs(),
+                            };
+
+                            let end_offset = writer.written() + hit_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::ExtendHitSphere));
+                            writer.write(&hit_record);
+                            writer.write_zeros(end_offset - writer.written());
+
+                            let end_offset = writer.written() + hit_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::OcclusionHitSphere));
+                            writer.write(&hit_record);
+                            writer.write_zeros(end_offset - writer.written());
+                        }
+                        Geometry::Mandelbulb { local_from_bulb } => {
+                            let hit_record = IntersectMandelbulbRecord {
+                                header: ProceduralHitRecordHeader { unit_scale, shader },
+                                centre: local_from_bulb.translation,
+                            };
+
+                            let end_offset = writer.written() + hit_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::ExtendHitMandelbulb));
+                            writer.write(&hit_record);
+                            writer.write_zeros(end_offset - writer.written());
+
+                            let end_offset = writer.written() + hit_region.stride as usize;
+                            writer.write(shader_group_handle(ShaderGroup::OcclusionHitMandelbulb));
+                            writer.write(&hit_record);
+                            writer.write_zeros(end_offset - writer.written());
+                        }
+                    },
                 }
-
-                writer.write_zeros(light_alias_offset - writer.written());
-                let mut alias_table = AliasTable::new();
-                for u in light_info
-                    .iter()
-                    .map(|info| info.probability)
-                    .take(sampled_light_count as usize)
-                {
-                    alias_table.push(u * (sampled_light_count as f32));
-                }
-                for (u, i, j) in alias_table.into_iter() {
-                    let entry = LightAliasEntry {
-                        split: u,
-                        indices: (j << 16) | i,
-                    };
-                    writer.write(&entry);
-                }
-
-                writer.write_zeros(light_params_offset - writer.written());
-                writer.write(light_params_data.as_slice());
             }
-        });
-        Some(ShaderBindingData {
+            let shader_binding_table_id = writer.finish();
+
+            let local_light_total_power = if light_info.is_empty() {
+                None
+            } else {
+                Some(light_info.iter().map(|info| info.probability).sum())
+            };
+
+            for light in scene
+                .lights
+                .iter()
+                .filter(|light| light.can_be_sampled())
+                .chain(scene.lights.iter().filter(|light| !light.can_be_sampled()))
+            {
+                let params_offset = light_params_data.len();
+                let (light_type, illuminant, sampling_power) = match light {
+                    Light::Dome { emission } => {
+                        light_params_data.extend_from_slice(bytemuck::bytes_of(&DomeLightParams {
+                            illuminant_tint: emission.intensity,
+                        }));
+
+                        (LightType::Dome, emission.illuminant, 0.0)
+                    }
+                    Light::SolidAngle {
+                        emission,
+                        direction_ws,
+                        solid_angle,
+                    } => {
+                        let direction_ws = direction_ws.normalized();
+                        let solid_angle = solid_angle.abs();
+
+                        light_params_data.extend_from_slice(bytemuck::bytes_of(&SolidAngleLightParams {
+                            illuminant_tint: emission.intensity,
+                            direction_ws,
+                            solid_angle: solid_angle.abs(),
+                        }));
+
+                        // HACK: use the total local light power to split samples 50/50
+                        // TODO: use scene bounds to estimate the light power?
+                        let fake_power = local_light_total_power.unwrap_or(1.0);
+                        (LightType::SolidAngle, emission.illuminant, fake_power)
+                    }
+                };
+
+                align16_vec(&mut light_params_data);
+                light_info.push(LightInfoEntry {
+                    light_flags: light_type.into_integer() | (illuminant.into_integer() << 8),
+                    probability: sampling_power,
+                    params_offset: params_offset as u32,
+                });
+            }
+            assert_eq!(light_info.len() as u32, total_light_count);
+
+            let mut next_offset = 0;
+            next_offset += align16(light_info.len().max(1) * mem::size_of::<LightInfoEntry>());
+
+            let light_alias_offset = next_offset;
+            next_offset += align16((sampled_light_count as usize) * mem::size_of::<LightAliasEntry>());
+
+            let light_params_offset = next_offset;
+            next_offset += light_params_data.len();
+
+            let light_info_table_desc = BufferDesc::new(next_offset);
+            let mut writer = resource_loader
+                .buffer_writer(&light_info_table_desc, BufferUsage::RAY_TRACING_STORAGE_READ)
+                .await;
+
+            let rcp_total_sampled_light_power = 1.0 / light_info.iter().map(|info| info.probability).sum::<f32>();
+            for info in light_info.iter_mut() {
+                info.probability *= rcp_total_sampled_light_power;
+                writer.write(info);
+            }
+
+            writer.write_zeros(light_alias_offset - writer.written());
+            let mut alias_table = AliasTable::new();
+            for u in light_info
+                .iter()
+                .map(|info| info.probability)
+                .take(sampled_light_count as usize)
+            {
+                alias_table.push(u * (sampled_light_count as f32));
+            }
+            for (u, i, j) in alias_table.into_iter() {
+                let entry = LightAliasEntry {
+                    split: u,
+                    indices: (j << 16) | i,
+                };
+                writer.write(&entry);
+            }
+
+            writer.write_zeros(light_params_offset - writer.written());
+            writer.write(light_params_data.as_slice());
+
+            let light_info_table_id = writer.finish();
+
+            (shader_binding_table_id, light_info_table_id)
+        };
+
+        ShaderBindingData {
             raygen_region,
             miss_region,
             hit_region,
-            shader_binding_table,
-            light_info_table,
+            shader_binding_table: resource_loader.get_buffer(shader_binding_table_id.await),
+            light_info_table: resource_loader.get_buffer(light_info_table_id.await),
             sampled_light_count,
             external_light_begin,
             external_light_end,
-        })
+        }
     }
 
     pub fn debug_ui(&mut self, progress: &mut RenderProgress, ui: &Ui) {
@@ -1973,10 +1969,11 @@ impl Renderer {
             ));
             ui.text(format!("Unique Prims: {}", self.accel.unique_primitive_count()));
             ui.text(format!("Instanced Prims: {}", self.accel.instanced_primitive_count()));
-            if let Some(shader_binding_data) = self.shader_binding_data.as_ref() {
-                ui.text(format!("Sampled Lights: {}", shader_binding_data.sampled_light_count));
-                ui.text(format!("Total Lights: {}", shader_binding_data.external_light_end));
-            }
+            ui.text(format!(
+                "Sampled Lights: {}",
+                self.shader_binding_data.sampled_light_count
+            ));
+            ui.text(format!("Total Lights: {}", self.shader_binding_data.external_light_end));
         }
 
         if CollapsingHeader::new("Renderer").default_open(true).build(ui) {
@@ -2095,31 +2092,6 @@ impl Renderer {
         }
     }
 
-    pub fn update<'a>(
-        &mut self,
-        context: &'a Context,
-        schedule: &mut RenderSchedule<'a>,
-        resource_loader: &mut ResourceLoader,
-        global_allocator: &mut Allocator,
-    ) {
-        // continue with acceleration structures
-        self.accel.update(
-            context,
-            resource_loader,
-            global_allocator,
-            schedule,
-            Self::HIT_ENTRY_COUNT_PER_INSTANCE,
-        );
-
-        // make the bindless texture set
-        self.texture_binding_set.update(resource_loader);
-
-        // make shader binding table
-        if self.shader_binding_data.is_none() {
-            self.shader_binding_data = self.create_shader_binding_table(resource_loader);
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn render<'a>(
         &'a self,
@@ -2128,24 +2100,8 @@ impl Renderer {
         schedule: &mut RenderSchedule<'a>,
         pipeline_cache: &'a PipelineCache,
         descriptor_pool: &'a DescriptorPool,
-        resource_loader: &'a ResourceLoader,
         camera: &Camera,
-    ) -> Option<ImageHandle> {
-        // check readiness
-        let top_level_accel = self.accel.top_level_accel()?;
-        let texture_binding_descriptor_set = self.texture_binding_set.descriptor_set()?;
-        let shader_binding_data = self.shader_binding_data.as_ref()?;
-        let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_data.shader_binding_table)?;
-        let light_info_table_buffer = resource_loader.get_buffer(shader_binding_data.light_info_table)?;
-        let pmj_samples_image_view = resource_loader.get_image_view(self.pmj_samples_image)?;
-        let sobol_samples_image_view = resource_loader.get_image_view(self.sobol_samples_image)?;
-        let illuminants_image_view = resource_loader.get_image_view(self.illuminants_image)?;
-        let conductors_image_view = resource_loader.get_image_view(self.conductors_image)?;
-        let smits_table_image_view = resource_loader.get_image_view(self.smits_table_image)?;
-        let wavelength_inv_cdf_image_view = resource_loader.get_image_view(self.wavelength_inv_cdf_image)?;
-        let wavelength_pdf_image_view = resource_loader.get_image_view(self.wavelength_pdf_image)?;
-        let xyz_matching_image_view = resource_loader.get_image_view(self.xyz_matching_image)?;
-
+    ) -> ImageId {
         // do a pass
         if !progress.done(&self.params) {
             let temp_desc = ImageDesc::new_2d(self.params.size(), vk::Format::R32_SFLOAT, vk::ImageAspectFlags::COLOR);
@@ -2211,17 +2167,17 @@ impl Renderer {
                         let light_info_table_address = unsafe {
                             self.context
                                 .device
-                                .get_buffer_device_address_helper(light_info_table_buffer)
+                                .get_buffer_device_address_helper(self.shader_binding_data.light_info_table)
                         };
                         let align16 = |n: u64| (n + 15) & !15;
                         let light_alias_table_address = align16(
                             light_info_table_address
-                                + (shader_binding_data.external_light_end as u64)
+                                + (self.shader_binding_data.external_light_end as u64)
                                     * (mem::size_of::<LightInfoEntry>() as u64),
                         );
                         let light_params_base_address = align16(
                             light_alias_table_address
-                                + (shader_binding_data.sampled_light_count as u64)
+                                + (self.shader_binding_data.sampled_light_count as u64)
                                     * (mem::size_of::<LightAliasEntry>() as u64),
                         );
 
@@ -2232,9 +2188,9 @@ impl Renderer {
                                     light_info_table_address,
                                     light_alias_table_address,
                                     light_params_base_address,
-                                    sampled_light_count: shader_binding_data.sampled_light_count,
-                                    external_light_begin: shader_binding_data.external_light_begin,
-                                    external_light_end: shader_binding_data.external_light_end,
+                                    sampled_light_count: self.shader_binding_data.sampled_light_count,
+                                    external_light_begin: self.shader_binding_data.external_light_begin,
+                                    external_light_end: self.shader_binding_data.external_light_end,
                                     camera: CameraParams {
                                         world_from_local: world_from_camera.into_homogeneous_matrix().into_transform(),
                                         fov_size_at_unit_z,
@@ -2250,28 +2206,29 @@ impl Renderer {
                                     flags: path_trace_flags,
                                 }
                             },
-                            top_level_accel,
-                            pmj_samples_image_view,
-                            sobol_samples_image_view,
-                            illuminants_image_view,
+                            self.accel.top_level_accel(),
+                            self.pmj_samples_image_view,
+                            self.sobol_samples_image_view,
+                            self.illuminants_image_view,
                             self.clamp_linear_sampler,
-                            conductors_image_view,
+                            self.conductors_image_view,
                             self.clamp_linear_sampler,
-                            smits_table_image_view,
+                            self.smits_table_image_view,
                             self.clamp_point_sampler,
-                            wavelength_inv_cdf_image_view,
+                            self.wavelength_inv_cdf_image_view,
                             self.clamp_linear_sampler,
-                            wavelength_pdf_image_view,
+                            self.wavelength_pdf_image_view,
                             self.clamp_point_sampler,
-                            xyz_matching_image_view,
+                            self.xyz_matching_image_view,
                             self.clamp_linear_sampler,
                             &temp_image_views,
                         );
 
                         let device = &context.device;
 
-                        let shader_binding_table_address =
-                            unsafe { device.get_buffer_device_address_helper(shader_binding_table_buffer) };
+                        let shader_binding_table_address = unsafe {
+                            device.get_buffer_device_address_helper(self.shader_binding_data.shader_binding_table)
+                        };
 
                         unsafe {
                             device.cmd_bind_pipeline(
@@ -2284,18 +2241,21 @@ impl Renderer {
                                 vk::PipelineBindPoint::RAY_TRACING_KHR,
                                 self.path_trace_pipeline_layout,
                                 0,
-                                &[path_trace_descriptor_set.set, texture_binding_descriptor_set],
+                                &[path_trace_descriptor_set.set, self.texture_binding_set.descriptor_set],
                                 &[],
                             );
                         }
 
-                        let raygen_shader_binding_table = shader_binding_data
+                        let raygen_shader_binding_table = self
+                            .shader_binding_data
                             .raygen_region
                             .into_device_address_region(shader_binding_table_address);
-                        let miss_shader_binding_table = shader_binding_data
+                        let miss_shader_binding_table = self
+                            .shader_binding_data
                             .miss_region
                             .into_device_address_region(shader_binding_table_address);
-                        let hit_shader_binding_table = shader_binding_data
+                        let hit_shader_binding_table = self
+                            .shader_binding_data
                             .hit_region
                             .into_device_address_region(shader_binding_table_address);
                         let callable_shader_binding_table = vk::StridedDeviceAddressRegionKHR::default();
@@ -2322,7 +2282,7 @@ impl Renderer {
                     params.add_image(temp_images.1, ImageUsage::COMPUTE_STORAGE_READ);
                     params.add_image(temp_images.2, ImageUsage::COMPUTE_STORAGE_READ);
                     params.add_image(
-                        self.result_image,
+                        self.result_image_id,
                         ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::COMPUTE_STORAGE_WRITE,
                     );
                 },
@@ -2334,7 +2294,7 @@ impl Renderer {
                             params.get_image_view(temp_images.1),
                             params.get_image_view(temp_images.2),
                         ];
-                        let result_image_view = params.get_image_view(self.result_image);
+                        let result_image_view = params.get_image_view(self.result_image_id);
 
                         let descriptor_set = FilterDescriptorSet::create(
                             descriptor_pool,
@@ -2346,8 +2306,8 @@ impl Renderer {
                                     filter_type: self.params.filter_type.into_integer(),
                                 };
                             },
-                            pmj_samples_image_view,
-                            sobol_samples_image_view,
+                            self.pmj_samples_image_view,
+                            self.sobol_samples_image_view,
                             &temp_image_views,
                             result_image_view,
                         );
@@ -2368,7 +2328,7 @@ impl Renderer {
             progress.next_sample_index += 1;
         }
 
-        Some(self.result_image)
+        self.result_image_id
     }
 }
 

@@ -7,12 +7,7 @@ use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
 use imgui::Key;
 use spark::vk;
-use std::{
-    mem,
-    path::PathBuf,
-    slice,
-    sync::{Arc, Mutex},
-};
+use std::{mem, path::PathBuf, slice};
 use structopt::StructOpt;
 use strum::VariantNames;
 use winit::{
@@ -40,11 +35,15 @@ enum RenderMode {
     RayTrace,
 }
 
+struct LoadResult {
+    mesh_info: MeshInfo,
+    accel_info: Option<AccelInfo>,
+}
+
 struct App {
     context: SharedContext,
 
-    mesh_info: Arc<Mutex<MeshInfo>>,
-    accel_info: Option<AccelInfo>,
+    load_result: TaskOutput<LoadResult>,
     render_mode: RenderMode,
     is_rotating: bool,
     angle: f32,
@@ -55,20 +54,22 @@ impl App {
         let context = SharedContext::clone(&base.context);
 
         let has_ray_tracing = context.device.extensions.supports_khr_acceleration_structure();
-        let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
-        base.systems.resource_loader.async_load({
-            let mesh_info = Arc::clone(&mesh_info);
-            move |allocator| {
-                let mut mesh_info_clone = *mesh_info.lock().unwrap();
-                mesh_info_clone.load(allocator, &mesh_file_name, has_ray_tracing);
-                *mesh_info.lock().unwrap() = mesh_info_clone;
+        let resource_loader = base.systems.resource_loader.clone();
+        let load_result = base.systems.task_system.task({
+            async move {
+                let mesh_info = MeshInfo::load(&resource_loader, &mesh_file_name, has_ray_tracing).await;
+                let accel_info = if has_ray_tracing {
+                    Some(AccelInfo::new(&resource_loader, &mesh_info).await)
+                } else {
+                    None
+                };
+                LoadResult { mesh_info, accel_info }
             }
         });
 
         Self {
             context,
-            mesh_info,
-            accel_info: None,
+            load_result,
             render_mode: if has_ray_tracing {
                 RenderMode::RayTrace
             } else {
@@ -109,7 +110,12 @@ impl App {
 
         base.systems.draw_ui(&ui);
 
-        let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
+        let mut schedule = base.systems.resource_loader.begin_schedule(
+            &mut base.systems.render_graph,
+            base.context.as_ref(),
+            &base.systems.descriptor_pool,
+            &base.systems.pipeline_cache,
+        );
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
         let swap_size = base.display.swapchain.get_size();
@@ -139,8 +145,7 @@ impl App {
             main_render_state = main_render_state.with_color_temp(msaa_image);
         }
 
-        let mesh_info = *self.mesh_info.lock().unwrap();
-        let mesh_buffers = mesh_info.get_buffers(&base.systems.resource_loader);
+        let load_result = self.load_result.get();
 
         let view_from_world = Isometry3::new(
             Vec3::new(0.0, 0.0, -6.0),
@@ -151,58 +156,34 @@ impl App {
         let aspect_ratio = (swap_size.x as f32) / (swap_size.y as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
 
-        if let Some(mesh_buffers) = mesh_buffers.as_ref() {
-            if base.context.device.extensions.supports_khr_acceleration_structure() && self.accel_info.is_none() {
-                self.accel_info = Some(AccelInfo::new(
-                    &base.context,
-                    &base.systems.descriptor_pool,
-                    &base.systems.pipeline_cache,
-                    &mut base.systems.resource_loader,
-                    &mesh_info,
-                    mesh_buffers,
-                    &mut base.systems.global_allocator,
-                    &mut schedule,
-                ));
+        let mut trace_image = None;
+        if let Some(load_result) = load_result {
+            if let Some(accel_info) = load_result.accel_info.as_ref() {
+                if matches!(self.render_mode, RenderMode::RayTrace) {
+                    let world_from_view = view_from_world.inversed();
+
+                    let xy_from_st =
+                        Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * vertical_fov).tan(), Vec2::zero());
+                    let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
+                    let coord_from_uv = Scale2Offset2::new(swap_size.as_float(), Vec2::zero());
+                    let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
+
+                    let ray_origin = world_from_view.translation;
+                    let ray_vec_from_coord = world_from_view.rotation.into_matrix()
+                        * Mat3::from_scale(-1.0)
+                        * xy_from_coord.into_homogeneous_matrix();
+
+                    trace_image = Some(accel_info.dispatch(
+                        &base.context,
+                        &mut schedule,
+                        &base.systems.descriptor_pool,
+                        swap_size,
+                        ray_origin,
+                        ray_vec_from_coord,
+                    ))
+                }
             }
         }
-        if let Some(accel_info) = self.accel_info.as_mut() {
-            accel_info.update(
-                &base.context,
-                &base.systems.resource_loader,
-                &mut base.systems.global_allocator,
-                &mut schedule,
-            );
-        }
-        let trace_image = if let Some(accel_info) = self
-            .accel_info
-            .as_ref()
-            .filter(|_| matches!(self.render_mode, RenderMode::RayTrace))
-        {
-            let world_from_view = view_from_world.inversed();
-
-            let xy_from_st =
-                Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * vertical_fov).tan(), Vec2::zero());
-            let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, 2.0), Vec2::new(1.0, -1.0));
-            let coord_from_uv = Scale2Offset2::new(swap_size.as_float(), Vec2::zero());
-            let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
-
-            let ray_origin = world_from_view.translation;
-            let ray_vec_from_coord = world_from_view.rotation.into_matrix()
-                * Mat3::from_scale(-1.0)
-                * xy_from_coord.into_homogeneous_matrix();
-
-            accel_info.dispatch(
-                &base.context,
-                &base.systems.resource_loader,
-                &mut schedule,
-                &base.systems.descriptor_pool,
-                swap_size,
-                ray_origin,
-                ray_vec_from_coord,
-            )
-        } else {
-            None
-        };
 
         schedule.add_graphics(
             command_name!("main"),
@@ -239,7 +220,7 @@ impl App {
                             copy_descriptor_set,
                             3,
                         );
-                    } else if let Some(mesh_buffers) = mesh_buffers {
+                    } else if let Some(mesh_info) = load_result.map(|load_result| &load_result.mesh_info) {
                         let raster_descriptor_set = RasterDescriptorSet::create(descriptor_pool, |buf| {
                             *buf = RasterData {
                                 proj_from_world: proj_from_view * view_from_world.into_homogeneous_matrix(),
@@ -320,12 +301,16 @@ impl App {
                             context.device.cmd_bind_vertex_buffers(
                                 cmd,
                                 0,
-                                &[mesh_buffers.position, mesh_buffers.attribute, mesh_buffers.instance],
+                                &[
+                                    mesh_info.position_buffer,
+                                    mesh_info.attribute_buffer,
+                                    mesh_info.instance_buffer,
+                                ],
                                 &[0, 0, 0],
                             );
                             context
                                 .device
-                                .cmd_bind_index_buffer(cmd, mesh_buffers.index, 0, vk::IndexType::UINT32);
+                                .cmd_bind_index_buffer(cmd, mesh_info.index_buffer, 0, vk::IndexType::UINT32);
                             context.device.cmd_draw_indexed(
                                 cmd,
                                 mesh_info.triangle_count * 3,

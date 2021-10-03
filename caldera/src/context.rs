@@ -120,7 +120,7 @@ impl Default for ContextParams {
             version: Default::default(),
             debug_utils: ContextFeature::Disable,
             scalar_block_layout: ContextFeature::Require,
-            pipeline_creation_cache_control: ContextFeature::Optional,
+            pipeline_creation_cache_control: ContextFeature::Disable,
             geometry_shader: ContextFeature::Disable,
             inline_uniform_block: ContextFeature::Optional,
             ray_tracing: ContextFeature::Disable,

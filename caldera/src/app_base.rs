@@ -91,14 +91,15 @@ pub struct AppDisplay {
 }
 
 pub struct AppSystems {
+    pub task_system: BackgroundTaskSystem,
+
     pub descriptor_pool: DescriptorPool,
     pub pipeline_cache: PipelineCache,
     pub command_buffer_pool: CommandBufferPool,
     pub query_pool: QueryPool,
 
-    pub resource_loader: ResourceLoader,
-    pub global_allocator: Allocator, // TODO: fix interactions with resource loader (needs to drop after)
     pub render_graph: RenderGraph,
+    pub resource_loader: ResourceLoader,
 }
 
 pub struct AppBase {
@@ -149,25 +150,27 @@ impl AppDisplay {
 
 impl AppSystems {
     pub fn new(context: &SharedContext) -> Self {
+        let task_system = BackgroundTaskSystem::new();
+
         let descriptor_pool = DescriptorPool::new(context);
         let pipeline_cache = PipelineCache::new(context, "spv/bin");
         let command_buffer_pool = CommandBufferPool::new(context);
         let query_pool = QueryPool::new(context);
 
         const CHUNK_SIZE: u32 = 128 * 1024 * 1024;
-        let mut global_allocator = Allocator::new(context, CHUNK_SIZE);
-        let resource_loader = ResourceLoader::new(context, &mut global_allocator, CHUNK_SIZE);
-        let render_graph = RenderGraph::new(context, CHUNK_SIZE, CHUNK_SIZE);
+        let render_graph = RenderGraph::new(context, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE);
+        let resource_loader = ResourceLoader::new(context, render_graph.resources_hack(), CHUNK_SIZE);
 
         Self {
+            task_system,
+
             descriptor_pool,
             pipeline_cache,
             command_buffer_pool,
             query_pool,
 
-            global_allocator,
-            resource_loader,
             render_graph,
+            resource_loader,
         }
     }
 
@@ -177,8 +180,7 @@ impl AppSystems {
         self.render_graph.begin_frame();
         self.descriptor_pool.begin_frame();
         self.query_pool.begin_frame(cbar.pre_swapchain_cmd);
-        self.resource_loader
-            .begin_frame(&mut self.global_allocator, cbar.pre_swapchain_cmd);
+        self.resource_loader.begin_frame(cbar.pre_swapchain_cmd);
         cbar
     }
 
@@ -197,8 +199,6 @@ impl AppSystems {
                 self.pipeline_cache.ui_stats_table_rows(ui);
                 self.render_graph.ui_stats_table_rows(ui);
                 self.descriptor_pool.ui_stats_table_rows(ui);
-                self.global_allocator.ui_stats_table_rows(ui, "global memory");
-                self.resource_loader.ui_stats_table_rows(ui);
                 ui.columns(1, "StatsEnd", false);
             });
         imgui::Window::new("Timestamps")

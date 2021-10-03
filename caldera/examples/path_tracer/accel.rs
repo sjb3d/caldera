@@ -27,11 +27,11 @@ struct AccelerationStructureInstance {
 
 pub enum GeometryAccelData {
     Triangles {
-        index_buffer: StaticBufferHandle,
-        position_buffer: StaticBufferHandle,
+        index_buffer: vk::Buffer,
+        position_buffer: vk::Buffer,
     },
     Procedural {
-        aabb_buffer: StaticBufferHandle,
+        aabb_buffer: vk::Buffer,
     },
 }
 
@@ -134,6 +134,14 @@ impl SceneClusters {
         Self(merged)
     }
 
+    pub fn unique_accel_count(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn instanced_accel_count(&self) -> usize {
+        self.0.iter().map(|cluster| cluster.transform_refs.len()).sum()
+    }
+
     pub fn geometry_iter(&self) -> impl Iterator<Item = &GeometryRef> {
         self.0
             .iter()
@@ -157,31 +165,30 @@ impl SceneClusters {
 
 struct BottomLevelAccel {
     accel: vk::AccelerationStructureKHR,
-    buffer: BufferHandle,
+    buffer_id: BufferId,
 }
 
 struct TopLevelAccel {
     accel: vk::AccelerationStructureKHR,
-    buffer: BufferHandle,
+    buffer_id: BufferId,
 }
 
 pub struct SceneAccel {
     context: SharedContext,
     scene: Arc<Scene>,
-    clusters: Arc<SceneClusters>,
+    clusters: SceneClusters,
     geometry_accel_data: Vec<Option<GeometryAccelData>>,
     cluster_accel: Vec<BottomLevelAccel>,
-    instance_buffer: Option<StaticBufferHandle>,
-    top_level_accel: Option<TopLevelAccel>,
+    top_level_accel: TopLevelAccel,
 }
 
 impl SceneAccel {
     pub fn unique_bottom_level_accel_count(&self) -> usize {
-        self.clusters.0.len()
+        self.clusters.unique_accel_count()
     }
 
     pub fn instanced_bottom_level_accel_count(&self) -> usize {
-        self.clusters.0.iter().map(|cluster| cluster.transform_refs.len()).sum()
+        self.clusters.instanced_accel_count()
     }
 
     pub fn unique_primitive_count(&self) -> usize {
@@ -200,7 +207,7 @@ impl SceneAccel {
             .sum()
     }
 
-    pub fn clusters(&self) -> &Arc<SceneClusters> {
+    pub fn clusters(&self) -> &SceneClusters {
         &self.clusters
     }
 
@@ -208,186 +215,202 @@ impl SceneAccel {
         self.geometry_accel_data[geometry_ref.0 as usize].as_ref()
     }
 
-    pub fn new(context: &SharedContext, scene: &Arc<Scene>, resource_loader: &mut ResourceLoader) -> Self {
-        let clusters = Arc::new(SceneClusters::new(scene));
+    pub async fn new(resource_loader: ResourceLoader, scene: Arc<Scene>, hit_group_count_per_instance: u32) -> Self {
+        let clusters = SceneClusters::new(&scene);
 
+        let geometry_accel_data =
+            SceneAccel::create_geometry_accel_data(&resource_loader, Arc::clone(&scene), &clusters).await;
+
+        let mut cluster_accel = Vec::new();
+        for cluster in clusters.0.iter() {
+            cluster_accel.push(
+                SceneAccel::create_bottom_level_accel(cluster, &resource_loader, scene.clone(), &geometry_accel_data)
+                    .await,
+            );
+        }
+
+        let instance_buffer = SceneAccel::create_instance_buffer(
+            &resource_loader,
+            Arc::clone(&scene),
+            &clusters,
+            &cluster_accel,
+            hit_group_count_per_instance,
+        )
+        .await;
+
+        let top_level_accel =
+            SceneAccel::create_top_level_accel(&resource_loader, &clusters, &cluster_accel, instance_buffer).await;
+
+        Self {
+            context: resource_loader.context(),
+            scene,
+            clusters,
+            geometry_accel_data,
+            cluster_accel,
+            top_level_accel,
+        }
+    }
+
+    async fn create_geometry_accel_data(
+        resource_loader: &ResourceLoader,
+        scene: Arc<Scene>,
+        clusters: &SceneClusters,
+    ) -> Vec<Option<GeometryAccelData>> {
         // make vertex/index buffers for each referenced geometry
-        let mut geometry_accel_data: Vec<_> = scene.geometries.iter().map(|_| None).collect();
-        for geometry_ref in clusters.geometry_iter().copied() {
-            let geometry = scene.geometry(geometry_ref);
-            *geometry_accel_data.get_mut(geometry_ref.0 as usize).unwrap() = Some(match geometry {
-                Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => {
-                    let index_buffer = resource_loader.create_buffer();
-                    let position_buffer = resource_loader.create_buffer();
-                    resource_loader.async_load({
-                        let scene = Arc::clone(scene);
-                        move |allocator| {
-                            let mut mesh_builder = TriangleMeshBuilder::new();
-                            let (positions, indices) = match *scene.geometry(geometry_ref) {
-                                Geometry::TriangleMesh {
-                                    ref positions,
-                                    ref indices,
-                                    ..
-                                } => (positions.as_slice(), indices.as_slice()),
-                                Geometry::Quad { local_from_quad, size } => {
-                                    let half_size = 0.5 * size;
-                                    mesh_builder = mesh_builder.with_quad(
-                                        local_from_quad * Vec3::new(-half_size.x, -half_size.y, 0.0),
-                                        local_from_quad * Vec3::new(half_size.x, -half_size.y, 0.0),
-                                        local_from_quad * Vec3::new(half_size.x, half_size.y, 0.0),
-                                        local_from_quad * Vec3::new(-half_size.x, half_size.y, 0.0),
-                                    );
-                                    (mesh_builder.positions.as_slice(), mesh_builder.indices.as_slice())
-                                }
-                                Geometry::Disc { .. } | Geometry::Sphere { .. } | Geometry::Mandelbulb { .. } => {
-                                    unreachable!()
-                                }
-                            };
-
-                            let index_buffer_desc = BufferDesc::new(indices.len() * mem::size_of::<IndexData>());
-                            let mut writer = allocator
-                                .map_buffer(
-                                    index_buffer,
-                                    &index_buffer_desc,
-                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
-                                        | BufferUsage::RAY_TRACING_STORAGE_READ,
-                                )
-                                .unwrap();
-                            for face in indices.iter() {
-                                writer.write(face);
+        let mut tasks = Vec::new();
+        for &geometry_ref in clusters.geometry_iter() {
+            let loader = resource_loader.clone();
+            let scene = Arc::clone(&scene);
+            tasks.push(resource_loader.spawn(async move {
+                let geometry = scene.geometry(geometry_ref);
+                match geometry {
+                    Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => {
+                        let mut mesh_builder = TriangleMeshBuilder::new();
+                        let (positions, indices) = match *scene.geometry(geometry_ref) {
+                            Geometry::TriangleMesh {
+                                ref positions,
+                                ref indices,
+                                ..
+                            } => (positions.as_slice(), indices.as_slice()),
+                            Geometry::Quad { local_from_quad, size } => {
+                                let half_size = 0.5 * size;
+                                mesh_builder = mesh_builder.with_quad(
+                                    local_from_quad * Vec3::new(-half_size.x, -half_size.y, 0.0),
+                                    local_from_quad * Vec3::new(half_size.x, -half_size.y, 0.0),
+                                    local_from_quad * Vec3::new(half_size.x, half_size.y, 0.0),
+                                    local_from_quad * Vec3::new(-half_size.x, half_size.y, 0.0),
+                                );
+                                (mesh_builder.positions.as_slice(), mesh_builder.indices.as_slice())
                             }
-
-                            let position_buffer_desc =
-                                BufferDesc::new(positions.len() * mem::size_of::<PositionData>());
-                            let mut writer = allocator
-                                .map_buffer(
-                                    position_buffer,
-                                    &position_buffer_desc,
-                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
-                                        | BufferUsage::RAY_TRACING_STORAGE_READ,
-                                )
-                                .unwrap();
-                            for pos in positions.iter() {
-                                writer.write(pos);
+                            Geometry::Disc { .. } | Geometry::Sphere { .. } | Geometry::Mandelbulb { .. } => {
+                                unreachable!()
                             }
+                        };
+
+                        let index_buffer_desc = BufferDesc::new(indices.len() * mem::size_of::<IndexData>());
+                        let mut writer = loader
+                            .buffer_writer(
+                                &index_buffer_desc,
+                                BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
+                            )
+                            .await;
+                        for face in indices.iter() {
+                            writer.write(face);
                         }
-                    });
-                    GeometryAccelData::Triangles {
-                        position_buffer,
-                        index_buffer,
+                        let index_buffer_id = writer.finish();
+
+                        let position_buffer_desc = BufferDesc::new(positions.len() * mem::size_of::<PositionData>());
+                        let mut writer = loader
+                            .buffer_writer(
+                                &position_buffer_desc,
+                                BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT | BufferUsage::RAY_TRACING_STORAGE_READ,
+                            )
+                            .await;
+                        for pos in positions.iter() {
+                            writer.write(pos);
+                        }
+                        let position_buffer_id = writer.finish();
+
+                        GeometryAccelData::Triangles {
+                            position_buffer: loader.get_buffer(position_buffer_id.await),
+                            index_buffer: loader.get_buffer(index_buffer_id.await),
+                        }
                     }
-                }
-                Geometry::Disc {
-                    local_from_disc,
-                    radius,
-                } => {
-                    let aabb_buffer = resource_loader.create_buffer();
-                    resource_loader.async_load({
+                    Geometry::Disc {
+                        local_from_disc,
+                        radius,
+                    } => {
                         let centre = local_from_disc.translation;
                         let normal = local_from_disc.transform_vec3(Vec3::unit_z()).normalized();
                         let radius = (radius * local_from_disc.scale).abs();
                         let half_extent = normal.map(|s| (1.0 - s * s).max(0.0).sqrt() * radius);
-                        move |allocator| {
-                            let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
-                            let mut writer = allocator
-                                .map_buffer(
-                                    aabb_buffer,
-                                    &buffer_desc,
-                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT,
-                                )
-                                .unwrap();
-                            writer.write(&AabbData {
-                                min: centre - half_extent,
-                                max: centre + half_extent,
-                            });
+
+                        let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
+                        let mut writer = loader
+                            .buffer_writer(&buffer_desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
+                            .await;
+                        writer.write(&AabbData {
+                            min: centre - half_extent,
+                            max: centre + half_extent,
+                        });
+                        let aabb_buffer_id = writer.finish();
+
+                        GeometryAccelData::Procedural {
+                            aabb_buffer: loader.get_buffer(aabb_buffer_id.await),
                         }
-                    });
-                    GeometryAccelData::Procedural { aabb_buffer }
-                }
-                Geometry::Sphere { centre, radius } => {
-                    let aabb_buffer = resource_loader.create_buffer();
-                    resource_loader.async_load({
+                    }
+                    Geometry::Sphere { centre, radius } => {
                         let centre = *centre;
                         let radius = *radius;
-                        move |allocator| {
-                            let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
-                            let mut writer = allocator
-                                .map_buffer(
-                                    aabb_buffer,
-                                    &buffer_desc,
-                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT,
-                                )
-                                .unwrap();
-                            writer.write(&AabbData {
-                                min: centre - Vec3::broadcast(radius),
-                                max: centre + Vec3::broadcast(radius),
-                            });
+
+                        let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
+                        let mut writer = loader
+                            .buffer_writer(&buffer_desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
+                            .await;
+                        writer.write(&AabbData {
+                            min: centre - Vec3::broadcast(radius),
+                            max: centre + Vec3::broadcast(radius),
+                        });
+                        let aabb_buffer_id = writer.finish();
+
+                        GeometryAccelData::Procedural {
+                            aabb_buffer: loader.get_buffer(aabb_buffer_id.await),
                         }
-                    });
-                    GeometryAccelData::Procedural { aabb_buffer }
-                }
-                Geometry::Mandelbulb { local_from_bulb } => {
-                    let aabb_buffer = resource_loader.create_buffer();
-                    resource_loader.async_load({
+                    }
+                    Geometry::Mandelbulb { local_from_bulb } => {
                         let centre = local_from_bulb.translation;
                         let radius = MANDELBULB_RADIUS * local_from_bulb.scale.abs();
-                        move |allocator| {
-                            let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
-                            let mut writer = allocator
-                                .map_buffer(
-                                    aabb_buffer,
-                                    &buffer_desc,
-                                    BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT,
-                                )
-                                .unwrap();
-                            writer.write(&AabbData {
-                                min: centre - Vec3::broadcast(radius),
-                                max: centre + Vec3::broadcast(radius),
-                            });
+
+                        let buffer_desc = BufferDesc::new(mem::size_of::<AabbData>());
+                        let mut writer = loader
+                            .buffer_writer(&buffer_desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
+                            .await;
+                        writer.write(&AabbData {
+                            min: centre - Vec3::broadcast(radius),
+                            max: centre + Vec3::broadcast(radius),
+                        });
+                        let aabb_buffer_id = writer.finish();
+
+                        GeometryAccelData::Procedural {
+                            aabb_buffer: loader.get_buffer(aabb_buffer_id.await),
                         }
-                    });
-                    GeometryAccelData::Procedural { aabb_buffer }
+                    }
                 }
-            });
+            }));
         }
 
-        Self {
-            context: SharedContext::clone(context),
-            scene: Arc::clone(scene),
-            clusters,
-            geometry_accel_data,
-            cluster_accel: Vec::new(),
-            instance_buffer: None,
-            top_level_accel: None,
+        // make vertex/index buffers for each referenced geometry
+        let mut geometry_accel_data: Vec<_> = scene.geometries.iter().map(|_| None).collect();
+        for (&geometry_ref, task) in clusters.geometry_iter().zip(tasks.iter_mut()) {
+            geometry_accel_data[geometry_ref.0 as usize] = Some(task.await);
         }
+        geometry_accel_data
     }
 
-    fn try_create_bottom_level_accel<'a>(
-        &self,
+    async fn create_bottom_level_accel(
         cluster: &Cluster,
-        context: &'a Context,
         resource_loader: &ResourceLoader,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
-    ) -> Option<BottomLevelAccel> {
+        scene: Arc<Scene>,
+        geometry_accel_data: &[Option<GeometryAccelData>],
+    ) -> BottomLevelAccel {
+        let context = resource_loader.context();
+
         let mut accel_geometry = Vec::new();
         let mut max_primitive_counts = Vec::new();
         let mut build_range_info = Vec::new();
         for geometry_ref in cluster.elements.iter().map(|element| element.geometry_ref) {
-            let geometry = self.scene.geometry(geometry_ref);
-            let geometry_accel_data = self.geometry_accel_data[geometry_ref.0 as usize].as_ref().unwrap();
+            let geometry = scene.geometry(geometry_ref);
+            let geometry_accel_data = geometry_accel_data[geometry_ref.0 as usize].as_ref().unwrap();
 
             match geometry_accel_data {
                 GeometryAccelData::Triangles {
                     index_buffer,
                     position_buffer,
                 } => {
-                    let position_buffer = resource_loader.get_buffer(*position_buffer)?;
-                    let index_buffer = resource_loader.get_buffer(*index_buffer)?;
-
                     let position_buffer_address =
-                        unsafe { context.device.get_buffer_device_address_helper(position_buffer) };
-                    let index_buffer_address = unsafe { context.device.get_buffer_device_address_helper(index_buffer) };
+                        unsafe { context.device.get_buffer_device_address_helper(*position_buffer) };
+                    let index_buffer_address =
+                        unsafe { context.device.get_buffer_device_address_helper(*index_buffer) };
 
                     let (vertex_count, triangle_count) = match geometry {
                         Geometry::TriangleMesh { positions, indices, .. } => {
@@ -426,9 +449,7 @@ impl SceneAccel {
                     });
                 }
                 GeometryAccelData::Procedural { aabb_buffer } => {
-                    let aabb_buffer = resource_loader.get_buffer(*aabb_buffer)?;
-
-                    let aabb_buffer_address = unsafe { context.device.get_buffer_device_address_helper(aabb_buffer) };
+                    let aabb_buffer_address = unsafe { context.device.get_buffer_device_address_helper(*aabb_buffer) };
 
                     accel_geometry.push(vk::AccelerationStructureGeometryKHR {
                         geometry_type: vk::GeometryTypeKHR::AABBS,
@@ -482,123 +503,122 @@ impl SceneAccel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
-        let buffer = schedule.create_buffer(
-            &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE
-                | BufferUsage::ACCELERATION_STRUCTURE_READ
-                | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
-            global_allocator,
-        );
-        let accel = {
-            let create_info = vk::AccelerationStructureCreateInfoKHR {
-                buffer: Some(schedule.get_buffer_hack(buffer)),
-                size: buffer_desc.size as vk::DeviceSize,
-                ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+        let (buffer_id, accel) = resource_loader
+            .graphics(move |ctx: GraphicsTaskContext| {
+                let context = ctx.context;
+                let schedule = ctx.schedule;
+
+                let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
+                let buffer_id = schedule.create_buffer(
+                    &buffer_desc,
+                    BufferUsage::ACCELERATION_STRUCTURE_WRITE
+                        | BufferUsage::ACCELERATION_STRUCTURE_READ
+                        | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                );
+                let accel = {
+                    let create_info = vk::AccelerationStructureCreateInfoKHR {
+                        buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                        size: buffer_desc.size as vk::DeviceSize,
+                        ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                        ..Default::default()
+                    };
+                    unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+                };
+
+                let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
+
+                schedule.add_compute(
+                    command_name!("build"),
+                    |params| {
+                        params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                        params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
+                    },
+                    {
+                        let accel_geometry = accel_geometry;
+                        let build_range_info = build_range_info;
+                        move |params, cmd| {
+                            let scratch_buffer = params.get_buffer(scratch_buffer);
+
+                            let scratch_buffer_address =
+                                unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
+
+                            let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+                                .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
+                                .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+                                .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+                                .dst_acceleration_structure(Some(accel))
+                                .p_geometries(&accel_geometry)
+                                .scratch_data(vk::DeviceOrHostAddressKHR {
+                                    device_address: scratch_buffer_address,
+                                });
+
+                            unsafe {
+                                context.device.cmd_build_acceleration_structures_khr(
+                                    cmd,
+                                    slice::from_ref(&build_info),
+                                    slice::from_ref(&build_range_info.as_ptr()),
+                                )
+                            };
+                        }
+                    },
+                );
+
+                (buffer_id, accel)
+            })
+            .await;
+
+        BottomLevelAccel { accel, buffer_id }
+    }
+
+    async fn create_instance_buffer(
+        resource_loader: &ResourceLoader,
+        scene: Arc<Scene>,
+        clusters: &SceneClusters,
+        cluster_accel: &[BottomLevelAccel],
+        hit_group_count_per_instance: u32,
+    ) -> vk::Buffer {
+        let context = resource_loader.context();
+        let count = clusters.instanced_accel_count();
+
+        let desc = BufferDesc::new(count * mem::size_of::<AccelerationStructureInstance>());
+        let mut writer = resource_loader
+            .buffer_writer(&desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
+            .await;
+
+        let mut record_offset = 0;
+        for (cluster, cluster_accel) in clusters.0.iter().zip(cluster_accel.iter()) {
+            let info = vk::AccelerationStructureDeviceAddressInfoKHR {
+                acceleration_structure: Some(cluster_accel.accel),
                 ..Default::default()
             };
-            unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-        };
+            let acceleration_structure_reference =
+                unsafe { context.device.get_acceleration_structure_device_address_khr(&info) };
 
-        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
-
-        schedule.add_compute(
-            command_name!("build"),
-            |params| {
-                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
-                params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
-            },
-            {
-                let accel_geometry = accel_geometry;
-                let build_range_info = build_range_info;
-                move |params, cmd| {
-                    let scratch_buffer = params.get_buffer(scratch_buffer);
-
-                    let scratch_buffer_address =
-                        unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
-
-                    let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
-                        .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
-                        .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-                        .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-                        .dst_acceleration_structure(Some(accel))
-                        .p_geometries(&accel_geometry)
-                        .scratch_data(vk::DeviceOrHostAddressKHR {
-                            device_address: scratch_buffer_address,
-                        });
-
-                    unsafe {
-                        context.device.cmd_build_acceleration_structures_khr(
-                            cmd,
-                            slice::from_ref(&build_info),
-                            slice::from_ref(&build_range_info.as_ptr()),
-                        )
-                    };
-                }
-            },
-        );
-
-        Some(BottomLevelAccel { accel, buffer })
-    }
-
-    fn create_instance_buffer(
-        &self,
-        resource_loader: &mut ResourceLoader,
-        hit_group_count_per_instance: u32,
-    ) -> StaticBufferHandle {
-        let accel_device_addresses: Vec<_> = self
-            .cluster_accel
-            .iter()
-            .map(|bottom_level_accel| {
-                let info = vk::AccelerationStructureDeviceAddressInfoKHR {
-                    acceleration_structure: Some(bottom_level_accel.accel),
-                    ..Default::default()
+            for transform_ref in cluster.transform_refs.iter().copied() {
+                let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
+                let transform = scene.transform(transform_ref);
+                let instance = AccelerationStructureInstance {
+                    transform: transform.world_from_local.into_transform().transposed(),
+                    instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
+                    instance_shader_binding_table_record_offset_and_flags: record_offset,
+                    acceleration_structure_reference,
                 };
-                unsafe { self.context.device.get_acceleration_structure_device_address_khr(&info) }
-            })
-            .collect();
-
-        let instance_buffer = resource_loader.create_buffer();
-        resource_loader.async_load({
-            let scene = Arc::clone(&self.scene);
-            let clusters = Arc::clone(&self.clusters);
-            move |allocator| {
-                let count = scene.instances.len();
-
-                let desc = BufferDesc::new(count * mem::size_of::<AccelerationStructureInstance>());
-                let mut writer = allocator
-                    .map_buffer(instance_buffer, &desc, BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT)
-                    .unwrap();
-
-                let mut record_offset = 0;
-                for (cluster, acceleration_structure_reference) in
-                    clusters.0.iter().zip(accel_device_addresses.iter().copied())
-                {
-                    for transform_ref in cluster.transform_refs.iter().copied() {
-                        let custom_index = transform_ref.0 & 0x00_ff_ff_ff;
-                        let transform = scene.transform(transform_ref);
-                        let instance = AccelerationStructureInstance {
-                            transform: transform.world_from_local.into_transform().transposed(),
-                            instance_custom_index_and_mask: 0xff_00_00_00 | custom_index,
-                            instance_shader_binding_table_record_offset_and_flags: record_offset,
-                            acceleration_structure_reference,
-                        };
-                        writer.write(&instance);
-                        record_offset += (cluster.elements.len() as u32) * hit_group_count_per_instance;
-                    }
-                }
+                writer.write(&instance);
+                record_offset += (cluster.elements.len() as u32) * hit_group_count_per_instance;
             }
-        });
-        instance_buffer
+        }
+
+        let instance_buffer_id = writer.finish();
+        resource_loader.get_buffer(instance_buffer_id.await)
     }
 
-    fn create_top_level_accel<'a>(
-        &self,
-        context: &'a Context,
+    async fn create_top_level_accel(
+        resource_loader: &ResourceLoader,
+        clusters: &SceneClusters,
+        cluster_accel: &[BottomLevelAccel],
         instance_buffer: vk::Buffer,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
     ) -> TopLevelAccel {
+        let context = resource_loader.context();
         let instance_buffer_address = unsafe { context.device.get_buffer_device_address_helper(instance_buffer) };
 
         let accel_geometry = vk::AccelerationStructureGeometryKHR {
@@ -620,7 +640,7 @@ impl SceneAccel {
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
             .p_geometries(slice::from_ref(&accel_geometry));
 
-        let instance_count = self.scene.instances.len() as u32;
+        let instance_count = clusters.instanced_accel_count() as u32;
         let sizes = {
             let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
             unsafe {
@@ -638,132 +658,95 @@ impl SceneAccel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
-        let buffer = schedule.create_buffer(
-            &buffer_desc,
-            BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
-            global_allocator,
-        );
-        let accel = {
-            let create_info = vk::AccelerationStructureCreateInfoKHR {
-                buffer: Some(schedule.get_buffer_hack(buffer)),
-                size: buffer_desc.size as vk::DeviceSize,
-                ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-                ..Default::default()
-            };
-            unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-        };
+        let (buffer_id, accel) = resource_loader
+            .graphics({
+                let accel_buffer_ids: Vec<_> = cluster_accel.iter().map(|accel| accel.buffer_id).collect();
+                move |ctx: GraphicsTaskContext| {
+                    let context = ctx.context;
+                    let schedule = ctx.schedule;
 
-        let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
+                    let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
+                    let buffer_id = schedule.create_buffer(
+                        &buffer_desc,
+                        BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                    );
+                    let accel = {
+                        let create_info = vk::AccelerationStructureCreateInfoKHR {
+                            buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                            size: buffer_desc.size as vk::DeviceSize,
+                            ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                            ..Default::default()
+                        };
+                        unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+                    };
 
-        schedule.add_compute(
-            command_name!("build"),
-            |params| {
-                for bottom_level_accel in self.cluster_accel.iter() {
-                    params.add_buffer(bottom_level_accel.buffer, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                    let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
+
+                    schedule.add_compute(
+                        command_name!("build"),
+                        |params| {
+                            for &buffer_id in accel_buffer_ids.iter() {
+                                params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                            }
+                            params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                            params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
+                        },
+                        move |params, cmd| {
+                            let scratch_buffer = params.get_buffer(scratch_buffer);
+
+                            let scratch_buffer_address =
+                                unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
+
+                            let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+                                .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
+                                .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+                                .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+                                .dst_acceleration_structure(Some(accel))
+                                .p_geometries(slice::from_ref(&accel_geometry))
+                                .scratch_data(vk::DeviceOrHostAddressKHR {
+                                    device_address: scratch_buffer_address,
+                                });
+
+                            let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
+                                primitive_count: instance_count,
+                                primitive_offset: 0,
+                                first_vertex: 0,
+                                transform_offset: 0,
+                            };
+
+                            unsafe {
+                                context.device.cmd_build_acceleration_structures_khr(
+                                    cmd,
+                                    slice::from_ref(&build_info),
+                                    &[&build_range_info],
+                                )
+                            };
+                        },
+                    );
+
+                    (buffer_id, accel)
                 }
-                params.add_buffer(buffer, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
-                params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
-            },
-            move |params, cmd| {
-                let scratch_buffer = params.get_buffer(scratch_buffer);
+            })
+            .await;
 
-                let scratch_buffer_address = unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
-
-                let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
-                    .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
-                    .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-                    .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-                    .dst_acceleration_structure(Some(accel))
-                    .p_geometries(slice::from_ref(&accel_geometry))
-                    .scratch_data(vk::DeviceOrHostAddressKHR {
-                        device_address: scratch_buffer_address,
-                    });
-
-                let build_range_info = vk::AccelerationStructureBuildRangeInfoKHR {
-                    primitive_count: instance_count,
-                    primitive_offset: 0,
-                    first_vertex: 0,
-                    transform_offset: 0,
-                };
-
-                unsafe {
-                    context.device.cmd_build_acceleration_structures_khr(
-                        cmd,
-                        slice::from_ref(&build_info),
-                        &[&build_range_info],
-                    )
-                };
-            },
-        );
-
-        TopLevelAccel { accel, buffer }
+        TopLevelAccel { accel, buffer_id }
     }
 
-    fn try_create_top_level_accel<'a>(
-        &mut self,
-        context: &'a Context,
-        resource_loader: &mut ResourceLoader,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
-        hit_group_count_per_instance: u32,
-    ) -> Option<TopLevelAccel> {
-        // make all bottom level acceleration structures
-        while self.cluster_accel.len() < self.clusters.0.len() {
-            let bottom_level_accel = self.try_create_bottom_level_accel(
-                self.clusters.0.get(self.cluster_accel.len()).unwrap(),
-                context,
-                resource_loader,
-                global_allocator,
-                schedule,
-            )?;
-            self.cluster_accel.push(bottom_level_accel);
-        }
-
-        // make instance buffer from transforms
-        if self.instance_buffer.is_none() {
-            self.instance_buffer = Some(self.create_instance_buffer(resource_loader, hit_group_count_per_instance));
-        }
-        let instance_buffer = resource_loader.get_buffer(self.instance_buffer?)?;
-
-        // now we have all the inputs
-        Some(self.create_top_level_accel(context, instance_buffer, global_allocator, schedule))
-    }
-
-    pub fn update<'a>(
-        &mut self,
-        context: &'a Context,
-        resource_loader: &mut ResourceLoader,
-        global_allocator: &mut Allocator,
-        schedule: &mut RenderSchedule<'a>,
-        hit_group_count_per_instance: u32,
-    ) {
-        // keep trying to make the top level acceleration structure
-        if self.top_level_accel.is_none() {
-            self.top_level_accel = self.try_create_top_level_accel(
-                context,
-                resource_loader,
-                global_allocator,
-                schedule,
-                hit_group_count_per_instance,
-            );
-        }
-    }
-
-    pub fn top_level_accel(&self) -> Option<vk::AccelerationStructureKHR> {
-        self.top_level_accel.as_ref().map(|top_level| top_level.accel)
+    pub fn top_level_accel(&self) -> vk::AccelerationStructureKHR {
+        self.top_level_accel.accel
     }
 
     pub fn declare_parameters(&self, params: &mut RenderParameterDeclaration) {
         for bottom_level_accel in self.cluster_accel.iter() {
             params.add_buffer(
-                bottom_level_accel.buffer,
+                bottom_level_accel.buffer_id,
                 BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
             );
         }
-        if let Some(top_level) = self.top_level_accel.as_ref() {
-            params.add_buffer(top_level.buffer, BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE);
-        }
+        params.add_buffer(
+            self.top_level_accel.buffer_id,
+            BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+        );
     }
 }
 
@@ -773,8 +756,6 @@ impl Drop for SceneAccel {
         for bottom_level_accel in self.cluster_accel.iter() {
             unsafe { device.destroy_acceleration_structure_khr(Some(bottom_level_accel.accel), None) };
         }
-        if let Some(top_level_accel) = self.top_level_accel.as_ref() {
-            unsafe { device.destroy_acceleration_structure_khr(Some(top_level_accel.accel), None) };
-        }
+        unsafe { device.destroy_acceleration_structure_khr(Some(self.top_level_accel.accel), None) };
     }
 }

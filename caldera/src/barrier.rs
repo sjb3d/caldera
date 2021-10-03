@@ -43,6 +43,10 @@ macro_rules! base_usage_impl {
                 Self(0)
             }
 
+            pub fn is_empty(self) -> bool {
+                self.0 == 0
+            }
+
             pub fn contains(self, other: Self) -> bool {
                 (self.0 & other.0) == other.0
             }
@@ -134,6 +138,13 @@ macro_rules! buffer_usage_impl {
 }
 
 buffer_usage_impl! {
+    (
+        TRANSFER_READ,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::AccessFlags::TRANSFER_READ,
+        AccessCategory::READ
+    ),
     (
         TRANSFER_WRITE,
         vk::BufferUsageFlags::TRANSFER_DST,
@@ -256,14 +267,7 @@ buffer_usage_impl! {
         vk::PipelineStageFlags::MESH_SHADER_NV,
         vk::AccessFlags::SHADER_READ,
         AccessCategory::READ
-    ),
-    (
-        HOST_READ,
-        vk::BufferUsageFlags::empty(),
-        vk::PipelineStageFlags::HOST,
-        vk::AccessFlags::HOST_READ,
-        AccessCategory::READ
-    ),
+    )
 }
 
 pub fn emit_buffer_barrier(

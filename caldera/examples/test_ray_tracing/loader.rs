@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 use caldera::prelude::*;
 use ply_rs::{parser, ply};
 use spark::vk;
@@ -48,57 +49,20 @@ pub type PositionData = Vec3;
 pub type AttributeData = Vec3;
 pub type InstanceData = TransposedTransform3;
 
-#[derive(Clone, Copy)]
 pub struct MeshInfo {
     pub vertex_count: u32,
     pub triangle_count: u32,
     pub instances: [Similarity3; Self::INSTANCE_COUNT],
-    position_buffer: StaticBufferHandle,
-    attribute_buffer: StaticBufferHandle,
-    index_buffer: StaticBufferHandle,
-    instance_buffer: StaticBufferHandle,
-}
-
-#[derive(Clone, Copy)]
-pub struct MeshBuffers {
-    pub position: vk::Buffer,
-    pub attribute: vk::Buffer,
-    pub index: vk::Buffer,
-    pub instance: vk::Buffer,
+    pub position_buffer: vk::Buffer,
+    pub attribute_buffer: vk::Buffer,
+    pub index_buffer: vk::Buffer,
+    pub instance_buffer: vk::Buffer,
 }
 
 impl MeshInfo {
     pub const INSTANCE_COUNT: usize = 8;
 
-    pub fn new(resource_loader: &mut ResourceLoader) -> Self {
-        Self {
-            vertex_count: 0,
-            triangle_count: 0,
-            instances: [Similarity3::identity(); Self::INSTANCE_COUNT],
-            position_buffer: resource_loader.create_buffer(),
-            attribute_buffer: resource_loader.create_buffer(),
-            index_buffer: resource_loader.create_buffer(),
-            instance_buffer: resource_loader.create_buffer(),
-        }
-    }
-
-    pub fn get_buffers(&self, resource_loader: &ResourceLoader) -> Option<MeshBuffers> {
-        if self.triangle_count == 0 {
-            return None;
-        }
-        let position = resource_loader.get_buffer(self.position_buffer)?;
-        let attribute = resource_loader.get_buffer(self.attribute_buffer)?;
-        let index = resource_loader.get_buffer(self.index_buffer)?;
-        let instance = resource_loader.get_buffer(self.instance_buffer)?;
-        Some(MeshBuffers {
-            position,
-            attribute,
-            index,
-            instance,
-        })
-    }
-
-    pub fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &Path, with_ray_tracing: bool) {
+    pub async fn load(resource_loader: &ResourceLoader, mesh_file_name: &Path, with_ray_tracing: bool) -> Self {
         let vertex_parser = parser::Parser::<PlyVertex>::new();
         let face_parser = parser::Parser::<PlyFace>::new();
 
@@ -122,9 +86,8 @@ impl MeshInfo {
         }
 
         let position_buffer_desc = BufferDesc::new(vertices.len() * mem::size_of::<PositionData>());
-        let mut writer = allocator
-            .map_buffer(
-                self.position_buffer,
+        let mut writer = resource_loader
+            .buffer_writer(
                 &position_buffer_desc,
                 if with_ray_tracing {
                     BufferUsage::VERTEX_BUFFER | BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
@@ -132,7 +95,7 @@ impl MeshInfo {
                     BufferUsage::VERTEX_BUFFER
                 },
             )
-            .unwrap();
+            .await;
         let mut min = Vec3::broadcast(f32::MAX);
         let mut max = Vec3::broadcast(f32::MIN);
         for src in vertices.iter() {
@@ -141,12 +104,11 @@ impl MeshInfo {
             min = min.min_by_component(v);
             max = max.max_by_component(v);
         }
-        self.vertex_count = vertices.len() as u32;
+        let position_buffer_id = writer.finish();
 
         let index_buffer_desc = BufferDesc::new(faces.len() * 3 * mem::size_of::<u32>());
-        let mut writer = allocator
-            .map_buffer(
-                self.index_buffer,
+        let mut writer = resource_loader
+            .buffer_writer(
                 &index_buffer_desc,
                 if with_ray_tracing {
                     BufferUsage::INDEX_BUFFER | BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT
@@ -154,7 +116,7 @@ impl MeshInfo {
                     BufferUsage::INDEX_BUFFER
                 },
             )
-            .unwrap();
+            .await;
         let mut normals = vec![Vec3::zero(); vertices.len()];
         for src in faces.iter() {
             writer.write(&src.indices);
@@ -169,18 +131,17 @@ impl MeshInfo {
                 normals[src.indices[2] as usize] += normal;
             }
         }
+        let index_buffer_id = writer.finish();
         for n in normals.iter_mut() {
             let u = n.normalized();
             if !u.is_nan() {
                 *n = u;
             }
         }
-        self.triangle_count = faces.len() as u32;
 
         let attribute_buffer_desc = BufferDesc::new(vertices.len() * mem::size_of::<AttributeData>());
-        let mut writer = allocator
-            .map_buffer(
-                self.attribute_buffer,
+        let mut writer = resource_loader
+            .buffer_writer(
                 &attribute_buffer_desc,
                 if with_ray_tracing {
                     BufferUsage::VERTEX_BUFFER | BufferUsage::RAY_TRACING_STORAGE_READ
@@ -188,29 +149,42 @@ impl MeshInfo {
                     BufferUsage::VERTEX_BUFFER
                 },
             )
-            .unwrap();
+            .await;
         for src in normals.iter() {
             writer.write(src);
         }
+        let attribute_buffer_id = writer.finish();
 
         let scale = 0.9 / (max - min).component_max();
         let offset = (-0.5 * scale) * (max + min);
+        let mut instances = ArrayVec::new();
         for i in 0..Self::INSTANCE_COUNT {
             let corner = |i: usize, b| if ((i >> b) & 1usize) != 0usize { 0.5 } else { -0.5 };
-            self.instances[i] = Similarity3::new(
+            instances.push(Similarity3::new(
                 offset + Vec3::new(corner(i, 0), corner(i, 1), corner(i, 2)),
                 Rotor3::identity(),
                 scale,
-            );
+            ));
         }
 
         let instance_buffer_desc = BufferDesc::new(Self::INSTANCE_COUNT * mem::size_of::<InstanceData>());
-        let mut writer = allocator
-            .map_buffer(self.instance_buffer, &instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
-            .unwrap();
-        for src in self.instances.iter() {
+        let mut writer = resource_loader
+            .buffer_writer(&instance_buffer_desc, BufferUsage::VERTEX_BUFFER)
+            .await;
+        for src in instances.iter() {
             let instance_data = src.into_transform().transposed();
             writer.write(&instance_data);
+        }
+        let instance_buffer_id = writer.finish();
+
+        Self {
+            vertex_count: vertices.len() as u32,
+            triangle_count: faces.len() as u32,
+            instances: instances.into_inner().unwrap(),
+            position_buffer: resource_loader.get_buffer(position_buffer_id.await),
+            index_buffer: resource_loader.get_buffer(index_buffer_id.await),
+            attribute_buffer: resource_loader.get_buffer(attribute_buffer_id.await),
+            instance_buffer: resource_loader.get_buffer(instance_buffer_id.await),
         }
     }
 }

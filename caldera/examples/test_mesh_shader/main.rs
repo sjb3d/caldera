@@ -10,7 +10,6 @@ use std::{
     mem,
     path::{Path, PathBuf},
     slice,
-    sync::{Arc, Mutex},
 };
 use structopt::StructOpt;
 use strum::VariantNames;
@@ -78,67 +77,29 @@ descriptor_set!(ClusterDescriptorSet {
     cluster_desc: StorageBuffer,
 });
 
-#[derive(Clone, Copy)]
 struct MeshInfo {
     triangle_count: u32,
     cluster_count: u32,
     min: Vec3,
     max: Vec3,
-    position_buffer: StaticBufferHandle,
-    normal_buffer: StaticBufferHandle,
-    index_buffer: StaticBufferHandle,
-    cluster_buffer: StaticBufferHandle,
-}
-
-#[derive(Clone, Copy)]
-struct MeshBuffers {
-    position: vk::Buffer,
-    normal: vk::Buffer,
-    index: vk::Buffer,
-    cluster: vk::Buffer,
+    position_buffer: vk::Buffer,
+    normal_buffer: vk::Buffer,
+    index_buffer: vk::Buffer,
+    cluster_buffer: vk::Buffer,
 }
 
 impl MeshInfo {
-    fn new(resource_loader: &mut ResourceLoader) -> Self {
-        Self {
-            triangle_count: 0,
-            cluster_count: 0,
-            min: Vec3::zero(),
-            max: Vec3::one(),
-            position_buffer: resource_loader.create_buffer(),
-            normal_buffer: resource_loader.create_buffer(),
-            index_buffer: resource_loader.create_buffer(),
-            cluster_buffer: resource_loader.create_buffer(),
-        }
-    }
-
     fn get_world_from_local(&self) -> Similarity3 {
         let scale = 0.9 / (self.max.y - self.min.y);
         let offset = (-0.5 * scale) * (self.max + self.min);
         Similarity3::new(offset, Rotor3::identity(), scale)
     }
 
-    fn get_buffers(&self, resource_loader: &ResourceLoader) -> Option<MeshBuffers> {
-        if self.triangle_count == 0 {
-            return None;
-        }
-        let position = resource_loader.get_buffer(self.position_buffer)?;
-        let normal = resource_loader.get_buffer(self.normal_buffer)?;
-        let index = resource_loader.get_buffer(self.index_buffer)?;
-        let cluster = resource_loader.get_buffer(self.cluster_buffer)?;
-        Some(MeshBuffers {
-            position,
-            normal,
-            index,
-            cluster,
-        })
-    }
-
-    fn load(&mut self, allocator: &mut ResourceAllocator, mesh_file_name: &Path, with_mesh_shader: bool) {
+    async fn load(resource_loader: ResourceLoader, mesh_file_name: &Path, with_mesh_shader: bool) -> Self {
         let mesh_buffer_usage = if with_mesh_shader {
             BufferUsage::MESH_STORAGE_READ
         } else {
-            BufferUsage::VERTEX_STORAGE_READ // just something non-empty
+            BufferUsage::empty()
         };
 
         let mesh = load_ply_mesh(&mesh_file_name);
@@ -150,46 +111,40 @@ impl MeshInfo {
         let (mesh, clusters) = build_clusters(mesh);
 
         let position_buffer_desc = BufferDesc::new(mesh.positions.len() * mem::size_of::<Vec3>());
-        let mut writer = allocator
-            .map_buffer(
-                self.position_buffer,
-                &position_buffer_desc,
-                BufferUsage::VERTEX_BUFFER | mesh_buffer_usage,
-            )
-            .unwrap();
-        self.min = Vec3::broadcast(f32::MAX);
-        self.max = Vec3::broadcast(f32::MIN);
+        let mut writer = resource_loader
+            .buffer_writer(&position_buffer_desc, BufferUsage::VERTEX_BUFFER | mesh_buffer_usage)
+            .await;
+        let mut min = Vec3::broadcast(f32::MAX);
+        let mut max = Vec3::broadcast(f32::MIN);
         for &pos in &mesh.positions {
             writer.write(&pos);
-            self.min = self.min.min_by_component(pos);
-            self.max = self.max.max_by_component(pos);
+            min = min.min_by_component(pos);
+            max = max.max_by_component(pos);
         }
+        let position_buffer_id = writer.finish();
 
         let normal_buffer_desc = BufferDesc::new(mesh.normals.len() * mem::size_of::<Vec3>());
-        let mut writer = allocator
-            .map_buffer(
-                self.normal_buffer,
-                &normal_buffer_desc,
-                BufferUsage::VERTEX_BUFFER | mesh_buffer_usage,
-            )
-            .unwrap();
+        let mut writer = resource_loader
+            .buffer_writer(&normal_buffer_desc, BufferUsage::VERTEX_BUFFER | mesh_buffer_usage)
+            .await;
         for &normal in &mesh.normals {
             writer.write(&normal);
         }
+        let normal_buffer_id = writer.finish();
 
         let index_buffer_desc = BufferDesc::new(mesh.triangles.len() * mem::size_of::<UVec3>());
-        let mut writer = allocator
-            .map_buffer(self.index_buffer, &index_buffer_desc, BufferUsage::INDEX_BUFFER)
-            .unwrap();
+        let mut writer = resource_loader
+            .buffer_writer(&index_buffer_desc, BufferUsage::INDEX_BUFFER)
+            .await;
         for &tri in &mesh.triangles {
             writer.write(&tri);
         }
-        self.triangle_count = mesh.triangles.len() as u32;
+        let index_buffer_id = writer.finish();
 
         let cluster_buffer_desc = BufferDesc::new(clusters.len() * mem::size_of::<ClusterDesc>());
-        let mut writer = allocator
-            .map_buffer(self.cluster_buffer, &cluster_buffer_desc, mesh_buffer_usage)
-            .unwrap();
+        let mut writer = resource_loader
+            .buffer_writer(&cluster_buffer_desc, mesh_buffer_usage)
+            .await;
         for cluster in &clusters {
             let mut desc = ClusterDesc {
                 position_sphere: SphereBounds::from_box(cluster.position_bounds),
@@ -213,7 +168,18 @@ impl MeshInfo {
             }
             writer.write(&desc);
         }
-        self.cluster_count = clusters.len() as u32;
+        let cluster_buffer_id = writer.finish();
+
+        Self {
+            triangle_count: mesh.triangles.len() as u32,
+            cluster_count: clusters.len() as u32,
+            min,
+            max,
+            position_buffer: resource_loader.get_buffer(position_buffer_id.await),
+            normal_buffer: resource_loader.get_buffer(normal_buffer_id.await),
+            index_buffer: resource_loader.get_buffer(index_buffer_id.await),
+            cluster_buffer: resource_loader.get_buffer(cluster_buffer_id.await),
+        }
     }
 }
 
@@ -228,7 +194,7 @@ struct App {
 
     has_mesh_shader: bool,
     task_group_size: u32,
-    mesh_info: Arc<Mutex<MeshInfo>>,
+    mesh_info: TaskOutput<MeshInfo>,
     render_mode: RenderMode,
     do_backface_culling: bool,
     is_rotating: bool,
@@ -249,15 +215,11 @@ impl App {
             .max_subgroup_size;
         println!("task group size: {}", task_group_size);
 
-        let mesh_info = Arc::new(Mutex::new(MeshInfo::new(&mut base.systems.resource_loader)));
-        base.systems.resource_loader.async_load({
-            let mesh_info = Arc::clone(&mesh_info);
-            move |allocator| {
-                let mut mesh_info_clone = *mesh_info.lock().unwrap();
-                mesh_info_clone.load(allocator, &mesh_file_name, has_mesh_shader);
-                *mesh_info.lock().unwrap() = mesh_info_clone;
-            }
-        });
+        let resource_loader = base.systems.resource_loader.clone();
+        let mesh_info = base
+            .systems
+            .task_system
+            .task(async move { MeshInfo::load(resource_loader, &mesh_file_name, has_mesh_shader).await });
 
         Self {
             context,
@@ -302,7 +264,12 @@ impl App {
 
         base.systems.draw_ui(&ui);
 
-        let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
+        let mut schedule = base.systems.resource_loader.begin_schedule(
+            &mut base.systems.render_graph,
+            base.context.as_ref(),
+            &base.systems.descriptor_pool,
+            &base.systems.pipeline_cache,
+        );
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
         let swap_size = base.display.swapchain.get_size();
@@ -321,10 +288,6 @@ impl App {
         let main_render_state =
             RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]).with_depth_temp(depth_image);
 
-        let mesh_info = *self.mesh_info.lock().unwrap();
-        let mesh_buffers = mesh_info.get_buffers(&base.systems.resource_loader);
-
-        let world_from_local = mesh_info.get_world_from_local();
         let view_from_world = Similarity3::new(
             Vec3::new(0.0, 0.0, -2.5),
             Rotor3::from_rotation_yz(0.2) * Rotor3::from_rotation_xz(self.angle),
@@ -333,7 +296,8 @@ impl App {
         let vertical_fov = PI / 7.0;
         let aspect_ratio = (swap_size.x as f32) / (swap_size.y as f32);
         let proj_from_view = projection::rh_yup::perspective_reversed_infinite_z_vk(vertical_fov, aspect_ratio, 0.1);
-        let view_from_local = view_from_world * world_from_local;
+
+        let mesh_info = self.mesh_info.get();
 
         schedule.add_graphics(command_name!("main"), main_render_state, |_params| {}, {
             let context = base.context.as_ref();
@@ -348,7 +312,10 @@ impl App {
             move |_params, cmd, render_pass| {
                 set_viewport_helper(&context.device, cmd, swap_size);
 
-                if let Some(mesh_buffers) = mesh_buffers {
+                if let Some(mesh_info) = mesh_info {
+                    let world_from_local = mesh_info.get_world_from_local();
+                    let view_from_local = view_from_world * world_from_local;
+
                     match render_mode {
                         RenderMode::Standard => {
                             let standard_descriptor_set = StandardDescriptorSet::create(descriptor_pool, |buf| {
@@ -410,12 +377,15 @@ impl App {
                                 context.device.cmd_bind_vertex_buffers(
                                     cmd,
                                     0,
-                                    &[mesh_buffers.position, mesh_buffers.normal],
+                                    &[mesh_info.position_buffer, mesh_info.normal_buffer],
                                     &[0, 0],
                                 );
-                                context
-                                    .device
-                                    .cmd_bind_index_buffer(cmd, mesh_buffers.index, 0, vk::IndexType::UINT32);
+                                context.device.cmd_bind_index_buffer(
+                                    cmd,
+                                    mesh_info.index_buffer,
+                                    0,
+                                    vk::IndexType::UINT32,
+                                );
                                 context
                                     .device
                                     .cmd_draw_indexed(cmd, mesh_info.triangle_count * 3, 1, 0, 0, 0);
@@ -434,9 +404,9 @@ impl App {
                                         task_count,
                                     }
                                 },
-                                mesh_buffers.position,
-                                mesh_buffers.normal,
-                                mesh_buffers.cluster,
+                                mesh_info.position_buffer,
+                                mesh_info.normal_buffer,
+                                mesh_info.cluster_buffer,
                             );
 
                             let state = GraphicsPipelineState::new(render_pass, main_sample_count);

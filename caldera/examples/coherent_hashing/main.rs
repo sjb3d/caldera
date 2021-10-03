@@ -180,7 +180,12 @@ impl App {
 
         base.systems.draw_ui(&ui);
 
-        let mut schedule = RenderSchedule::new(&mut base.systems.render_graph);
+        let mut schedule = base.systems.resource_loader.begin_schedule(
+            &mut base.systems.render_graph,
+            base.context.as_ref(),
+            &base.systems.descriptor_pool,
+            &base.systems.pipeline_cache,
+        );
 
         let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
         let swap_size = base.display.swapchain.get_size();
