@@ -41,7 +41,7 @@ struct AccelLevel {
 }
 
 impl AccelLevel {
-    async fn new_bottom_level(resource_loader: &ResourceLoader, mesh_info: &MeshInfo) -> Self {
+    async fn new_bottom_level(resource_loader: ResourceLoader, mesh_info: &MeshInfo) -> Self {
         let context = resource_loader.context();
         let vertex_buffer_address = unsafe {
             context
@@ -114,7 +114,7 @@ impl AccelLevel {
                 );
                 let accel = {
                     let create_info = vk::AccelerationStructureCreateInfoKHR {
-                        buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                        buffer: Some(schedule.get_buffer(buffer_id)),
                         size: buffer_desc.size as vk::DeviceSize,
                         ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
                         ..Default::default()
@@ -180,7 +180,7 @@ impl AccelLevel {
     }
 
     async fn new_top_level(
-        resource_loader: &ResourceLoader,
+        resource_loader: ResourceLoader,
         bottom_level_buffer_id: BufferId,
         instance_buffer: vk::Buffer,
     ) -> Self {
@@ -240,7 +240,7 @@ impl AccelLevel {
                 );
                 let accel = {
                     let create_info = vk::AccelerationStructureCreateInfoKHR {
-                        buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                        buffer: Some(schedule.get_buffer(buffer_id)),
                         size: buffer_desc.size as vk::DeviceSize,
                         ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
                         ..Default::default()
@@ -341,7 +341,7 @@ pub struct AccelInfo {
 }
 
 impl AccelInfo {
-    pub async fn new(resource_loader: &ResourceLoader, mesh_info: &MeshInfo) -> Self {
+    pub async fn new(resource_loader: ResourceLoader, mesh_info: &MeshInfo) -> Self {
         let context = resource_loader.context();
         let index_buffer_device_address =
             unsafe { context.device.get_buffer_device_address_helper(mesh_info.index_buffer) };
@@ -479,7 +479,7 @@ impl AccelInfo {
         };
         let shader_binding_table_buffer = resource_loader.get_buffer(shader_binding_table_buffer_id);
 
-        let bottom_level = AccelLevel::new_bottom_level(&resource_loader, mesh_info).await;
+        let bottom_level = AccelLevel::new_bottom_level(resource_loader.clone(), mesh_info).await;
         let bottom_level_device_address = {
             let info = vk::AccelerationStructureDeviceAddressInfoKHR {
                 acceleration_structure: Some(bottom_level.accel),
@@ -507,7 +507,8 @@ impl AccelInfo {
         };
         let instance_buffer = resource_loader.get_buffer(instance_buffer_id);
 
-        let top_level = AccelLevel::new_top_level(&resource_loader, bottom_level.buffer_id, instance_buffer).await;
+        let top_level =
+            AccelLevel::new_top_level(resource_loader.clone(), bottom_level.buffer_id, instance_buffer).await;
 
         Self {
             trace_pipeline_layout,

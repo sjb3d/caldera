@@ -48,5 +48,8 @@ layout(set = 0, binding = 7) uniform sampler1D g_wavelength_inv_cdf;
 layout(set = 0, binding = 8) uniform sampler1D g_wavelength_pdf;
 layout(set = 0, binding = 9) uniform sampler1D g_xyz_matching;
 layout(set = 0, binding = 10, r32f) uniform restrict writeonly image2D g_result[3];
+layout(set = 0, binding = 11) uniform sampler g_linear_sampler;
 
-layout(set = 1, binding = 0) uniform sampler2D g_textures[];
+#define BINDLESS_MAX_SAMPLED_IMAGE_2D       1024
+
+layout(set = 1, binding = 0) uniform texture2D g_textures[BINDLESS_MAX_SAMPLED_IMAGE_2D];

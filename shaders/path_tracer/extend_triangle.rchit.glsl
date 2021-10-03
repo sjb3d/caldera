@@ -79,7 +79,7 @@ void main()
             ;
 
         const uint texture_index = get_texture_index(g_record.shader);
-        reflectance = texture(g_textures[nonuniformEXT(texture_index)], uv).xyz;        
+        reflectance = texture(sampler2D(g_textures[nonuniformEXT(texture_index)], g_linear_sampler), uv).xyz;        
     } else {
         reflectance = g_record.shader.reflectance;
     }

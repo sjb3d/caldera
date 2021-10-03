@@ -62,7 +62,7 @@ impl App {
 
     fn new(base: &mut AppBase) -> Self {
         let resource_loader = base.systems.resource_loader.clone();
-        let sample_image_view = base.systems.task_system.task(async move {
+        let sample_image_view = base.systems.task_system.spawn_task(async move {
             let sequences: Vec<Vec<_>> = (0..Self::SEQUENCE_COUNT)
                 .into_par_iter()
                 .map(|i| {

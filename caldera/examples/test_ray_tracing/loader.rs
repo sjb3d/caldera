@@ -62,7 +62,7 @@ pub struct MeshInfo {
 impl MeshInfo {
     pub const INSTANCE_COUNT: usize = 8;
 
-    pub async fn load(resource_loader: &ResourceLoader, mesh_file_name: &Path, with_ray_tracing: bool) -> Self {
+    pub async fn load(resource_loader: ResourceLoader, mesh_file_name: &Path, with_ray_tracing: bool) -> Self {
         let vertex_parser = parser::Parser::<PlyVertex>::new();
         let face_parser = parser::Parser::<PlyFace>::new();
 

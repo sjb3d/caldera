@@ -175,7 +175,7 @@ struct TopLevelAccel {
 
 pub struct SceneAccel {
     context: SharedContext,
-    scene: Arc<Scene>,
+    scene: SharedScene,
     clusters: SceneClusters,
     geometry_accel_data: Vec<Option<GeometryAccelData>>,
     cluster_accel: Vec<BottomLevelAccel>,
@@ -215,22 +215,27 @@ impl SceneAccel {
         self.geometry_accel_data[geometry_ref.0 as usize].as_ref()
     }
 
-    pub async fn new(resource_loader: ResourceLoader, scene: Arc<Scene>, hit_group_count_per_instance: u32) -> Self {
+    pub async fn new(resource_loader: ResourceLoader, scene: SharedScene, hit_group_count_per_instance: u32) -> Self {
         let clusters = SceneClusters::new(&scene);
 
         let geometry_accel_data =
-            SceneAccel::create_geometry_accel_data(&resource_loader, Arc::clone(&scene), &clusters).await;
+            SceneAccel::create_geometry_accel_data(resource_loader.clone(), Arc::clone(&scene), &clusters).await;
 
         let mut cluster_accel = Vec::new();
         for cluster in clusters.0.iter() {
             cluster_accel.push(
-                SceneAccel::create_bottom_level_accel(cluster, &resource_loader, scene.clone(), &geometry_accel_data)
-                    .await,
+                SceneAccel::create_bottom_level_accel(
+                    cluster,
+                    resource_loader.clone(),
+                    Arc::clone(&scene),
+                    &geometry_accel_data,
+                )
+                .await,
             );
         }
 
         let instance_buffer = SceneAccel::create_instance_buffer(
-            &resource_loader,
+            resource_loader.clone(),
             Arc::clone(&scene),
             &clusters,
             &cluster_accel,
@@ -239,7 +244,8 @@ impl SceneAccel {
         .await;
 
         let top_level_accel =
-            SceneAccel::create_top_level_accel(&resource_loader, &clusters, &cluster_accel, instance_buffer).await;
+            SceneAccel::create_top_level_accel(resource_loader.clone(), &clusters, &cluster_accel, instance_buffer)
+                .await;
 
         Self {
             context: resource_loader.context(),
@@ -252,8 +258,8 @@ impl SceneAccel {
     }
 
     async fn create_geometry_accel_data(
-        resource_loader: &ResourceLoader,
-        scene: Arc<Scene>,
+        resource_loader: ResourceLoader,
+        scene: SharedScene,
         clusters: &SceneClusters,
     ) -> Vec<Option<GeometryAccelData>> {
         // make vertex/index buffers for each referenced geometry
@@ -261,7 +267,7 @@ impl SceneAccel {
         for &geometry_ref in clusters.geometry_iter() {
             let loader = resource_loader.clone();
             let scene = Arc::clone(&scene);
-            tasks.push(resource_loader.spawn(async move {
+            tasks.push(spawn(async move {
                 let geometry = scene.geometry(geometry_ref);
                 match geometry {
                     Geometry::TriangleMesh { .. } | Geometry::Quad { .. } => {
@@ -389,8 +395,8 @@ impl SceneAccel {
 
     async fn create_bottom_level_accel(
         cluster: &Cluster,
-        resource_loader: &ResourceLoader,
-        scene: Arc<Scene>,
+        resource_loader: ResourceLoader,
+        scene: SharedScene,
         geometry_accel_data: &[Option<GeometryAccelData>],
     ) -> BottomLevelAccel {
         let context = resource_loader.context();
@@ -517,7 +523,7 @@ impl SceneAccel {
                 );
                 let accel = {
                     let create_info = vk::AccelerationStructureCreateInfoKHR {
-                        buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                        buffer: Some(schedule.get_buffer(buffer_id)),
                         size: buffer_desc.size as vk::DeviceSize,
                         ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
                         ..Default::default()
@@ -571,8 +577,8 @@ impl SceneAccel {
     }
 
     async fn create_instance_buffer(
-        resource_loader: &ResourceLoader,
-        scene: Arc<Scene>,
+        resource_loader: ResourceLoader,
+        scene: SharedScene,
         clusters: &SceneClusters,
         cluster_accel: &[BottomLevelAccel],
         hit_group_count_per_instance: u32,
@@ -613,7 +619,7 @@ impl SceneAccel {
     }
 
     async fn create_top_level_accel(
-        resource_loader: &ResourceLoader,
+        resource_loader: ResourceLoader,
         clusters: &SceneClusters,
         cluster_accel: &[BottomLevelAccel],
         instance_buffer: vk::Buffer,
@@ -672,7 +678,7 @@ impl SceneAccel {
                     );
                     let accel = {
                         let create_info = vk::AccelerationStructureCreateInfoKHR {
-                            buffer: Some(schedule.get_buffer_hack(buffer_id)),
+                            buffer: Some(schedule.get_buffer(buffer_id)),
                             size: buffer_desc.size as vk::DeviceSize,
                             ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
                             ..Default::default()

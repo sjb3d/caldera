@@ -6,6 +6,7 @@ use std::{
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use strum::{EnumString, EnumVariantNames};
 
@@ -209,6 +210,8 @@ impl Instance {
         }
     }
 }
+
+pub type SharedScene = Arc<Scene>;
 
 #[derive(Debug, Default)]
 pub struct Scene {

@@ -12,6 +12,7 @@ mod pipeline_cache;
 mod query;
 mod render_cache;
 mod render_graph;
+mod resource;
 mod swapchain;
 pub mod window_surface;
 
@@ -31,6 +32,7 @@ pub mod prelude {
     pub use crate::query::*;
     pub use crate::render_cache::*;
     pub use crate::render_graph::*;
+    pub use crate::resource::*;
     pub use crate::swapchain::*;
 
     pub use crate::command_name;

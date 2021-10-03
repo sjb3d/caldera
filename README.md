@@ -10,7 +10,7 @@ Vulkan and rust experiments. The code is split into a core `caldera` crate and a
 - Makes use of [spark](https://github.com/sjb3d/spark) to manage Vulkan commands and extensions
 - Live reload of shaders (not ray tracing pipeline shaders yet though)
 - A [procedural macro](caldera-macro) for descriptor set layouts
-- Asynchronous loading support for static buffers and images
+- Asynchronous loading of resources using rust async/.await
 
 ## Examples
 

@@ -109,6 +109,7 @@ pub struct ContextParams {
     pub pipeline_creation_cache_control: ContextFeature,
     pub geometry_shader: ContextFeature,
     pub inline_uniform_block: ContextFeature,
+    pub bindless: ContextFeature,
     pub ray_tracing: ContextFeature,
     pub mesh_shader: ContextFeature,
     pub subgroup_size_control: ContextFeature,
@@ -123,6 +124,7 @@ impl Default for ContextParams {
             pipeline_creation_cache_control: ContextFeature::Disable,
             geometry_shader: ContextFeature::Disable,
             inline_uniform_block: ContextFeature::Optional,
+            bindless: ContextFeature::Disable,
             ray_tracing: ContextFeature::Disable,
             mesh_shader: ContextFeature::Disable,
             subgroup_size_control: ContextFeature::Disable,
@@ -144,6 +146,7 @@ pub struct Context {
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub physical_device_extra_properties: Option<PhysicalDeviceExtraProperties>,
+    pub enable_bindless: bool,
     pub enable_buffer_device_addresses: bool,
     pub queue_family_index: u32,
     pub queue_family_properties: vk::QueueFamilyProperties,
@@ -194,6 +197,11 @@ impl Context {
                 || available_extensions.supports_ext_inline_uniform_block(),
                 || extensions.enable_ext_inline_uniform_block(),
                 || panic!("EXT_inline_uniform_block not supported"),
+            );
+            params.bindless.apply(
+                || available_extensions.supports_ext_descriptor_indexing(),
+                || extensions.enable_ext_descriptor_indexing(),
+                || panic!("EXT_descriptor_indexing not supported"),
             );
             params.ray_tracing.apply(
                 || {
@@ -321,6 +329,7 @@ impl Context {
                 .unwrap()
         };
 
+        let mut enable_bindless = false;
         let mut enable_buffer_device_addresses = false;
         let device = {
             println!(
@@ -389,6 +398,19 @@ impl Context {
                 },
                 || panic!("EXT_inline_uniform_block not supported"),
             );
+            params.bindless.apply(
+                || available_extensions.supports_ext_descriptor_indexing(),
+                || {
+                    extensions.enable_ext_descriptor_indexing();
+                    descriptor_indexing_features.descriptor_binding_sampled_image_update_after_bind = vk::TRUE;
+                    descriptor_indexing_features.shader_sampled_image_array_non_uniform_indexing = vk::TRUE;
+                    descriptor_indexing_features.descriptor_binding_update_unused_while_pending = vk::TRUE;
+                    descriptor_indexing_features.descriptor_binding_partially_bound = vk::TRUE;
+                    descriptor_indexing_features.runtime_descriptor_array = vk::TRUE;
+                    enable_bindless = true;
+                },
+                || panic!("EXT_descriptor_indexing not supported"),
+            );
             params.ray_tracing.apply(
                 || {
                     available_extensions.supports_khr_acceleration_structure()
@@ -401,9 +423,6 @@ impl Context {
                     enable_buffer_device_addresses = true;
                     acceleration_structure_features.acceleration_structure = vk::TRUE;
                     ray_tracing_pipeline_features.ray_tracing_pipeline = vk::TRUE;
-                    descriptor_indexing_features.shader_sampled_image_array_non_uniform_indexing = vk::TRUE;
-                    descriptor_indexing_features.descriptor_binding_variable_descriptor_count = vk::TRUE;
-                    descriptor_indexing_features.runtime_descriptor_array = vk::TRUE;
                     enabled_features.shader_int64 = vk::TRUE;
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
@@ -455,6 +474,7 @@ impl Context {
             physical_device_properties,
             physical_device_memory_properties,
             physical_device_extra_properties,
+            enable_bindless,
             enable_buffer_device_addresses,
             queue_family_index,
             queue_family_properties,

@@ -219,7 +219,7 @@ impl App {
         let mesh_info = base
             .systems
             .task_system
-            .task(async move { MeshInfo::load(resource_loader, &mesh_file_name, has_mesh_shader).await });
+            .spawn_task(async move { MeshInfo::load(resource_loader, &mesh_file_name, has_mesh_shader).await });
 
         Self {
             context,

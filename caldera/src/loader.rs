@@ -39,7 +39,7 @@ impl BackgroundTaskSystem {
         Self { send }
     }
 
-    pub fn task<F, T>(&self, f: F) -> TaskOutput<T>
+    pub fn spawn_task<F, T>(&self, f: F) -> TaskOutput<T>
     where
         F: Future<Output = T> + Send + 'static,
         T: Send + 'static,
@@ -117,7 +117,7 @@ struct StagingDesc {
 }
 
 impl StagingDesc {
-    fn new(context: &SharedContext, resources: &Arc<Mutex<Resources>>, size: u32) -> Self {
+    fn new(context: &SharedContext, resources: &SharedResources, size: u32) -> Self {
         let mut resources_lock = resources.lock().unwrap();
 
         let buffer_desc = BufferDesc::new(size as usize);
@@ -125,7 +125,6 @@ impl StagingDesc {
             &buffer_desc,
             BufferUsage::TRANSFER_READ,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            None,
         );
         let buffer_resource = resources_lock.buffer_resource(buffer_id);
         let buffer = buffer_resource.buffer().0;
@@ -284,7 +283,7 @@ impl GraphicsState {
 
 struct ResourceLoaderShared {
     context: SharedContext,
-    resources: Arc<Mutex<Resources>>,
+    resources: SharedResources,
     staging_desc: StagingDesc,
     staging_state: Mutex<StagingState>,
     transfer_state: Mutex<TransferState>,
@@ -346,11 +345,11 @@ pub struct ResourceLoader {
 }
 
 impl ResourceLoader {
-    pub(crate) fn new(context: &SharedContext, resources: &Arc<Mutex<Resources>>, staging_size: u32) -> Self {
+    pub(crate) fn new(context: &SharedContext, resources: &SharedResources, staging_size: u32) -> Self {
         Self {
             shared: Arc::new(ResourceLoaderShared {
                 context: SharedContext::clone(context),
-                resources: Arc::clone(resources),
+                resources: SharedResources::clone(resources),
                 staging_desc: StagingDesc::new(context, resources, staging_size),
                 staging_state: Mutex::new(StagingState::new(staging_size)),
                 transfer_state: Mutex::new(TransferState::new()),
@@ -468,7 +467,11 @@ impl ResourceLoader {
         Arc::clone(&self.shared.context)
     }
 
-    pub fn begin_schedule<'ctx, 'graph>(
+    pub fn bindless_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+        self.shared.resources.lock().unwrap().bindless_descriptor_set_layout()
+    }
+
+    pub fn begin_schedule<'graph>(
         &self,
         render_graph: &'graph mut RenderGraph,
         context: &'graph Context,
@@ -495,7 +498,6 @@ impl ResourceLoader {
             desc,
             all_usage | BufferUsage::TRANSFER_WRITE,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            None,
         );
 
         let size = desc.size as u32;
@@ -529,12 +531,12 @@ impl ResourceLoader {
     }
 
     pub fn image_writer(&self, desc: &ImageDesc, all_usage: ImageUsage) -> impl Future<Output = ImageWriter> {
-        let image_id =
-            self.shared
-                .resources
-                .lock()
-                .unwrap()
-                .create_image(desc, all_usage | ImageUsage::TRANSFER_WRITE, None);
+        let image_id = self
+            .shared
+            .resources
+            .lock()
+            .unwrap()
+            .create_image(desc, all_usage | ImageUsage::TRANSFER_WRITE);
 
         let size = desc.staging_size() as u32;
         let offset = ResourceStagingOffsetFuture {
@@ -566,6 +568,16 @@ impl ResourceLoader {
         self.shared.resources.lock().unwrap().image_resource(id).image_view().0
     }
 
+    pub fn get_image_bindless_id(&self, id: ImageId) -> BindlessId {
+        self.shared
+            .resources
+            .lock()
+            .unwrap()
+            .image_resource(id)
+            .bindless_id()
+            .unwrap()
+    }
+
     pub fn graphics<F, T>(&self, func: F) -> impl Future<Output = T>
     where
         F: FnOnce(GraphicsTaskContext) -> T + Send + 'static,
@@ -579,14 +591,14 @@ impl ResourceLoader {
         }));
         async { rx.await.unwrap() }
     }
+}
 
-    pub fn spawn<F>(&self, fut: F) -> SpawnResult<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        SpawnResult(tokio::spawn(fut))
-    }
+pub fn spawn<F>(fut: F) -> SpawnResult<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    SpawnResult(tokio::spawn(fut))
 }
 
 pub struct SpawnResult<T>(tokio::task::JoinHandle<T>);

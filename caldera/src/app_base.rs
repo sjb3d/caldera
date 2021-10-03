@@ -158,8 +158,9 @@ impl AppSystems {
         let query_pool = QueryPool::new(context);
 
         const CHUNK_SIZE: u32 = 128 * 1024 * 1024;
-        let render_graph = RenderGraph::new(context, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE);
-        let resource_loader = ResourceLoader::new(context, render_graph.resources_hack(), CHUNK_SIZE);
+        let resources = Resources::new(context, CHUNK_SIZE);
+        let render_graph = RenderGraph::new(context, &resources, CHUNK_SIZE, CHUNK_SIZE);
+        let resource_loader = ResourceLoader::new(context, &resources, CHUNK_SIZE);
 
         Self {
             task_system,

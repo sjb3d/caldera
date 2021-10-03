@@ -55,16 +55,14 @@ impl App {
 
         let has_ray_tracing = context.device.extensions.supports_khr_acceleration_structure();
         let resource_loader = base.systems.resource_loader.clone();
-        let load_result = base.systems.task_system.task({
-            async move {
-                let mesh_info = MeshInfo::load(&resource_loader, &mesh_file_name, has_ray_tracing).await;
-                let accel_info = if has_ray_tracing {
-                    Some(AccelInfo::new(&resource_loader, &mesh_info).await)
-                } else {
-                    None
-                };
-                LoadResult { mesh_info, accel_info }
-            }
+        let load_result = base.systems.task_system.spawn_task(async move {
+            let mesh_info = MeshInfo::load(resource_loader.clone(), &mesh_file_name, has_ray_tracing).await;
+            let accel_info = if has_ray_tracing {
+                Some(AccelInfo::new(resource_loader.clone(), &mesh_info).await)
+            } else {
+                None
+            };
+            LoadResult { mesh_info, accel_info }
         });
 
         Self {

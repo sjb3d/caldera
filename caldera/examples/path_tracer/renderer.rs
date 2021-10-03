@@ -6,14 +6,13 @@ use caldera::prelude::*;
 use imgui::{CollapsingHeader, Drag, ProgressBar, Slider, StyleColor, Ui};
 use rand::{prelude::*, rngs::SmallRng};
 use rayon::prelude::*;
-use spark::{vk, Builder};
+use spark::vk;
 use std::{
     collections::HashMap,
     fs::File,
     io, mem,
     ops::{BitOr, BitOrAssign},
-    path::PathBuf,
-    slice,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use structopt::StructOpt;
@@ -213,6 +212,7 @@ descriptor_set!(PathTraceDescriptorSet {
     wavelength_pdf: CombinedImageSampler,
     xyz_matching: CombinedImageSampler,
     result: [StorageImage; 3],
+    linear_sampler: Sampler,
 });
 
 #[repr(transparent)]
@@ -221,7 +221,7 @@ struct TextureIndex(u16);
 
 #[derive(Clone, Copy, Default)]
 struct ShaderData {
-    reflectance_texture: Option<TextureIndex>,
+    reflectance_texture_id: Option<BindlessId>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -327,10 +327,10 @@ impl ExtendShaderFlags {
     const IS_EMISSIVE: ExtendShaderFlags = ExtendShaderFlags(0x0400_0000);
     const IS_CHECKERBOARD: ExtendShaderFlags = ExtendShaderFlags(0x0800_0000);
 
-    fn new(bsdf_type: BsdfType, material_index: u32, texture_index: Option<TextureIndex>) -> Self {
+    fn new(bsdf_type: BsdfType, material_index: u32, texture_id: Option<BindlessId>) -> Self {
         let mut flags = Self((material_index << 20) | (bsdf_type.into_integer() << 16));
-        if let Some(texture_index) = texture_index {
-            flags |= Self(texture_index.0 as u32) | Self::HAS_TEXTURE;
+        if let Some(texture_id) = texture_id {
+            flags |= Self(texture_id.index as u32) | Self::HAS_TEXTURE;
         }
         flags
     }
@@ -358,8 +358,8 @@ struct ExtendShader {
 }
 
 impl ExtendShader {
-    fn new(reflectance: &Reflectance, surface: &Surface, texture_index: Option<TextureIndex>) -> Self {
-        let mut flags = ExtendShaderFlags::new(surface.bsdf_type(), surface.material_index(), texture_index);
+    fn new(reflectance: &Reflectance, surface: &Surface, texture_id: Option<BindlessId>) -> Self {
+        let mut flags = ExtendShaderFlags::new(surface.bsdf_type(), surface.material_index(), texture_id);
         let reflectance = match reflectance {
             Reflectance::Checkerboard(c) => {
                 flags |= ExtendShaderFlags::IS_CHECKERBOARD;
@@ -464,99 +464,6 @@ struct ShaderBindingData {
     sampled_light_count: u32,
     external_light_begin: u32,
     external_light_end: u32,
-}
-
-struct TextureBindingSet {
-    context: SharedContext,
-    linear_sampler: vk::Sampler,
-    descriptor_set_layout: vk::DescriptorSetLayout,
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_set: vk::DescriptorSet,
-}
-
-impl TextureBindingSet {
-    fn new(context: &SharedContext, image_views: &[vk::ImageView]) -> Self {
-        // create a separate descriptor pool for bindless textures
-        let linear_sampler = {
-            let create_info = vk::SamplerCreateInfo {
-                mag_filter: vk::Filter::LINEAR,
-                min_filter: vk::Filter::LINEAR,
-                ..Default::default()
-            };
-            unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
-        };
-        let descriptor_set_layout = {
-            let bindings = [vk::DescriptorSetLayoutBinding {
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: image_views.len() as u32,
-                stage_flags: vk::ShaderStageFlags::ALL,
-                ..Default::default()
-            }];
-            let create_info = vk::DescriptorSetLayoutCreateInfo::builder().p_bindings(&bindings);
-            unsafe { context.device.create_descriptor_set_layout(&create_info, None) }.unwrap()
-        };
-        let descriptor_pool = {
-            let pool_sizes = [vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: (image_views.len() as u32).max(1),
-            }];
-            let create_info = vk::DescriptorPoolCreateInfo::builder()
-                .max_sets(1)
-                .p_pool_sizes(&pool_sizes);
-            unsafe { context.device.create_descriptor_pool(&create_info, None) }.unwrap()
-        };
-        let descriptor_set = {
-            let variable_count = image_views.len() as u32;
-            let mut variable_count_allocate_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
-                .p_descriptor_counts(slice::from_ref(&variable_count));
-
-            let allocate_info = vk::DescriptorSetAllocateInfo::builder()
-                .descriptor_pool(descriptor_pool)
-                .p_set_layouts(slice::from_ref(&descriptor_set_layout))
-                .insert_next(&mut variable_count_allocate_info);
-
-            unsafe { context.device.allocate_descriptor_sets_single(&allocate_info) }.unwrap()
-        };
-
-        let mut image_info = Vec::new();
-        for &image_view in image_views.iter() {
-            image_info.push(vk::DescriptorImageInfo {
-                sampler: Some(linear_sampler),
-                image_view: Some(image_view),
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            });
-        }
-        if !image_info.is_empty() {
-            let write = vk::WriteDescriptorSet::builder()
-                .dst_set(descriptor_set)
-                .p_image_info(&image_info)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
-
-            unsafe { context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
-        }
-
-        Self {
-            context: SharedContext::clone(context),
-            linear_sampler,
-            descriptor_set_layout,
-            descriptor_pool,
-            descriptor_set,
-        }
-    }
-}
-
-impl Drop for TextureBindingSet {
-    fn drop(&mut self) {
-        unsafe {
-            self.context
-                .device
-                .destroy_descriptor_pool(Some(self.descriptor_pool), None);
-            self.context
-                .device
-                .destroy_descriptor_set_layout(Some(self.descriptor_set_layout), None);
-            self.context.device.destroy_sampler(Some(self.linear_sampler), None);
-        }
-    }
 }
 
 #[repr(u32)]
@@ -794,8 +701,8 @@ pub struct Renderer {
 
     clamp_point_sampler: vk::Sampler,
     clamp_linear_sampler: vk::Sampler,
+    linear_sampler: vk::Sampler,
 
-    texture_binding_set: TextureBindingSet,
     shader_binding_data: ShaderBindingData,
 
     pmj_samples_image_view: vk::ImageView,
@@ -819,8 +726,8 @@ where
     (info, data.as_slice().to_vec())
 }
 
-async fn image_load(resource_loader: ResourceLoader, filename: PathBuf) -> vk::ImageView {
-    let mut reader = File::open(&filename).unwrap();
+async fn image_load(resource_loader: ResourceLoader, filename: &Path) -> BindlessId {
+    let mut reader = File::open(filename).unwrap();
     let (info, data) = image_load_from_reader(&mut reader);
     let can_bc_compress = (info.width % 4) == 0 && (info.height % 4) == 0;
     let size_in_pixels = UVec2::new(info.width as u32, info.height as u32);
@@ -873,7 +780,7 @@ async fn image_load(resource_loader: ResourceLoader, filename: PathBuf) -> vk::I
         writer.write(data.as_slice());
         writer.finish().await
     };
-    resource_loader.get_image_view(image_id)
+    resource_loader.get_image_bindless_id(image_id)
 }
 
 impl Renderer {
@@ -886,7 +793,7 @@ impl Renderer {
     const MISS_ENTRY_COUNT: u32 = 2;
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn new(resource_loader: ResourceLoader, scene: Arc<Scene>, mut params: RendererParams) -> Self {
+    pub async fn new(resource_loader: ResourceLoader, scene: SharedScene, mut params: RendererParams) -> Self {
         let context = resource_loader.context();
         let accel = SceneAccel::new(
             resource_loader.clone(),
@@ -928,7 +835,7 @@ impl Renderer {
                 let loader = resource_loader.clone();
                 let scene = Arc::clone(&scene);
                 let req = geometry_attrib_req[geometry_ref.0 as usize];
-                resource_loader.spawn(async move {
+                spawn(async move {
                     let normal_buffer = if req.normal_buffer {
                         let normals = match scene.geometry(geometry_ref) {
                             Geometry::TriangleMesh {
@@ -1018,40 +925,46 @@ impl Renderer {
             });
         }
 
-        let mut shader_data = Vec::new();
-        let mut texture_indices = HashMap::<PathBuf, TextureIndex>::new();
-        let mut texture_image_view_tasks = Vec::new();
+        let mut task_index_paths = HashMap::<PathBuf, usize>::new();
+        let mut shader_data_task_index = Vec::new();
+        let mut texture_bindless_index_tasks = Vec::new();
         for material_ref in scene.material_ref_iter() {
-            let texture_index = if shader_needs_texture[material_ref.0 as usize] {
+            let task_index = if shader_needs_texture[material_ref.0 as usize] {
                 let material = scene.material(material_ref);
                 let filename = match &material.reflectance {
                     Reflectance::Texture(filename) => filename,
                     _ => unreachable!(),
                 };
-                Some(*texture_indices.entry(filename.clone()).or_insert_with(|| {
-                    let texture_index = TextureIndex(texture_image_view_tasks.len() as u16);
-                    texture_image_view_tasks
-                        .push(resource_loader.spawn(image_load(resource_loader.clone(), filename.clone())));
-                    texture_index
+                Some(*task_index_paths.entry(filename.clone()).or_insert_with(|| {
+                    let task_index = texture_bindless_index_tasks.len();
+                    texture_bindless_index_tasks.push(spawn({
+                        let loader = resource_loader.clone();
+                        let filename = filename.clone();
+                        async move { image_load(loader, &filename).await }
+                    }));
+                    task_index
                 }))
             } else {
                 None
             };
-            shader_data.push(ShaderData {
-                reflectance_texture: texture_index,
-            });
+            shader_data_task_index.push(task_index);
         }
 
         let mut geometry_attrib_data = Vec::new();
         for task in geometry_attrib_tasks.iter_mut() {
             geometry_attrib_data.push(task.await);
         }
-        let mut texture_image_views = Vec::new();
-        for task in texture_image_view_tasks.iter_mut() {
-            texture_image_views.push(task.await);
+        let mut texture_bindless_index = Vec::new();
+        for task in texture_bindless_index_tasks.iter_mut() {
+            texture_bindless_index.push(task.await);
         }
 
-        let texture_binding_set = TextureBindingSet::new(&context, &texture_image_views);
+        let shader_data: Vec<_> = shader_data_task_index
+            .iter()
+            .map(|task_index| ShaderData {
+                reflectance_texture_id: task_index.map(|task_index| texture_bindless_index[task_index]),
+            })
+            .collect();
 
         let clamp_point_sampler = {
             let create_info = vk::SamplerCreateInfo {
@@ -1073,16 +986,24 @@ impl Renderer {
             };
             unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
         };
+        let linear_sampler = {
+            let create_info = vk::SamplerCreateInfo {
+                mag_filter: vk::Filter::LINEAR,
+                min_filter: vk::Filter::LINEAR,
+                ..Default::default()
+            };
+            unsafe { context.device.create_sampler(&create_info, None) }.unwrap()
+        };
 
         // make pipeline
         let pipeline_future = resource_loader.graphics({
-            let texture_binding_descriptor_set = texture_binding_set.descriptor_set_layout;
+            let bindless_descriptor_set_layout = resource_loader.bindless_descriptor_set_layout();
             move |ctx: GraphicsTaskContext| {
                 let descriptor_pool = ctx.descriptor_pool;
                 let pipeline_cache = ctx.pipeline_cache;
                 let path_trace_descriptor_set_layout = PathTraceDescriptorSet::layout(descriptor_pool);
                 let path_trace_pipeline_layout = pipeline_cache
-                    .get_pipeline_layout(&[path_trace_descriptor_set_layout, texture_binding_descriptor_set]);
+                    .get_pipeline_layout(&[path_trace_descriptor_set_layout, bindless_descriptor_set_layout]);
                 let group_desc: Vec<_> = (ShaderGroup::MIN_VALUE..=ShaderGroup::MAX_VALUE)
                     .map(|i| match ShaderGroup::from_integer(i).unwrap() {
                         ShaderGroup::RayGenerator => {
@@ -1140,7 +1061,7 @@ impl Renderer {
         });
 
         let loader = resource_loader.clone();
-        let pmj_samples_image_view = resource_loader.spawn(async move {
+        let pmj_samples_image_view = spawn(async move {
             let sequences: Vec<Vec<_>> = (0..Self::PMJ_SEQUENCE_COUNT)
                 .into_par_iter()
                 .map(|i| {
@@ -1154,7 +1075,12 @@ impl Renderer {
                 vk::Format::R32G32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_STORAGE_READ).await;
+            let mut writer = loader
+                .image_writer(
+                    &desc,
+                    ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_READ,
+                )
+                .await;
             for sample in sequences.iter().flat_map(|sequence| sequence.iter()) {
                 let pixel: [f32; 2] = [sample.x(), sample.y()];
                 writer.write(&pixel);
@@ -1163,13 +1089,18 @@ impl Renderer {
         });
 
         let loader = resource_loader.clone();
-        let sobol_samples_image_view = resource_loader.spawn(async move {
+        let sobol_samples_image_view = spawn(async move {
             let desc = ImageDesc::new_2d(
                 UVec2::new(Self::MAX_SAMPLES_PER_SEQUENCE, 1),
                 vk::Format::R32G32B32A32_UINT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_STORAGE_READ).await;
+            let mut writer = loader
+                .image_writer(
+                    &desc,
+                    ImageUsage::COMPUTE_STORAGE_READ | ImageUsage::RAY_TRACING_STORAGE_READ,
+                )
+                .await;
 
             let seq0 = sobol(0);
             let seq1 = sobol(1);
@@ -1189,13 +1120,13 @@ impl Renderer {
         });
 
         let loader = resource_loader.clone();
-        let smits_table_image_view = resource_loader.spawn(async move {
+        let smits_table_image_view = spawn(async move {
             let desc = ImageDesc::new_2d(
                 UVec2::new(2, 10),
                 vk::Format::R32G32B32A32_SFLOAT,
                 vk::ImageAspectFlags::COLOR,
             );
-            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_SAMPLED).await;
+            let mut writer = loader.image_writer(&desc, ImageUsage::RAY_TRACING_SAMPLED).await;
 
             // c.f. "An RGB to Spectrum Conversion for Reflectances"
             #[rustfmt::skip]
@@ -1230,7 +1161,7 @@ impl Renderer {
         const ILLUMINANT_RESOLUTION: u32 = 5;
         const ILLUMINANT_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / ILLUMINANT_RESOLUTION;
         let loader = resource_loader.clone();
-        let illuminants_image_view = resource_loader.spawn(async move {
+        let illuminants_image_view = spawn(async move {
             let desc = ImageDesc::new_1d(
                 ILLUMINANT_PIXEL_COUNT,
                 vk::Format::R32_SFLOAT,
@@ -1238,7 +1169,7 @@ impl Renderer {
             )
             .with_layer_count(Illuminant::MAX_VALUE);
 
-            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_SAMPLED).await;
+            let mut writer = loader.image_writer(&desc, ImageUsage::RAY_TRACING_SAMPLED).await;
 
             let wavelength_from_index = |index| {
                 ((WAVELENGTH_MIN + index * ILLUMINANT_RESOLUTION) as f32) + 0.5 * (ILLUMINANT_RESOLUTION as f32)
@@ -1259,7 +1190,7 @@ impl Renderer {
         const CONDUCTOR_RESOLUTION: u32 = 10;
         const CONDUCTOR_PIXEL_COUNT: u32 = (WAVELENGTH_MAX - WAVELENGTH_MIN) / CONDUCTOR_RESOLUTION;
         let loader = resource_loader.clone();
-        let conductors_image_view = resource_loader.spawn(async move {
+        let conductors_image_view = spawn(async move {
             let desc = ImageDesc::new_1d(
                 CONDUCTOR_PIXEL_COUNT,
                 vk::Format::R32G32_SFLOAT,
@@ -1267,7 +1198,7 @@ impl Renderer {
             )
             .with_layer_count(1 + Conductor::MAX_VALUE - Conductor::MIN_VALUE);
 
-            let mut writer = loader.image_writer(&desc, ImageUsage::COMPUTE_SAMPLED).await;
+            let mut writer = loader.image_writer(&desc, ImageUsage::RAY_TRACING_SAMPLED).await;
 
             let wavelength_from_index =
                 |index| ((WAVELENGTH_MIN + index * CONDUCTOR_RESOLUTION) as f32) + 0.5 * (CONDUCTOR_RESOLUTION as f32);
@@ -1331,7 +1262,7 @@ impl Renderer {
 
         const WAVELENGTH_SAMPLER_RESOLUTION: u32 = 1024;
         let loader = resource_loader.clone();
-        let wavelength_pdf_image_views = resource_loader.spawn(async move {
+        let wavelength_pdf_image_views = spawn(async move {
             let mut sweep = illuminant_samples(illuminant_for_pdf).iter().into_sweep();
             let mut prob_samples: Vec<_> = (WAVELENGTH_MIN..=WAVELENGTH_MAX)
                 .map(|wavelength| {
@@ -1394,7 +1325,7 @@ impl Renderer {
         });
 
         let loader = resource_loader.clone();
-        let xyz_matching_image_view = resource_loader.spawn(async move {
+        let xyz_matching_image_view = spawn(async move {
             let desc = ImageDesc::new_1d(
                 WAVELENGTH_MAX - WAVELENGTH_MIN,
                 vk::Format::R32G32B32A32_SFLOAT,
@@ -1424,7 +1355,7 @@ impl Renderer {
 
         let (path_trace_pipeline_layout, path_trace_pipeline) = pipeline_future.await;
         let shader_binding_data = Renderer::create_shader_binding_data(
-            &resource_loader,
+            resource_loader.clone(),
             Arc::clone(&scene),
             &accel,
             &geometry_attrib_data,
@@ -1449,7 +1380,7 @@ impl Renderer {
             path_trace_pipeline,
             clamp_point_sampler,
             clamp_linear_sampler,
-            texture_binding_set,
+            linear_sampler,
             shader_binding_data,
             pmj_samples_image_view,
             sobol_samples_image_view,
@@ -1465,8 +1396,8 @@ impl Renderer {
     }
 
     async fn create_shader_binding_data(
-        resource_loader: &ResourceLoader,
-        scene: Arc<Scene>,
+        resource_loader: ResourceLoader,
+        scene: SharedScene,
         accel: &SceneAccel,
         geometry_attrib_data: &[GeometryAttribData],
         shader_data: &[ShaderData],
@@ -1649,7 +1580,7 @@ impl Renderer {
                 let transform = scene.transform(instance.transform_ref);
                 let material = scene.material(instance.material_ref);
 
-                let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture;
+                let reflectance_texture = shader_data[instance.material_ref.0 as usize].reflectance_texture_id;
                 let mut shader = ExtendShader::new(&material.reflectance, &material.surface, reflectance_texture);
                 if let Some(emission) = material.emission {
                     shader.flags |= ExtendShaderFlags::IS_EMISSIVE;
@@ -2110,6 +2041,7 @@ impl Renderer {
                 schedule.describe_image(&temp_desc),
                 schedule.describe_image(&temp_desc),
             );
+            let bindless_descriptor_set = schedule.get_bindless_descriptor_set();
 
             schedule.add_compute(
                 command_name!("trace"),
@@ -2222,6 +2154,7 @@ impl Renderer {
                             self.xyz_matching_image_view,
                             self.clamp_linear_sampler,
                             &temp_image_views,
+                            self.linear_sampler,
                         );
 
                         let device = &context.device;
@@ -2241,7 +2174,7 @@ impl Renderer {
                                 vk::PipelineBindPoint::RAY_TRACING_KHR,
                                 self.path_trace_pipeline_layout,
                                 0,
-                                &[path_trace_descriptor_set.set, self.texture_binding_set.descriptor_set],
+                                &[path_trace_descriptor_set.set, bindless_descriptor_set],
                                 &[],
                             );
                         }
@@ -2341,6 +2274,7 @@ impl Drop for Renderer {
             self.context
                 .device
                 .destroy_sampler(Some(self.clamp_linear_sampler), None);
+            self.context.device.destroy_sampler(Some(self.linear_sampler), None);
         }
     }
 }

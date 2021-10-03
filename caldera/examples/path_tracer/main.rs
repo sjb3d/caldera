@@ -172,7 +172,7 @@ impl ViewAdjust {
 struct App {
     context: SharedContext,
 
-    scene: Arc<Scene>,
+    scene: SharedScene,
     renderer: TaskOutput<Renderer>,
     progress: RenderProgress,
 
@@ -187,10 +187,12 @@ impl App {
         let fov_y_override = renderer_params.fov_y_override;
 
         let scene = Arc::new(scene);
-        let renderer = base.systems.task_system.task({
-            let resource_loader = base.systems.resource_loader.clone();
-            let scene = Arc::clone(&scene);
-            Renderer::new(resource_loader, scene, renderer_params)
+        let renderer = base.systems.task_system.spawn_task({
+            Renderer::new(
+                base.systems.resource_loader.clone(),
+                Arc::clone(&scene),
+                renderer_params,
+            )
         });
         let progress = RenderProgress::new();
 
@@ -479,7 +481,7 @@ impl Drop for CaptureBuffer {
 struct CommandlineApp {
     context: SharedContext,
     systems: AppSystems,
-    scene: Arc<Scene>,
+    scene: SharedScene,
     renderer: TaskOutput<Renderer>,
     progress: RenderProgress,
 
@@ -494,11 +496,11 @@ impl CommandlineApp {
         let capture_buffer_size = renderer_params.width * renderer_params.height * 3;
 
         let scene = Arc::new(scene);
-        let renderer = systems.task_system.task({
-            let resource_loader = systems.resource_loader.clone();
-            let scene = Arc::clone(&scene);
-            Renderer::new(resource_loader, scene, renderer_params)
-        });
+        let renderer = systems.task_system.spawn_task(Renderer::new(
+            systems.resource_loader.clone(),
+            Arc::clone(&scene),
+            renderer_params,
+        ));
         let progress = RenderProgress::new();
 
         let capture_buffer = CaptureBuffer::new(&context, capture_buffer_size);
@@ -740,6 +742,7 @@ fn main() {
     let context_params = ContextParams {
         version: app_params.version,
         inline_uniform_block: app_params.inline_uniform_block,
+        bindless: ContextFeature::Require,
         ray_tracing: ContextFeature::Require,
         ..Default::default()
     };
