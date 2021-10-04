@@ -530,6 +530,16 @@ impl ResourceLoader {
         self.shared.resources.lock().unwrap().buffer_resource(id).buffer().0
     }
 
+    pub fn get_buffer_bindless_id(&self, id: BufferId) -> BindlessId {
+        self.shared
+            .resources
+            .lock()
+            .unwrap()
+            .buffer_resource(id)
+            .bindless_id()
+            .unwrap()
+    }
+
     pub fn image_writer(&self, desc: &ImageDesc, all_usage: ImageUsage) -> impl Future<Output = ImageWriter> {
         let image_id = self
             .shared

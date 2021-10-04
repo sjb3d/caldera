@@ -402,11 +402,12 @@ impl Context {
                 || available_extensions.supports_ext_descriptor_indexing(),
                 || {
                     extensions.enable_ext_descriptor_indexing();
+                    descriptor_indexing_features.descriptor_binding_storage_buffer_update_after_bind = vk::TRUE;
                     descriptor_indexing_features.descriptor_binding_sampled_image_update_after_bind = vk::TRUE;
+                    descriptor_indexing_features.shader_storage_buffer_array_non_uniform_indexing = vk::TRUE;
                     descriptor_indexing_features.shader_sampled_image_array_non_uniform_indexing = vk::TRUE;
                     descriptor_indexing_features.descriptor_binding_update_unused_while_pending = vk::TRUE;
                     descriptor_indexing_features.descriptor_binding_partially_bound = vk::TRUE;
-                    descriptor_indexing_features.runtime_descriptor_array = vk::TRUE;
                     enable_bindless = true;
                 },
                 || panic!("EXT_descriptor_indexing not supported"),

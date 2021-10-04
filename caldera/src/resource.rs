@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use bytemuck::Contiguous;
 use imgui::Ui;
 use slotmap::{new_key_type, SlotMap};
 use spark::{vk, Builder, Device};
@@ -22,6 +23,7 @@ pub(crate) enum BufferResource {
         desc: BufferDesc,
         alloc: Option<Alloc>,
         buffer: UniqueBuffer,
+        bindless_id: Option<BindlessId>,
         current_usage: BufferUsage,
         all_usage_check: BufferUsage,
     },
@@ -35,6 +37,13 @@ impl BufferResource {
         }
     }
 
+    pub fn alloc(&self) -> Option<Alloc> {
+        match self {
+            BufferResource::Described { .. } => panic!("buffer is only described"),
+            BufferResource::Active { alloc, .. } => *alloc,
+        }
+    }
+
     pub fn buffer(&self) -> UniqueBuffer {
         match self {
             BufferResource::Described { .. } => panic!("buffer is only described"),
@@ -42,10 +51,10 @@ impl BufferResource {
         }
     }
 
-    pub fn alloc(&self) -> Option<Alloc> {
+    pub fn bindless_id(&self) -> Option<BindlessId> {
         match self {
             BufferResource::Described { .. } => panic!("buffer is only described"),
-            BufferResource::Active { alloc, .. } => *alloc,
+            BufferResource::Active { bindless_id, .. } => *bindless_id,
         }
     }
 
@@ -179,9 +188,31 @@ impl ImageResource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Contiguous)]
 pub enum BindlessClass {
+    StorageBuffer,
     SampledImage2D,
+}
+
+impl BindlessClass {
+    fn new_buffer(all_usage: BufferUsage) -> Option<Self> {
+        if all_usage.as_flags().contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            Some(Self::StorageBuffer)
+        } else {
+            None
+        }
+    }
+
+    fn new_image(desc: &ImageDesc, all_usage: ImageUsage) -> Option<Self> {
+        if desc.image_view_type() == vk::ImageViewType::N2D
+            && all_usage.as_flags().contains(vk::ImageUsageFlags::SAMPLED)
+        {
+            Some(Self::SampledImage2D)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
@@ -190,28 +221,64 @@ pub struct BindlessId {
     pub index: u16,
 }
 
+#[derive(Clone)]
+struct BindlessIndexSet {
+    next: u32,
+    limit: u32,
+}
+
+impl BindlessIndexSet {
+    fn new(limit: u32) -> Self {
+        Self { next: 0, limit }
+    }
+
+    fn allocate(&mut self) -> Option<u32> {
+        if self.next < self.limit {
+            let index = self.next;
+            self.next += 1;
+            Some(index)
+        } else {
+            None
+        }
+    }
+}
+
 pub(crate) struct Bindless {
     context: SharedContext,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
-    next_index: u32,
+    indices: [BindlessIndexSet; Self::CLASS_COUNT],
 }
 
 impl Bindless {
+    const CLASS_COUNT: usize = (1 + BindlessClass::MAX_VALUE) as usize;
+
+    const MAX_STORAGE_BUFFER: u32 = 16 * 1024;
     const MAX_SAMPLED_IMAGE_2D: u32 = 1024;
 
     pub fn new(context: &SharedContext) -> Self {
         let descriptor_set_layout = {
-            let bindings = [vk::DescriptorSetLayoutBinding {
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: Self::MAX_SAMPLED_IMAGE_2D,
-                stage_flags: vk::ShaderStageFlags::ALL,
-                ..Default::default()
-            }];
+            let bindings = [
+                vk::DescriptorSetLayoutBinding {
+                    binding: BindlessClass::StorageBuffer.into_integer() as u32,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: Self::MAX_STORAGE_BUFFER,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                },
+                vk::DescriptorSetLayoutBinding {
+                    binding: BindlessClass::SampledImage2D.into_integer() as u32,
+                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: Self::MAX_SAMPLED_IMAGE_2D,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                },
+            ];
             let binding_flags = [vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
                 | vk::DescriptorBindingFlags::PARTIALLY_BOUND
-                | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING];
+                | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
+                Self::CLASS_COUNT];
             let mut binding_flags_create_info =
                 vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().p_binding_flags(&binding_flags);
             let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
@@ -221,10 +288,16 @@ impl Bindless {
             unsafe { context.device.create_descriptor_set_layout(&create_info, None) }.unwrap()
         };
         let descriptor_pool = {
-            let pool_sizes = [vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: Self::MAX_SAMPLED_IMAGE_2D,
-            }];
+            let pool_sizes = [
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: Self::MAX_STORAGE_BUFFER,
+                },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: Self::MAX_SAMPLED_IMAGE_2D,
+                },
+            ];
             let create_info = vk::DescriptorPoolCreateInfo::builder()
                 .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
                 .max_sets(1)
@@ -242,8 +315,32 @@ impl Bindless {
             descriptor_set_layout,
             descriptor_pool,
             descriptor_set,
-            next_index: 0,
+            indices: [
+                BindlessIndexSet::new(Self::MAX_STORAGE_BUFFER),
+                BindlessIndexSet::new(Self::MAX_SAMPLED_IMAGE_2D),
+            ],
         }
+    }
+
+    pub fn add_buffer(&mut self, buffer: vk::Buffer, all_usage: BufferUsage) -> Option<BindlessId> {
+        let class = BindlessClass::new_buffer(all_usage)?;
+        let index = self.indices[class.into_integer() as usize].allocate()?;
+        let buffer_info = vk::DescriptorBufferInfo {
+            buffer: Some(buffer),
+            offset: 0,
+            range: vk::WHOLE_SIZE,
+        };
+        let write = vk::WriteDescriptorSet::builder()
+            .dst_set(self.descriptor_set)
+            .dst_binding(class.into_integer() as u32)
+            .dst_array_element(index)
+            .p_buffer_info(slice::from_ref(&buffer_info))
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER);
+        unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
+        Some(BindlessId {
+            class,
+            index: index as u16,
+        })
     }
 
     pub fn add_image(
@@ -252,30 +349,36 @@ impl Bindless {
         image_view: vk::ImageView,
         all_usage: ImageUsage,
     ) -> Option<BindlessId> {
-        if desc.image_view_type() == vk::ImageViewType::N2D
-            && all_usage.as_flags().contains(vk::ImageUsageFlags::SAMPLED)
-            && self.next_index < Self::MAX_SAMPLED_IMAGE_2D
-        {
-            let image_info = vk::DescriptorImageInfo {
-                sampler: None,
-                image_view: Some(image_view),
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            };
-            let write = vk::WriteDescriptorSet::builder()
-                .dst_set(self.descriptor_set)
-                .dst_binding(0)
-                .dst_array_element(self.next_index)
-                .p_image_info(slice::from_ref(&image_info))
-                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE);
-            unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
-            let bindless_id = BindlessId {
-                class: BindlessClass::SampledImage2D,
-                index: self.next_index as u16,
-            };
-            self.next_index += 1;
-            Some(bindless_id)
-        } else {
-            None
+        let class = BindlessClass::new_image(desc, all_usage)?;
+        let index = self.indices[class.into_integer() as usize].allocate()?;
+        let image_info = vk::DescriptorImageInfo {
+            sampler: None,
+            image_view: Some(image_view),
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        };
+        let write = vk::WriteDescriptorSet::builder()
+            .dst_set(self.descriptor_set)
+            .dst_binding(class.into_integer() as u32)
+            .dst_array_element(index)
+            .p_image_info(slice::from_ref(&image_info))
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE);
+        unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
+        Some(BindlessId {
+            class,
+            index: index as u16,
+        })
+    }
+
+    pub fn ui_stats_table_rows(&self, ui: &Ui) {
+        for class_index in BindlessClass::MIN_VALUE..=BindlessClass::MAX_VALUE {
+            let class = BindlessClass::from_integer(class_index).unwrap();
+            ui.text(match class {
+                BindlessClass::StorageBuffer => "bindless buffers",
+                BindlessClass::SampledImage2D => "bindless sampled2d",
+            });
+            ui.next_column();
+            ui.text(format!("{}", self.indices[class_index as usize].next));
+            ui.next_column();
         }
     }
 }
@@ -341,6 +444,7 @@ impl Resources {
             desc: *desc,
             alloc: None,
             buffer,
+            bindless_id: None,
             current_usage,
             all_usage_check: all_usage,
         })
@@ -356,10 +460,15 @@ impl Resources {
         let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
         let alloc = self.global_allocator.allocate(&info.mem_req, memory_property_flags);
         let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
+        let bindless_id = self
+            .bindless
+            .as_mut()
+            .and_then(|bindless| bindless.add_buffer(buffer.0, all_usage));
         self.buffers.insert(BufferResource::Active {
             desc: *desc,
             alloc: Some(alloc),
             buffer,
+            bindless_id,
             current_usage: BufferUsage::empty(),
             all_usage_check: all_usage,
         })
@@ -386,6 +495,7 @@ impl Resources {
                     desc: *desc,
                     alloc: Some(alloc),
                     buffer,
+                    bindless_id: None,
                     current_usage: BufferUsage::empty(),
                     all_usage_check: *all_usage,
                 }
@@ -522,5 +632,9 @@ impl Resources {
         ui.next_column();
 
         self.resource_cache.ui_stats_table_rows(ui, "graph");
+
+        if let Some(bindless) = self.bindless.as_ref() {
+            bindless.ui_stats_table_rows(ui);
+        }
     }
 }

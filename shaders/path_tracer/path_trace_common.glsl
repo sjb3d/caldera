@@ -50,6 +50,5 @@ layout(set = 0, binding = 9) uniform sampler1D g_xyz_matching;
 layout(set = 0, binding = 10, r32f) uniform restrict writeonly image2D g_result[3];
 layout(set = 0, binding = 11) uniform sampler g_linear_sampler;
 
-#define BINDLESS_MAX_SAMPLED_IMAGE_2D       1024
-
-layout(set = 1, binding = 0) uniform texture2D g_textures[BINDLESS_MAX_SAMPLED_IMAGE_2D];
+#define BINDLESS_SET_INDEX      1
+#include "bindless.glsl"
