@@ -723,7 +723,7 @@ where
     R: io::Read + io::Seek,
 {
     let (info, data) = stb::image::stbi_load_from_reader(reader, stb::image::Channels::RgbAlpha).unwrap();
-    (info, data.as_slice().to_vec())
+    (info, data.into_vec())
 }
 
 async fn image_load(resource_loader: ResourceLoader, filename: &Path) -> BindlessId {

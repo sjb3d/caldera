@@ -275,6 +275,10 @@ impl<'graph> RenderSchedule<'graph> {
         self.render_graph
     }
 
+    pub fn get_bindless_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+        self.render_graph.resources.lock().unwrap().bindless_descriptor_set_layout()
+    }
+
     pub fn get_bindless_descriptor_set(&self) -> vk::DescriptorSet {
         self.render_graph.resources.lock().unwrap().bindless_descriptor_set()
     }
