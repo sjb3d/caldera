@@ -43,6 +43,7 @@ pub struct ImageDesc {
     pub width: u32,
     pub height_or_zero: u32,
     pub layer_count_or_zero: u32,
+    pub mip_count: u32,
     pub format: vk::Format,
     pub aspect_mask: vk::ImageAspectFlags,
     pub samples: vk::SampleCountFlags,
@@ -54,6 +55,7 @@ impl ImageDesc {
             width,
             height_or_zero: 0,
             layer_count_or_zero: 0,
+            mip_count: 1,
             format,
             aspect_mask,
             samples: vk::SampleCountFlags::N1,
@@ -65,6 +67,7 @@ impl ImageDesc {
             width: size.x,
             height_or_zero: size.y,
             layer_count_or_zero: 0,
+            mip_count: 1,
             format,
             aspect_mask,
             samples: vk::SampleCountFlags::N1,
@@ -73,6 +76,11 @@ impl ImageDesc {
 
     pub fn with_layer_count(mut self, layer_count: u32) -> Self {
         self.layer_count_or_zero = layer_count;
+        self
+    }
+
+    pub fn with_mip_count(mut self, mip_count: u32) -> Self {
+        self.mip_count = mip_count;
         self
     }
 
@@ -122,10 +130,18 @@ impl ImageDesc {
 
     pub(crate) fn staging_size(&self) -> usize {
         assert_eq!(self.samples, vk::SampleCountFlags::N1);
-        let width = self.width as usize;
-        let height = self.height_or_zero.max(1) as usize;
+        let bits_per_element = self.format.bits_per_element();
         let layer_count = self.layer_count_or_zero.max(1) as usize;
-        width * height * layer_count * self.format.bits_per_element() / 8
+        let mut mip_width = self.width as usize;
+        let mut mip_height = self.height_or_zero.max(1) as usize;
+        let mut mip_offset = 0;
+        for _ in 0..self.mip_count {
+            let mip_layer_size = (mip_width * mip_height * bits_per_element) / 8;
+            mip_offset += mip_layer_size * layer_count;
+            mip_width /= 2;
+            mip_height /= 2;
+        }
+        mip_offset
     }
 }
 
@@ -167,7 +183,7 @@ impl DeviceGraphExt for Device {
                 height: desc.height_or_zero.max(1),
                 depth: 1,
             },
-            mip_levels: 1,
+            mip_levels: desc.mip_count,
             array_layers: desc.layer_count_or_zero.max(1),
             samples: desc.samples,
             tiling: vk::ImageTiling::OPTIMAL,
@@ -366,7 +382,7 @@ impl ResourceCache {
                 subresource_range: vk::ImageSubresourceRange {
                     aspect_mask: desc.aspect_mask,
                     base_mip_level: 0,
-                    level_count: 1,
+                    level_count: vk::REMAINING_MIP_LEVELS,
                     base_array_layer: 0,
                     layer_count: vk::REMAINING_ARRAY_LAYERS,
                 },

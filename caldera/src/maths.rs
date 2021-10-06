@@ -221,6 +221,20 @@ impl TransposedTransform3 {
     }
 }
 
+pub trait FromPackedUnorm<T> {
+    fn from_packed_unorm(p: T) -> Self;
+}
+
+impl FromPackedUnorm<u32> for Vec4 {
+    fn from_packed_unorm(p: u32) -> Self {
+        let x = ((p & 0xff) as f32) / 255.0;
+        let y = (((p >> 8) & 0xff) as f32) / 255.0;
+        let z = (((p >> 16) & 0xff) as f32) / 255.0;
+        let w = (((p >> 24) & 0xff) as f32) / 255.0;
+        Vec4::new(x, y, z, w)
+    }
+}
+
 pub trait IntoPackedUnorm<T> {
     fn into_packed_unorm(self) -> T;
 }
@@ -247,6 +261,16 @@ impl IntoPackedUnorm<u32> for Vec3 {
         let y = (self.y.max(0.0).min(1.0) * 255.0).round() as u8 as u32;
         let z = (self.z.max(0.0).min(1.0) * 255.0).round() as u8 as u32;
         x | (y << 8) | (z << 16)
+    }
+}
+
+impl IntoPackedUnorm<u32> for Vec4 {
+    fn into_packed_unorm(self) -> u32 {
+        let x = (self.x.max(0.0).min(1.0) * 255.0).round() as u8 as u32;
+        let y = (self.y.max(0.0).min(1.0) * 255.0).round() as u8 as u32;
+        let z = (self.z.max(0.0).min(1.0) * 255.0).round() as u8 as u32;
+        let w = (self.w.max(0.0).min(1.0) * 255.0).round() as u8 as u32;
+        x | (y << 8) | (z << 16) | (w << 24)
     }
 }
 

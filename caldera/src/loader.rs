@@ -424,32 +424,44 @@ impl ResourceLoader {
                     image_resource.transition_usage(ImageUsage::TRANSFER_WRITE, device, cmd);
 
                     let desc = image_resource.desc();
-                    let region = vk::BufferImageCopy {
-                        buffer_offset: staging_offset as vk::DeviceSize,
-                        buffer_row_length: desc.width,
-                        buffer_image_height: desc.height_or_zero.max(1),
-                        image_subresource: vk::ImageSubresourceLayers {
-                            aspect_mask: desc.aspect_mask,
-                            mip_level: 0,
-                            base_array_layer: 0,
-                            layer_count: desc.layer_count_or_zero.max(1),
-                        },
-                        image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
-                        image_extent: vk::Extent3D {
-                            width: desc.width,
-                            height: desc.height_or_zero.max(1),
-                            depth: 1,
-                        },
-                    };
-                    unsafe {
-                        device.cmd_copy_buffer_to_image(
-                            cmd,
-                            self.shared.staging_desc.buffer,
-                            image_resource.image().0,
-                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                            slice::from_ref(&region),
-                        )
-                    };
+
+                    let bits_per_elements = desc.format.bits_per_element();
+                    let layer_count = desc.layer_count_or_zero.max(1) as usize;
+                    let mut mip_width = desc.width as usize;
+                    let mut mip_height = desc.height_or_zero.max(1) as usize;
+                    let mut mip_offset = 0;
+                    for mip_index in 0..desc.mip_count {
+                        let region = vk::BufferImageCopy {
+                            buffer_offset: ((staging_offset as usize) + mip_offset) as vk::DeviceSize,
+                            buffer_row_length: mip_width as u32,
+                            buffer_image_height: mip_height as u32,
+                            image_subresource: vk::ImageSubresourceLayers {
+                                aspect_mask: desc.aspect_mask,
+                                mip_level: mip_index as u32,
+                                base_array_layer: 0,
+                                layer_count: layer_count as u32,
+                            },
+                            image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+                            image_extent: vk::Extent3D {
+                                width: mip_width as u32,
+                                height: mip_height as u32,
+                                depth: 1,
+                            },
+                        };
+                        unsafe {
+                            device.cmd_copy_buffer_to_image(
+                                cmd,
+                                self.shared.staging_desc.buffer,
+                                image_resource.image().0,
+                                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                                slice::from_ref(&region),
+                            )
+                        };
+                        let mip_layer_size = (mip_width * mip_height * bits_per_elements) / 8;
+                        mip_offset += mip_layer_size * layer_count;
+                        mip_width /= 2;
+                        mip_height /= 2;
+                    }
 
                     image_resource.transition_usage(initial_usage, device, cmd);
                     sender.send(image_id).unwrap();
