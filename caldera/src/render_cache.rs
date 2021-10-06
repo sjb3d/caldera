@@ -12,9 +12,11 @@ impl FormatExt for vk::Format {
     fn bits_per_element(&self) -> usize {
         match *self {
             vk::Format::BC1_RGB_SRGB_BLOCK => 4,
-            vk::Format::R8G8B8A8_SRGB | vk::Format::R16G16_UNORM | vk::Format::R16G16_UINT | vk::Format::R32_SFLOAT => {
-                32
-            }
+            vk::Format::R8G8B8A8_UNORM
+            | vk::Format::R8G8B8A8_SRGB
+            | vk::Format::R16G16_UNORM
+            | vk::Format::R16G16_UINT
+            | vk::Format::R32_SFLOAT => 32,
             vk::Format::R16G16B16A16_SFLOAT | vk::Format::R32G32_SFLOAT | vk::Format::R32G32_UINT => 64,
             vk::Format::R32G32B32A32_SFLOAT | vk::Format::R32G32B32A32_UINT => 128,
             _ => unimplemented!(),
