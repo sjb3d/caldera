@@ -164,17 +164,14 @@ impl SceneClusters {
 }
 
 struct BottomLevelAccel {
-    accel: vk::AccelerationStructureKHR,
     buffer_id: BufferId,
 }
 
 struct TopLevelAccel {
-    accel: vk::AccelerationStructureKHR,
     buffer_id: BufferId,
 }
 
 pub struct SceneAccel {
-    context: SharedContext,
     scene: SharedScene,
     clusters: SceneClusters,
     geometry_accel_data: Vec<Option<GeometryAccelData>>,
@@ -248,7 +245,6 @@ impl SceneAccel {
                 .await;
 
         Self {
-            context: resource_loader.context(),
             scene,
             clusters,
             geometry_accel_data,
@@ -509,40 +505,30 @@ impl SceneAccel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let (buffer_id, accel) = resource_loader
+        let buffer_id = resource_loader
             .graphics(move |ctx: GraphicsTaskContext| {
                 let context = ctx.context;
                 let schedule = ctx.schedule;
 
-                let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
                 let buffer_id = schedule.create_buffer(
-                    &buffer_desc,
-                    BufferUsage::ACCELERATION_STRUCTURE_WRITE
-                        | BufferUsage::ACCELERATION_STRUCTURE_READ
+                    &BufferDesc::new(sizes.acceleration_structure_size as usize),
+                    BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE
+                        | BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_READ
                         | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
                 );
-                let accel = {
-                    let create_info = vk::AccelerationStructureCreateInfoKHR {
-                        buffer: Some(schedule.get_buffer(buffer_id)),
-                        size: buffer_desc.size as vk::DeviceSize,
-                        ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                        ..Default::default()
-                    };
-                    unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-                };
-
                 let scratch_buffer_id = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
                 schedule.add_compute(
                     command_name!("build"),
                     |params| {
-                        params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                        params.add_buffer(buffer_id, BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE);
                         params.add_buffer(scratch_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
                     },
                     {
                         let accel_geometry = accel_geometry;
                         let build_range_info = build_range_info;
                         move |params, cmd| {
+                            let accel = params.get_buffer_accel(buffer_id);
                             let scratch_buffer = params.get_buffer(scratch_buffer_id);
 
                             let scratch_buffer_address =
@@ -569,11 +555,11 @@ impl SceneAccel {
                     },
                 );
 
-                (buffer_id, accel)
+                buffer_id
             })
             .await;
 
-        BottomLevelAccel { accel, buffer_id }
+        BottomLevelAccel { buffer_id }
     }
 
     async fn create_instance_buffer(
@@ -594,7 +580,7 @@ impl SceneAccel {
         let mut record_offset = 0;
         for (cluster, cluster_accel) in clusters.0.iter().zip(cluster_accel.iter()) {
             let info = vk::AccelerationStructureDeviceAddressInfoKHR {
-                acceleration_structure: Some(cluster_accel.accel),
+                acceleration_structure: Some(resource_loader.get_buffer_accel(cluster_accel.buffer_id)),
                 ..Default::default()
             };
             let acceleration_structure_reference =
@@ -664,28 +650,18 @@ impl SceneAccel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let (buffer_id, accel) = resource_loader
+        let buffer_id = resource_loader
             .graphics({
                 let accel_buffer_ids: Vec<_> = cluster_accel.iter().map(|accel| accel.buffer_id).collect();
                 move |ctx: GraphicsTaskContext| {
                     let context = ctx.context;
                     let schedule = ctx.schedule;
 
-                    let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
                     let buffer_id = schedule.create_buffer(
-                        &buffer_desc,
-                        BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                        &BufferDesc::new(sizes.acceleration_structure_size as usize),
+                        BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE
+                            | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
                     );
-                    let accel = {
-                        let create_info = vk::AccelerationStructureCreateInfoKHR {
-                            buffer: Some(schedule.get_buffer(buffer_id)),
-                            size: buffer_desc.size as vk::DeviceSize,
-                            ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-                            ..Default::default()
-                        };
-                        unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-                    };
-
                     let scratch_buffer_id =
                         schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
@@ -693,12 +669,13 @@ impl SceneAccel {
                         command_name!("build"),
                         |params| {
                             for &buffer_id in accel_buffer_ids.iter() {
-                                params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_READ);
+                                params.add_buffer(buffer_id, BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_READ);
                             }
-                            params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                            params.add_buffer(buffer_id, BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE);
                             params.add_buffer(scratch_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
                         },
                         move |params, cmd| {
+                            let accel = params.get_buffer_accel(buffer_id);
                             let scratch_buffer = params.get_buffer(scratch_buffer_id);
 
                             let scratch_buffer_address =
@@ -731,16 +708,16 @@ impl SceneAccel {
                         },
                     );
 
-                    (buffer_id, accel)
+                    buffer_id
                 }
             })
             .await;
 
-        TopLevelAccel { accel, buffer_id }
+        TopLevelAccel { buffer_id }
     }
 
-    pub fn top_level_accel(&self) -> vk::AccelerationStructureKHR {
-        self.top_level_accel.accel
+    pub fn top_level_buffer_id(&self) -> BufferId {
+        self.top_level_accel.buffer_id
     }
 
     pub fn declare_parameters(&self, params: &mut RenderParameterDeclaration) {
@@ -754,15 +731,5 @@ impl SceneAccel {
             self.top_level_accel.buffer_id,
             BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
         );
-    }
-}
-
-impl Drop for SceneAccel {
-    fn drop(&mut self) {
-        let device = &self.context.device;
-        for bottom_level_accel in self.cluster_accel.iter() {
-            unsafe { device.destroy_acceleration_structure_khr(Some(bottom_level_accel.accel), None) };
-        }
-        unsafe { device.destroy_acceleration_structure_khr(Some(self.top_level_accel.accel), None) };
     }
 }

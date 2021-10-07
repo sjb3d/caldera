@@ -237,6 +237,11 @@ impl<'graph> RenderParameterAccess<'graph> {
         self.0.resources.lock().unwrap().buffer_resource(id).buffer().0
     }
 
+    pub fn get_buffer_accel(&self, id: BufferId) -> vk::AccelerationStructureKHR {
+        // TODO: cache these, avoid lock per parameter
+        self.0.resources.lock().unwrap().buffer_resource(id).accel().unwrap()
+    }
+
     pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {
         // TODO: cache these, avoid lock per parameter
         self.0.resources.lock().unwrap().image_resource(id).image_view().0

@@ -51,6 +51,10 @@ macro_rules! base_usage_impl {
                 (self.0 & other.0) == other.0
             }
 
+            pub fn intersects(self, other: Self) -> bool {
+                (self.0 & other.0) != 0
+            }
+
             fn iter_set_bits(self) -> $usage_bit_iter {
                 $usage_bit_iter(self)
             }
@@ -217,7 +221,7 @@ buffer_usage_impl! {
         AccessCategory::READ | AccessCategory::WRITE
     ),
     (
-        ACCELERATION_STRUCTURE_READ,
+        BOTTOM_LEVEL_ACCELERATION_STRUCTURE_READ,
         vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
         vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
@@ -225,7 +229,23 @@ buffer_usage_impl! {
         AccessCategory::READ
     ),
     (
-        ACCELERATION_STRUCTURE_WRITE,
+        BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE,
+        vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
+        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
+        vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+        vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR,
+        AccessCategory::WRITE
+    ),
+    (
+        TOP_LEVEL_ACCELERATION_STRUCTURE_READ,
+        vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
+                        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
+        vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+        vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
+        AccessCategory::READ
+    ),
+    (
+        TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE,
         vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
         vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,

@@ -2138,7 +2138,7 @@ impl Renderer {
                                     flags: path_trace_flags,
                                 }
                             },
-                            self.accel.top_level_accel(),
+                            params.get_buffer_accel(self.accel.top_level_buffer_id()),
                             self.pmj_samples_image_view,
                             self.sobol_samples_image_view,
                             self.illuminants_image_view,

@@ -23,6 +23,7 @@ pub(crate) enum BufferResource {
         desc: BufferDesc,
         alloc: Option<Alloc>,
         buffer: UniqueBuffer,
+        accel: Option<vk::AccelerationStructureKHR>,
         bindless_id: Option<BindlessId>,
         current_usage: BufferUsage,
         all_usage_check: BufferUsage,
@@ -48,6 +49,13 @@ impl BufferResource {
         match self {
             BufferResource::Described { .. } => panic!("buffer is only described"),
             BufferResource::Active { buffer, .. } => *buffer,
+        }
+    }
+
+    pub fn accel(&self) -> Option<vk::AccelerationStructureKHR> {
+        match self {
+            BufferResource::Described { .. } => panic!("buffer is only described"),
+            BufferResource::Active { accel, .. } => *accel,
         }
     }
 
@@ -444,6 +452,7 @@ impl Resources {
             desc: *desc,
             alloc: None,
             buffer,
+            accel: None,
             bindless_id: None,
             current_usage,
             all_usage_check: all_usage,
@@ -460,6 +469,7 @@ impl Resources {
         let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
         let alloc = self.global_allocator.allocate(&info.mem_req, memory_property_flags);
         let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
+        let accel = self.resource_cache.get_buffer_accel(desc, buffer, all_usage);
         let bindless_id = self
             .bindless
             .as_mut()
@@ -468,6 +478,7 @@ impl Resources {
             desc: *desc,
             alloc: Some(alloc),
             buffer,
+            accel,
             bindless_id,
             current_usage: BufferUsage::empty(),
             all_usage_check: all_usage,
@@ -491,10 +502,12 @@ impl Resources {
                 let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
                 let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
                 let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
+                let accel = self.resource_cache.get_buffer_accel(desc, buffer, *all_usage);
                 BufferResource::Active {
                     desc: *desc,
                     alloc: Some(alloc),
                     buffer,
+                    accel,
                     bindless_id: None,
                     current_usage: BufferUsage::empty(),
                     all_usage_check: *all_usage,

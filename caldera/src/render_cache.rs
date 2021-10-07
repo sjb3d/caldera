@@ -218,6 +218,18 @@ struct BufferKey {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum BufferAccelLevel {
+    Bottom,
+    Top,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct BufferAccelKey {
+    buffer: UniqueBuffer,
+    level: BufferAccelLevel,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct ImageInfoKey {
     desc: ImageDesc,
     all_usage_flags: vk::ImageUsageFlags,
@@ -248,6 +260,7 @@ pub(crate) struct ResourceCache {
     context: SharedContext,
     buffer_info: HashMap<BufferInfoKey, BufferInfo>,
     buffer: HashMap<BufferKey, UniqueBuffer>,
+    buffer_accel: HashMap<BufferAccelKey, vk::AccelerationStructureKHR>,
     image_info: HashMap<ImageInfoKey, ImageInfo>,
     image: HashMap<ImageKey, UniqueImage>,
     image_view: HashMap<ImageViewKey, UniqueImageView>,
@@ -265,6 +278,7 @@ impl ResourceCache {
             context: SharedContext::clone(context),
             buffer_info: HashMap::new(),
             buffer: HashMap::new(),
+            buffer_accel: HashMap::new(),
             image_info: HashMap::new(),
             image: HashMap::new(),
             image_view: HashMap::new(),
@@ -329,6 +343,40 @@ impl ResourceCache {
 
                 Unique::new(buffer, context.allocate_handle_uid())
             })
+    }
+
+    pub fn get_buffer_accel(
+        &mut self,
+        desc: &BufferDesc,
+        buffer: UniqueBuffer,
+        all_usage: BufferUsage,
+    ) -> Option<vk::AccelerationStructureKHR> {
+        let level = if all_usage.intersects(
+            BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_READ
+                | BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE,
+        ) {
+            Some(BufferAccelLevel::Bottom)
+        } else if all_usage.intersects(
+            BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_READ | BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE,
+        ) {
+            Some(BufferAccelLevel::Top)
+        } else {
+            None
+        };
+        let key = BufferAccelKey { buffer, level: level? };
+        let context = &self.context;
+        Some(*self.buffer_accel.entry(key).or_insert_with(|| {
+            let create_info = vk::AccelerationStructureCreateInfoKHR {
+                buffer: Some(buffer.0),
+                size: desc.size as vk::DeviceSize,
+                ty: match key.level {
+                    BufferAccelLevel::Bottom => vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                    BufferAccelLevel::Top => vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                },
+                ..Default::default()
+            };
+            unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
+        }))
     }
 
     pub fn get_image_info(&mut self, desc: &ImageDesc, all_usage_flags: vk::ImageUsageFlags) -> ImageInfo {
@@ -580,6 +628,13 @@ impl Drop for ResourceCache {
         for (_, image) in self.image.drain() {
             unsafe {
                 self.context.device.destroy_image(Some(image.0), None);
+            }
+        }
+        for (_, accel) in self.buffer_accel.drain() {
+            unsafe {
+                self.context
+                    .device
+                    .destroy_acceleration_structure_khr(Some(accel), None);
             }
         }
         for (_, buffer) in self.buffer.drain() {

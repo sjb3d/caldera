@@ -35,8 +35,6 @@ struct AccelerationStructureInstance {
 }
 
 struct AccelLevel {
-    context: SharedContext,
-    accel: vk::AccelerationStructureKHR,
     buffer_id: BufferId,
 }
 
@@ -100,38 +98,28 @@ impl AccelLevel {
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
         let triangle_count = mesh_info.triangle_count;
-        let (buffer_id, accel) = resource_loader
+        let buffer_id = resource_loader
             .graphics(move |ctx: GraphicsTaskContext| {
                 let context = ctx.context;
                 let schedule = ctx.schedule;
 
-                let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
                 let buffer_id = schedule.create_buffer(
-                    &buffer_desc,
-                    BufferUsage::ACCELERATION_STRUCTURE_WRITE
-                        | BufferUsage::ACCELERATION_STRUCTURE_READ
+                    &BufferDesc::new(sizes.acceleration_structure_size as usize),
+                    BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE
+                        | BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_READ
                         | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
                 );
-                let accel = {
-                    let create_info = vk::AccelerationStructureCreateInfoKHR {
-                        buffer: Some(schedule.get_buffer(buffer_id)),
-                        size: buffer_desc.size as vk::DeviceSize,
-                        ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                        ..Default::default()
-                    };
-                    unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-                };
-
                 let scratch_buffer_id = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
                 schedule.add_compute(
                     command_name!("build"),
                     |params| {
-                        params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                        params.add_buffer(buffer_id, BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE);
                         params.add_buffer(scratch_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
                     },
                     {
                         move |params, cmd| {
+                            let accel = params.get_buffer_accel(buffer_id);
                             let scratch_buffer = params.get_buffer(scratch_buffer_id);
 
                             let scratch_buffer_address =
@@ -168,15 +156,11 @@ impl AccelLevel {
                     },
                 );
 
-                (buffer_id, accel)
+                buffer_id
             })
             .await;
 
-        Self {
-            context,
-            accel,
-            buffer_id,
-        }
+        Self { buffer_id }
     }
 
     async fn new_top_level(
@@ -228,36 +212,30 @@ impl AccelLevel {
         println!("build scratch size: {}", sizes.build_scratch_size);
         println!("acceleration structure size: {}", sizes.acceleration_structure_size);
 
-        let (buffer_id, accel) = resource_loader
+        let buffer_id = resource_loader
             .graphics(move |ctx: GraphicsTaskContext| {
                 let context = ctx.context;
                 let schedule = ctx.schedule;
 
-                let buffer_desc = BufferDesc::new(sizes.acceleration_structure_size as usize);
                 let buffer_id = schedule.create_buffer(
-                    &buffer_desc,
-                    BufferUsage::ACCELERATION_STRUCTURE_WRITE | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
+                    &BufferDesc::new(sizes.acceleration_structure_size as usize),
+                    BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE
+                        | BufferUsage::RAY_TRACING_ACCELERATION_STRUCTURE,
                 );
-                let accel = {
-                    let create_info = vk::AccelerationStructureCreateInfoKHR {
-                        buffer: Some(schedule.get_buffer(buffer_id)),
-                        size: buffer_desc.size as vk::DeviceSize,
-                        ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-                        ..Default::default()
-                    };
-                    unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
-                };
-
                 let scratch_buffer_id = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
                 schedule.add_compute(
                     command_name!("build"),
                     |params| {
-                        params.add_buffer(bottom_level_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_READ);
-                        params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
+                        params.add_buffer(
+                            bottom_level_buffer_id,
+                            BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_READ,
+                        );
+                        params.add_buffer(buffer_id, BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE);
                         params.add_buffer(scratch_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
                     },
                     move |params, cmd| {
+                        let accel = params.get_buffer_accel(buffer_id);
                         let scratch_buffer = params.get_buffer(scratch_buffer_id);
 
                         let scratch_buffer_address =
@@ -293,22 +271,11 @@ impl AccelLevel {
                     },
                 );
 
-                (buffer_id, accel)
+                buffer_id
             })
             .await;
 
-        Self {
-            context,
-            accel,
-            buffer_id,
-        }
-    }
-}
-
-impl Drop for AccelLevel {
-    fn drop(&mut self) {
-        let device = &self.context.device;
-        unsafe { device.destroy_acceleration_structure_khr(Some(self.accel), None) };
+        Self { buffer_id }
     }
 }
 
@@ -482,7 +449,7 @@ impl AccelInfo {
         let bottom_level = AccelLevel::new_bottom_level(resource_loader.clone(), mesh_info).await;
         let bottom_level_device_address = {
             let info = vk::AccelerationStructureDeviceAddressInfoKHR {
-                acceleration_structure: Some(bottom_level.accel),
+                acceleration_structure: Some(resource_loader.get_buffer_accel(bottom_level.buffer_id)),
                 ..Default::default()
             };
             unsafe { context.device.get_acceleration_structure_device_address_khr(&info) }
@@ -565,7 +532,7 @@ impl AccelInfo {
                             ray_vec_from_coord,
                         }
                     },
-                    top_level.accel,
+                    params.get_buffer_accel(top_level.buffer_id),
                     output_image_view,
                 );
 

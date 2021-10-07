@@ -542,6 +542,16 @@ impl ResourceLoader {
         self.shared.resources.lock().unwrap().buffer_resource(id).buffer().0
     }
 
+    pub fn get_buffer_accel(&self, id: BufferId) -> vk::AccelerationStructureKHR {
+        self.shared
+            .resources
+            .lock()
+            .unwrap()
+            .buffer_resource(id)
+            .accel()
+            .unwrap()
+    }
+
     pub fn get_buffer_bindless_id(&self, id: BufferId) -> BindlessId {
         self.shared
             .resources
