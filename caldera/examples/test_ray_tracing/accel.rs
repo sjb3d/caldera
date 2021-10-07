@@ -122,17 +122,17 @@ impl AccelLevel {
                     unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
                 };
 
-                let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
+                let scratch_buffer_id = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
                 schedule.add_compute(
                     command_name!("build"),
                     |params| {
                         params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
-                        params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
+                        params.add_buffer(scratch_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
                     },
                     {
                         move |params, cmd| {
-                            let scratch_buffer = params.get_buffer(scratch_buffer);
+                            let scratch_buffer = params.get_buffer(scratch_buffer_id);
 
                             let scratch_buffer_address =
                                 unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };
@@ -248,17 +248,17 @@ impl AccelLevel {
                     unsafe { context.device.create_acceleration_structure_khr(&create_info, None) }.unwrap()
                 };
 
-                let scratch_buffer = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
+                let scratch_buffer_id = schedule.describe_buffer(&BufferDesc::new(sizes.build_scratch_size as usize));
 
                 schedule.add_compute(
                     command_name!("build"),
                     |params| {
                         params.add_buffer(bottom_level_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_READ);
                         params.add_buffer(buffer_id, BufferUsage::ACCELERATION_STRUCTURE_WRITE);
-                        params.add_buffer(scratch_buffer, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
+                        params.add_buffer(scratch_buffer_id, BufferUsage::ACCELERATION_STRUCTURE_BUILD_SCRATCH);
                     },
                     move |params, cmd| {
-                        let scratch_buffer = params.get_buffer(scratch_buffer);
+                        let scratch_buffer = params.get_buffer(scratch_buffer_id);
 
                         let scratch_buffer_address =
                             unsafe { context.device.get_buffer_device_address_helper(scratch_buffer) };

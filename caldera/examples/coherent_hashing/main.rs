@@ -214,9 +214,9 @@ impl App {
         };
 
         let buffer_desc = BufferDesc::new((entry_count as usize) * mem::size_of::<u32>());
-        let entries_buffer = schedule.describe_buffer(&buffer_desc);
-        let max_ages_buffer = schedule.describe_buffer(&buffer_desc);
-        let age_histogram_buffer = schedule.describe_buffer(&BufferDesc::new(MAX_AGE * mem::size_of::<u32>()));
+        let entries_buffer_id = schedule.describe_buffer(&buffer_desc);
+        let max_ages_buffer_id = schedule.describe_buffer(&buffer_desc);
+        let age_histogram_buffer_id = schedule.describe_buffer(&BufferDesc::new(MAX_AGE * mem::size_of::<u32>()));
 
         schedule.add_compute(
             command_name!("generate_image"),
@@ -253,18 +253,18 @@ impl App {
         schedule.add_compute(
             command_name!("clear_hash_table"),
             |params| {
-                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
-                params.add_buffer(max_ages_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
-                params.add_buffer(age_histogram_buffer, BufferUsage::COMPUTE_STORAGE_WRITE);
+                params.add_buffer(entries_buffer_id, BufferUsage::COMPUTE_STORAGE_WRITE);
+                params.add_buffer(max_ages_buffer_id, BufferUsage::COMPUTE_STORAGE_WRITE);
+                params.add_buffer(age_histogram_buffer_id, BufferUsage::COMPUTE_STORAGE_WRITE);
             },
             {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer);
-                    let max_ages_buffer = params.get_buffer(max_ages_buffer);
-                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer);
+                    let entries_buffer = params.get_buffer(entries_buffer_id);
+                    let max_ages_buffer = params.get_buffer(max_ages_buffer_id);
+                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer_id);
 
                     let descriptor_set = ClearHashTableDescriptorSet::create(
                         descriptor_pool,
@@ -290,8 +290,8 @@ impl App {
         schedule.add_compute(
             command_name!("write_hash_table"),
             |params| {
-                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_ATOMIC);
-                params.add_buffer(max_ages_buffer, BufferUsage::COMPUTE_STORAGE_ATOMIC);
+                params.add_buffer(entries_buffer_id, BufferUsage::COMPUTE_STORAGE_ATOMIC);
+                params.add_buffer(max_ages_buffer_id, BufferUsage::COMPUTE_STORAGE_ATOMIC);
                 params.add_image(input_image, ImageUsage::COMPUTE_STORAGE_READ);
             },
             {
@@ -299,8 +299,8 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer);
-                    let max_ages_buffer = params.get_buffer(max_ages_buffer);
+                    let entries_buffer = params.get_buffer(entries_buffer_id);
+                    let max_ages_buffer = params.get_buffer(max_ages_buffer_id);
                     let input_image_view = params.get_image_view(input_image);
 
                     let descriptor_set = UpdateHashTableDescriptorSet::create(
@@ -327,16 +327,16 @@ impl App {
         schedule.add_compute(
             command_name!("make_age_histogram"),
             |params| {
-                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
-                params.add_buffer(age_histogram_buffer, BufferUsage::COMPUTE_STORAGE_ATOMIC);
+                params.add_buffer(entries_buffer_id, BufferUsage::COMPUTE_STORAGE_READ);
+                params.add_buffer(age_histogram_buffer_id, BufferUsage::COMPUTE_STORAGE_ATOMIC);
             },
             {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer);
-                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer);
+                    let entries_buffer = params.get_buffer(entries_buffer_id);
+                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer_id);
 
                     let descriptor_set = MakeAgeHistogramDescriptorSet::create(
                         descriptor_pool,
@@ -361,8 +361,8 @@ impl App {
         schedule.add_compute(
             command_name!("read_hash_table"),
             |params| {
-                params.add_buffer(entries_buffer, BufferUsage::COMPUTE_STORAGE_READ);
-                params.add_buffer(max_ages_buffer, BufferUsage::COMPUTE_STORAGE_READ);
+                params.add_buffer(entries_buffer_id, BufferUsage::COMPUTE_STORAGE_READ);
+                params.add_buffer(max_ages_buffer_id, BufferUsage::COMPUTE_STORAGE_READ);
                 params.add_image(output_image, ImageUsage::COMPUTE_STORAGE_WRITE);
             },
             {
@@ -370,8 +370,8 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer);
-                    let max_ages_buffer = params.get_buffer(max_ages_buffer);
+                    let entries_buffer = params.get_buffer(entries_buffer_id);
+                    let max_ages_buffer = params.get_buffer(max_ages_buffer_id);
                     let output_image_view = params.get_image_view(output_image);
 
                     let descriptor_set = UpdateHashTableDescriptorSet::create(
@@ -401,8 +401,8 @@ impl App {
             |params| {
                 params.add_image(input_image, ImageUsage::FRAGMENT_STORAGE_READ);
                 params.add_image(output_image, ImageUsage::FRAGMENT_STORAGE_READ);
-                params.add_buffer(entries_buffer, BufferUsage::FRAGMENT_STORAGE_READ);
-                params.add_buffer(age_histogram_buffer, BufferUsage::FRAGMENT_STORAGE_READ);
+                params.add_buffer(entries_buffer_id, BufferUsage::FRAGMENT_STORAGE_READ);
+                params.add_buffer(age_histogram_buffer_id, BufferUsage::FRAGMENT_STORAGE_READ);
             },
             {
                 let context = base.context.as_ref();
@@ -414,8 +414,8 @@ impl App {
                 move |params, cmd, render_pass| {
                     let input_image_view = params.get_image_view(input_image);
                     let output_image_view = params.get_image_view(output_image);
-                    let entries_buffer = params.get_buffer(entries_buffer);
-                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer);
+                    let entries_buffer = params.get_buffer(entries_buffer_id);
+                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer_id);
 
                     set_viewport_helper(&context.device, cmd, swap_size);
                     let ortho_from_screen =
