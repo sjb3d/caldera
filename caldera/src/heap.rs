@@ -1,9 +1,10 @@
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct HeapBlock {
     begin: u32,
     end: u32,
 }
 
+#[derive(Debug)]
 pub(crate) struct HeapAllocator {
     sorted_free_list: Vec<HeapBlock>,
     alloc_list: Vec<HeapBlock>,
@@ -26,7 +27,7 @@ impl HeapAllocator {
                 end: aligned + size,
             };
             if alloc.end <= block.end {
-                let block = Clone::clone(block);
+                let block = block.clone();
                 self.sorted_free_list.remove(index);
                 if alloc.end != block.end {
                     self.sorted_free_list.insert(
@@ -70,7 +71,7 @@ impl HeapAllocator {
             .enumerate()
             .find_map(
                 |(index, block)| {
-                    if block.end <= alloc.begin {
+                    if alloc.end <= block.begin {
                         Some(index)
                     } else {
                         None
@@ -79,11 +80,10 @@ impl HeapAllocator {
             )
             .unwrap_or(self.sorted_free_list.len());
 
-        let next_index = insert_index + 1;
-        if let Some(next) = self.sorted_free_list.get(next_index) {
+        if let Some(next) = self.sorted_free_list.get(insert_index) {
             if alloc.end == next.begin {
                 alloc.end = next.end;
-                self.sorted_free_list.remove(next_index);
+                self.sorted_free_list.remove(insert_index);
             }
         }
 
