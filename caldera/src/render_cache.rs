@@ -351,14 +351,9 @@ impl ResourceCache {
         buffer: UniqueBuffer,
         all_usage: BufferUsage,
     ) -> Option<vk::AccelerationStructureKHR> {
-        let level = if all_usage.intersects(
-            BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_READ
-                | BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE,
-        ) {
+        let level = if all_usage.contains(BufferUsage::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_WRITE) {
             Some(BufferAccelLevel::Bottom)
-        } else if all_usage.intersects(
-            BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_READ | BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE,
-        ) {
+        } else if all_usage.contains(BufferUsage::TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE) {
             Some(BufferAccelLevel::Top)
         } else {
             None

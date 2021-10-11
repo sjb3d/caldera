@@ -245,14 +245,6 @@ buffer_usage_impl! {
         AccessCategory::WRITE
     ),
     (
-        TOP_LEVEL_ACCELERATION_STRUCTURE_READ,
-        vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
-                        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
-        vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-        vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR,
-        AccessCategory::READ
-    ),
-    (
         TOP_LEVEL_ACCELERATION_STRUCTURE_WRITE,
         vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
