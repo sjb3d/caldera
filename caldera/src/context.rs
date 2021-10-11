@@ -111,6 +111,7 @@ pub struct ContextParams {
     pub inline_uniform_block: ContextFeature,
     pub bindless: ContextFeature,
     pub ray_tracing: ContextFeature,
+    pub ray_query: ContextFeature,
     pub mesh_shader: ContextFeature,
     pub subgroup_size_control: ContextFeature,
 }
@@ -126,6 +127,7 @@ impl Default for ContextParams {
             inline_uniform_block: ContextFeature::Optional,
             bindless: ContextFeature::Disable,
             ray_tracing: ContextFeature::Disable,
+            ray_query: ContextFeature::Disable,
             mesh_shader: ContextFeature::Disable,
             subgroup_size_control: ContextFeature::Disable,
         }
@@ -213,6 +215,17 @@ impl Context {
                     extensions.enable_khr_ray_tracing_pipeline();
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_tracing_pipeline not supported"),
+            );
+            params.ray_query.apply(
+                || {
+                    available_extensions.supports_khr_acceleration_structure()
+                        && available_extensions.supports_khr_ray_query()
+                },
+                || {
+                    extensions.enable_khr_acceleration_structure();
+                    extensions.enable_khr_ray_query();
+                },
+                || panic!("KHR_acceleration_structure/KHR_ray_query not supported"),
             );
             params.mesh_shader.apply(
                 || available_extensions.supports_nv_mesh_shader(),
@@ -363,6 +376,7 @@ impl Context {
             let mut buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::default();
             let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
             let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
+            let mut ray_query_pipeline_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
             let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
             let mut mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesNV::default();
 
@@ -426,7 +440,23 @@ impl Context {
                     ray_tracing_pipeline_features.ray_tracing_pipeline = vk::TRUE;
                     enabled_features.shader_int64 = vk::TRUE;
                 },
-                || panic!("KHR_acceleration_structure/KHR_ray_tracing not supported"),
+                || panic!("KHR_acceleration_structure/KHR_ray_tracing_pipeline not supported"),
+            );
+            params.ray_query.apply(
+                || {
+                    available_extensions.supports_khr_acceleration_structure()
+                        && available_extensions.supports_khr_ray_query()
+                },
+                || {
+                    extensions.enable_khr_acceleration_structure();
+                    extensions.enable_khr_ray_query();
+                    buffer_device_address_features.buffer_device_address = vk::TRUE;
+                    enable_buffer_device_addresses = true;
+                    acceleration_structure_features.acceleration_structure = vk::TRUE;
+                    ray_query_pipeline_features.ray_query = vk::TRUE;
+                    enabled_features.shader_int64 = vk::TRUE;
+                },
+                || panic!("KHR_acceleration_structure/KHR_ray_query not supported"),
             );
             params.mesh_shader.apply(
                 || available_extensions.supports_nv_mesh_shader(),
@@ -459,6 +489,7 @@ impl Context {
                 .insert_next(&mut buffer_device_address_features)
                 .insert_next(&mut acceleration_structure_features)
                 .insert_next(&mut ray_tracing_pipeline_features)
+                .insert_next(&mut ray_query_pipeline_features)
                 .insert_next(&mut descriptor_indexing_features)
                 .insert_next(&mut mesh_shader_features);
 

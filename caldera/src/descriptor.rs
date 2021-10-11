@@ -13,7 +13,7 @@ fn align_up(x: u32, alignment: u32) -> u32 {
     (x + alignment - 1) & !(alignment - 1)
 }
 
-struct UniformDataPool {
+pub(crate) struct StagingBuffer {
     context: SharedContext,
     min_alignment: u32,
     atom_size: u32,
@@ -26,29 +26,29 @@ struct UniformDataPool {
     last_usage: u32,
 }
 
-impl UniformDataPool {
+impl StagingBuffer {
     const COUNT: usize = CommandBufferPool::COUNT;
 
-    pub fn new(context: &SharedContext, size_per_frame: u32) -> Self {
-        let min_alignment = context
-            .physical_device_properties
-            .limits
-            .min_uniform_buffer_offset_alignment as u32;
+    pub fn new(
+        context: &SharedContext,
+        size_per_frame: u32,
+        min_alignment: u32,
+        usage_flags: vk::BufferUsageFlags,
+    ) -> Self {
         let atom_size = context.physical_device_properties.limits.non_coherent_atom_size as u32;
-        let size_per_frame = size_per_frame.min(context.physical_device_properties.limits.max_uniform_buffer_range);
 
         let mut memory_type_filter = 0xffff_ffff;
         let buffers: [vk::Buffer; Self::COUNT] = {
             let buffer_create_info = vk::BufferCreateInfo {
                 size: vk::DeviceSize::from(size_per_frame),
-                usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                usage: usage_flags,
                 ..Default::default()
             };
             let mut buffers = ArrayVec::new();
             for _i in 0..Self::COUNT {
                 let buffer = unsafe { context.device.create_buffer(&buffer_create_info, None) }.unwrap();
                 let mem_req = unsafe { context.device.get_buffer_memory_requirements(buffer) };
-                assert!(mem_req.size == buffer_create_info.size);
+                assert_eq!(mem_req.size, buffer_create_info.size);
                 buffers.push(buffer);
                 memory_type_filter &= mem_req.memory_type_bits;
             }
@@ -117,10 +117,9 @@ impl UniformDataPool {
     }
 
     pub fn alloc(&self, size: u32, align: u32) -> Option<(&mut [u8], u32)> {
-        let aligned_size = align_up(size, self.min_alignment.max(align));
-
         let base = self.next_offset.get();
-        let end = base + aligned_size;
+        let aligned_base = align_up(base, self.min_alignment.max(align));
+        let end = aligned_base + size;
         self.next_offset.set(end);
 
         if end <= self.size_per_frame {
@@ -129,7 +128,7 @@ impl UniformDataPool {
                     slice::from_raw_parts_mut(
                         self.mapping
                             .add(self.buffer_index * (self.size_per_frame as usize))
-                            .add(base as usize),
+                            .add(aligned_base as usize),
                         size as usize,
                     )
                 },
@@ -140,15 +139,15 @@ impl UniformDataPool {
         }
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui) {
-        ui.text("uniform data");
+    pub fn ui_stats_table_rows(&self, ui: &Ui, title: &str) {
+        ui.text(title);
         ui.next_column();
         ProgressBar::new((self.last_usage as f32) / (self.size_per_frame as f32)).build(ui);
         ui.next_column();
     }
 }
 
-impl Drop for UniformDataPool {
+impl Drop for StagingBuffer {
     fn drop(&mut self) {
         unsafe {
             for buffer in self.buffers.iter() {
@@ -319,7 +318,7 @@ pub struct DescriptorPool {
     layout_cache: RefCell<DescriptorSetLayoutCache>,
     pools: [vk::DescriptorPool; Self::COUNT],
     pool_index: usize,
-    uniform_data_pool: Option<UniformDataPool>,
+    uniform_data_pool: Option<StagingBuffer>,
 }
 
 impl DescriptorPool {
@@ -414,7 +413,18 @@ impl DescriptorPool {
             uniform_data_pool: if use_inline_uniform_block {
                 None
             } else {
-                Some(UniformDataPool::new(context, Self::MAX_UNIFORM_DATA_PER_FRAME))
+                let size_per_frame = Self::MAX_UNIFORM_DATA_PER_FRAME
+                    .min(context.physical_device_properties.limits.max_uniform_buffer_range);
+                let min_alignment = context
+                    .physical_device_properties
+                    .limits
+                    .min_uniform_buffer_offset_alignment as u32;
+                Some(StagingBuffer::new(
+                    context,
+                    size_per_frame,
+                    min_alignment,
+                    vk::BufferUsageFlags::UNIFORM_BUFFER,
+                ))
             },
         }
     }
@@ -622,7 +632,7 @@ impl DescriptorPool {
         descriptor_set
     }
 
-    pub fn end_command_buffer(&mut self) {
+    pub fn end_frame(&mut self) {
         self.pool_index = (self.pool_index + 1) % Self::COUNT;
         if let Some(uniform_data_pool) = self.uniform_data_pool.as_mut() {
             uniform_data_pool.end_frame();
@@ -631,7 +641,7 @@ impl DescriptorPool {
 
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
         if let Some(uniform_data_pool) = self.uniform_data_pool.as_ref() {
-            uniform_data_pool.ui_stats_table_rows(ui);
+            uniform_data_pool.ui_stats_table_rows(ui, "uniform data");
         }
     }
 }

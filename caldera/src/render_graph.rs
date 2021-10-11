@@ -64,6 +64,7 @@ pub struct RenderGraph {
     ping_pong_current_set: ResourceSet,
     ping_pong_prev_set: ResourceSet,
     import_set: ResourceSet,
+    transfer_staging: StagingBuffer,
 }
 
 impl RenderGraph {
@@ -72,6 +73,7 @@ impl RenderGraph {
         resources: &SharedResources,
         temp_chunk_size: u32,
         ping_pong_chunk_size: u32,
+        staging_size_per_frame: u32,
     ) -> Self {
         Self {
             resources: SharedResources::clone(resources),
@@ -80,6 +82,12 @@ impl RenderGraph {
             ping_pong_current_set: ResourceSet::new(context, ping_pong_chunk_size),
             ping_pong_prev_set: ResourceSet::new(context, ping_pong_chunk_size),
             import_set: ResourceSet::new(context, 0),
+            transfer_staging: StagingBuffer::new(
+                context,
+                staging_size_per_frame,
+                4,
+                vk::BufferUsageFlags::TRANSFER_SRC,
+            ),
         }
     }
 
@@ -102,11 +110,16 @@ impl RenderGraph {
         *self.resources.lock().unwrap().image_resource(id).desc()
     }
 
-    pub fn begin_frame(&mut self) {
+    pub(crate) fn begin_frame(&mut self) {
         mem::swap(&mut self.ping_pong_current_set, &mut self.ping_pong_prev_set);
         let mut resources = self.resources.lock().unwrap();
         self.ping_pong_current_set.begin_frame(&mut resources);
         self.import_set.begin_frame(&mut resources);
+        self.transfer_staging.begin_frame();
+    }
+
+    pub(crate) fn end_frame(&mut self) {
+        self.transfer_staging.end_frame();
     }
 
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
@@ -202,7 +215,7 @@ impl SplitCommandBuffer {
 
     fn notify_image_use(&mut self, image_id: ImageId, query_pool: &mut QueryPool) {
         if self.swap_image_id == Some(image_id) {
-            query_pool.end_command_buffer(self.current);
+            query_pool.end_frame(self.current);
             self.current = self.next.take().unwrap();
             self.swap_image_id = None;
         }
@@ -276,8 +289,15 @@ impl<'graph> RenderSchedule<'graph> {
         }
     }
 
-    pub fn graph(&self) -> &RenderGraph {
-        self.render_graph
+    pub fn write_transfer(
+        &self,
+        size: usize,
+        align: usize,
+        writer: impl FnOnce(&mut [u8]),
+    ) -> Option<(vk::Buffer, u32)> {
+        let (buf, offset) = self.render_graph.transfer_staging.alloc(size as u32, align as u32)?;
+        writer(buf);
+        Some((self.render_graph.transfer_staging.get_buffer(), offset))
     }
 
     pub fn get_bindless_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
@@ -300,6 +320,16 @@ impl<'graph> RenderSchedule<'graph> {
             .buffer_resource(id)
             .buffer()
             .0
+    }
+
+    pub fn get_buffer_accel(&self, id: BufferId) -> vk::AccelerationStructureKHR {
+        self.render_graph
+            .resources
+            .lock()
+            .unwrap()
+            .buffer_resource(id)
+            .accel()
+            .unwrap()
     }
 
     pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {

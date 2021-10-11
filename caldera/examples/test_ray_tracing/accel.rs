@@ -171,17 +171,15 @@ impl AccelLevel {
         let context = resource_loader.context();
         let instance_buffer_address = unsafe { context.device.get_buffer_device_address_helper(instance_buffer) };
 
-        let geometry_instance_data = vk::AccelerationStructureGeometryInstancesDataKHR {
-            data: vk::DeviceOrHostAddressConstKHR {
-                device_address: instance_buffer_address,
-            },
-            ..Default::default()
-        };
-
         let geometry = vk::AccelerationStructureGeometryKHR {
             geometry_type: vk::GeometryTypeKHR::INSTANCES,
             geometry: vk::AccelerationStructureGeometryDataKHR {
-                instances: geometry_instance_data,
+                instances: vk::AccelerationStructureGeometryInstancesDataKHR {
+                    data: vk::DeviceOrHostAddressConstKHR {
+                        device_address: instance_buffer_address,
+                    },
+                    ..Default::default()
+                },
             },
             ..Default::default()
         };

@@ -158,8 +158,9 @@ impl AppSystems {
         let query_pool = QueryPool::new(context);
 
         const CHUNK_SIZE: u32 = 128 * 1024 * 1024;
+        const STAGING_SIZE: u32 = 4 * 1024 * 1024;
         let resources = Resources::new(context, CHUNK_SIZE);
-        let render_graph = RenderGraph::new(context, &resources, CHUNK_SIZE, CHUNK_SIZE);
+        let render_graph = RenderGraph::new(context, &resources, CHUNK_SIZE, CHUNK_SIZE, STAGING_SIZE);
         let resource_loader = ResourceLoader::new(context, &resources, CHUNK_SIZE);
 
         Self {
@@ -211,8 +212,9 @@ impl AppSystems {
     }
 
     pub fn submit_command_buffer(&mut self, cbar: &CommandBufferAcquireResult) -> Option<vk::Semaphore> {
-        self.query_pool.end_command_buffer(cbar.post_swapchain_cmd);
-        self.descriptor_pool.end_command_buffer();
+        self.query_pool.end_frame(cbar.post_swapchain_cmd);
+        self.descriptor_pool.end_frame();
+        self.render_graph.end_frame();
         self.command_buffer_pool.submit()
     }
 }

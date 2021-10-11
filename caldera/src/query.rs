@@ -129,7 +129,7 @@ impl QueryPool {
         self.emit_timestamp_impl(cmd, Some(name));
     }
 
-    pub fn end_command_buffer(&mut self, cmd: vk::CommandBuffer) {
+    pub fn end_frame(&mut self, cmd: vk::CommandBuffer) {
         self.emit_timestamp_impl(cmd, None);
     }
 
