@@ -8,6 +8,7 @@ DISASM=spirv-dis
 INC=\
 	coherent_hashing/hash_table_common.glsl \
 	coherent_hashing/hash_table_read_write.glsl \
+	common/bindless.glsl \
 	common/color_space.glsl \
 	common/fresnel.glsl \
 	common/ggx.glsl \
