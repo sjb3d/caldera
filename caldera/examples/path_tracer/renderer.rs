@@ -2041,7 +2041,6 @@ impl Renderer {
                 schedule.describe_image(&temp_desc),
                 schedule.describe_image(&temp_desc),
             );
-            let bindless_descriptor_set = schedule.get_bindless_descriptor_set();
 
             schedule.add_compute(
                 command_name!("trace"),
@@ -2113,6 +2112,7 @@ impl Renderer {
                                     * (mem::size_of::<LightAliasEntry>() as u64),
                         );
 
+                        let bindless_descriptor_set = params.get_bindless_descriptor_set();
                         let path_trace_descriptor_set = PathTraceDescriptorSet::create(
                             descriptor_pool,
                             |buf: &mut PathTraceUniforms| {

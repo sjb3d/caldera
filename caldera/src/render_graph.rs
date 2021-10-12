@@ -110,6 +110,14 @@ impl RenderGraph {
         *self.resources.lock().unwrap().image_resource(id).desc()
     }
 
+    pub fn create_sampler(&mut self, create_info: &vk::SamplerCreateInfo) -> SamplerId {
+        self.resources.lock().unwrap().create_sampler(create_info)
+    }
+
+    pub fn get_sampler_bindless_id(&self, id: SamplerId) -> BindlessId {
+        self.resources.lock().unwrap().sampler_resource(id).bindless_id.unwrap()
+    }
+
     pub(crate) fn begin_frame(&mut self) {
         mem::swap(&mut self.ping_pong_current_set, &mut self.ping_pong_prev_set);
         let mut resources = self.resources.lock().unwrap();
@@ -245,6 +253,14 @@ impl<'graph> RenderParameterAccess<'graph> {
         Self(render_graph)
     }
 
+    pub fn get_bindless_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+        self.0.resources.lock().unwrap().bindless_descriptor_set_layout()
+    }
+
+    pub fn get_bindless_descriptor_set(&self) -> vk::DescriptorSet {
+        self.0.resources.lock().unwrap().bindless_descriptor_set()
+    }
+
     pub fn get_buffer(&self, id: BufferId) -> vk::Buffer {
         // TODO: cache these, avoid lock per parameter
         self.0.resources.lock().unwrap().buffer_resource(id).buffer().0
@@ -298,18 +314,6 @@ impl<'graph> RenderSchedule<'graph> {
         let (buf, offset) = self.render_graph.transfer_staging.alloc(size as u32, align as u32)?;
         writer(buf);
         Some((self.render_graph.transfer_staging.get_buffer(), offset))
-    }
-
-    pub fn get_bindless_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
-        self.render_graph
-            .resources
-            .lock()
-            .unwrap()
-            .bindless_descriptor_set_layout()
-    }
-
-    pub fn get_bindless_descriptor_set(&self) -> vk::DescriptorSet {
-        self.render_graph.resources.lock().unwrap().bindless_descriptor_set()
     }
 
     pub fn get_buffer(&self, id: BufferId) -> vk::Buffer {

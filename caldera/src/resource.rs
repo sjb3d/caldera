@@ -10,8 +10,8 @@ use std::{
 
 new_key_type! {
     pub struct BufferId;
-
     pub struct ImageId;
+    pub struct SamplerId;
 }
 
 pub(crate) enum BufferResource {
@@ -196,11 +196,17 @@ impl ImageResource {
     }
 }
 
+pub(crate) struct SamplerResource {
+    pub(crate) sampler: vk::Sampler,
+    pub(crate) bindless_id: Option<BindlessId>,
+}
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Contiguous)]
 pub enum BindlessClass {
     StorageBuffer,
     SampledImage2D,
+    Sampler,
 }
 
 impl BindlessClass {
@@ -264,6 +270,7 @@ impl Bindless {
 
     const MAX_STORAGE_BUFFER: u32 = 16 * 1024;
     const MAX_SAMPLED_IMAGE_2D: u32 = 1024;
+    const MAX_SAMPLERS: u32 = 32;
 
     pub fn new(context: &SharedContext) -> Self {
         let descriptor_set_layout = {
@@ -279,6 +286,13 @@ impl Bindless {
                     binding: BindlessClass::SampledImage2D.into_integer() as u32,
                     descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                     descriptor_count: Self::MAX_SAMPLED_IMAGE_2D,
+                    stage_flags: vk::ShaderStageFlags::ALL,
+                    ..Default::default()
+                },
+                vk::DescriptorSetLayoutBinding {
+                    binding: BindlessClass::Sampler.into_integer() as u32,
+                    descriptor_type: vk::DescriptorType::SAMPLER,
+                    descriptor_count: Self::MAX_SAMPLERS,
                     stage_flags: vk::ShaderStageFlags::ALL,
                     ..Default::default()
                 },
@@ -326,6 +340,7 @@ impl Bindless {
             indices: [
                 BindlessIndexSet::new(Self::MAX_STORAGE_BUFFER),
                 BindlessIndexSet::new(Self::MAX_SAMPLED_IMAGE_2D),
+                BindlessIndexSet::new(Self::MAX_SAMPLERS),
             ],
         }
     }
@@ -377,15 +392,37 @@ impl Bindless {
         })
     }
 
+    pub fn add_sampler(&mut self, sampler: vk::Sampler) -> Option<BindlessId> {
+        let class = BindlessClass::Sampler;
+        let index = self.indices[class.into_integer() as usize].allocate()?;
+        let image_info = vk::DescriptorImageInfo {
+            sampler: Some(sampler),
+            image_view: None,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        };
+        let write = vk::WriteDescriptorSet::builder()
+            .dst_set(self.descriptor_set)
+            .dst_binding(class.into_integer() as u32)
+            .dst_array_element(index)
+            .p_image_info(slice::from_ref(&image_info))
+            .descriptor_type(vk::DescriptorType::SAMPLER);
+        unsafe { self.context.device.update_descriptor_sets(slice::from_ref(&write), &[]) };
+        Some(BindlessId {
+            class,
+            index: index as u16,
+        })
+    }
+
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
-        for class_index in BindlessClass::MIN_VALUE..=BindlessClass::MAX_VALUE {
-            let class = BindlessClass::from_integer(class_index).unwrap();
+        for class_index in 0..Self::CLASS_COUNT {
+            let class = BindlessClass::from_integer(class_index as u8).unwrap();
             ui.text(match class {
                 BindlessClass::StorageBuffer => "bindless buffers",
                 BindlessClass::SampledImage2D => "bindless sampled2d",
+                BindlessClass::Sampler => "bindless sampler",
             });
             ui.next_column();
-            ui.text(format!("{}", self.indices[class_index as usize].next));
+            ui.text(format!("{}", self.indices[class_index].next));
             ui.next_column();
         }
     }
@@ -404,20 +441,24 @@ impl Drop for Bindless {
 pub(crate) type SharedResources = Arc<Mutex<Resources>>;
 
 pub(crate) struct Resources {
+    context: SharedContext,
     global_allocator: Allocator,
     resource_cache: ResourceCache,
     buffers: SlotMap<BufferId, BufferResource>,
     images: SlotMap<ImageId, ImageResource>,
+    samplers: SlotMap<SamplerId, SamplerResource>,
     bindless: Option<Bindless>,
 }
 
 impl Resources {
     pub fn new(context: &SharedContext, global_chunk_size: u32) -> SharedResources {
         Arc::new(Mutex::new(Self {
+            context: SharedContext::clone(context),
             global_allocator: Allocator::new(context, global_chunk_size),
             resource_cache: ResourceCache::new(context),
             buffers: SlotMap::with_key(),
             images: SlotMap::with_key(),
+            samplers: SlotMap::with_key(),
             bindless: if context.enable_bindless {
                 Some(Bindless::new(context))
             } else {
@@ -631,6 +672,19 @@ impl Resources {
             .transition_usage(new_usage, &context.device, cmd);
     }
 
+    pub fn create_sampler(&mut self, create_info: &vk::SamplerCreateInfo) -> SamplerId {
+        let sampler = unsafe { self.context.device.create_sampler(create_info, None) }.unwrap();
+        let bindless_id = self
+            .bindless
+            .as_mut()
+            .and_then(|bindless| bindless.add_sampler(sampler));
+        self.samplers.insert(SamplerResource { sampler, bindless_id })
+    }
+
+    pub fn sampler_resource(&self, id: SamplerId) -> &SamplerResource {
+        self.samplers.get(id).unwrap()
+    }
+
     pub fn ui_stats_table_rows(&self, ui: &Ui) {
         self.global_allocator.ui_stats_table_rows(ui, "global memory");
 
@@ -648,6 +702,15 @@ impl Resources {
 
         if let Some(bindless) = self.bindless.as_ref() {
             bindless.ui_stats_table_rows(ui);
+        }
+    }
+}
+
+impl Drop for Resources {
+    fn drop(&mut self) {
+        let device = &self.context.device;
+        for (_id, resource) in self.samplers.drain() {
+            unsafe { device.destroy_sampler(Some(resource.sampler), None) };
         }
     }
 }
