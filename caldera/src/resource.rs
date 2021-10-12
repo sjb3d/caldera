@@ -598,7 +598,7 @@ impl Resources {
         let bindless_id = self
             .bindless
             .as_mut()
-            .and_then(|bindless| bindless.add_image(&desc, image_view.0, all_usage));
+            .and_then(|bindless| bindless.add_image(desc, image_view.0, all_usage));
         self.images.insert(ImageResource::Active {
             desc: *desc,
             _alloc: Some(alloc),

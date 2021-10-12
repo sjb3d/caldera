@@ -285,8 +285,9 @@ impl App {
         let main_sample_count = vk::SampleCountFlags::N1;
         let depth_image_desc = ImageDesc::new_2d(swap_size, vk::Format::D32_SFLOAT, vk::ImageAspectFlags::DEPTH);
         let depth_image = schedule.describe_image(&depth_image_desc);
-        let main_render_state =
-            RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]).with_depth_temp(depth_image);
+        let main_render_state = RenderState::new()
+            .with_color(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32])
+            .with_depth(depth_image, AttachmentLoadOp::Clear, AttachmentStoreOp::None);
 
         let view_from_world = Similarity3::new(
             Vec3::new(0.0, 0.0, -2.5),

@@ -153,32 +153,61 @@ impl RenderGraph {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttachmentLoadOp {
+    Load,
+    Clear,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttachmentStoreOp {
+    Store,
+    None,
+}
+
+#[derive(Clone, Copy)]
+pub struct Attachment {
+    pub image_id: ImageId,
+    pub load_op: AttachmentLoadOp,
+    pub store_op: AttachmentStoreOp,
+}
+
 /// State for a batch of draw calls, becomes a Vulkan sub-pass
 #[derive(Clone, Copy)]
 pub struct RenderState {
-    pub color_output_id: ImageId,
+    pub color_output_id: Option<ImageId>,
     pub color_clear_value: [f32; 4],
     pub color_temp_id: Option<ImageId>,
-    pub depth_temp_id: Option<ImageId>,
+    pub depth: Option<Attachment>,
 }
 
 impl RenderState {
-    pub fn new(color_output_id: ImageId, color_clear_value: &[f32; 4]) -> Self {
+    pub fn new() -> Self {
         Self {
-            color_output_id,
-            color_clear_value: *color_clear_value,
+            color_output_id: None,
+            color_clear_value: [0.0; 4],
             color_temp_id: None,
-            depth_temp_id: None,
+            depth: None,
         }
     }
 
-    pub fn with_color_temp(mut self, image_id: ImageId) -> Self {
-        self.color_temp_id = Some(image_id);
+    pub fn with_color(mut self, id: ImageId, clear_value: &[f32; 4]) -> Self {
+        self.color_output_id = Some(id);
+        self.color_clear_value = *clear_value;
         self
     }
 
-    pub fn with_depth_temp(mut self, image_id: ImageId) -> Self {
-        self.depth_temp_id = Some(image_id);
+    pub fn with_color_temp(mut self, id: ImageId) -> Self {
+        self.color_temp_id = Some(id);
+        self
+    }
+
+    pub fn with_depth(mut self, image_id: ImageId, load_op: AttachmentLoadOp, store_op: AttachmentStoreOp) -> Self {
+        self.depth = Some(Attachment {
+            image_id,
+            load_op,
+            store_op,
+        });
         self
     }
 }
@@ -336,6 +365,10 @@ impl<'graph> RenderSchedule<'graph> {
             .unwrap()
     }
 
+    pub fn get_image_desc(&self, id: ImageId) -> ImageDesc {
+        *self.render_graph.resources.lock().unwrap().image_resource(id).desc()
+    }
+
     pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {
         self.render_graph
             .resources
@@ -459,18 +492,24 @@ impl<'graph> RenderSchedule<'graph> {
                 let common = match command {
                     Command::Compute { common, .. } => common,
                     Command::Graphics { common, state, .. } => {
-                        resources
-                            .image_resource_mut(state.color_output_id)
-                            .declare_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
+                        if let Some(id) = state.color_output_id {
+                            resources
+                                .image_resource_mut(id)
+                                .declare_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
+                        }
                         if let Some(id) = state.color_temp_id {
                             resources
                                 .image_resource_mut(id)
                                 .declare_usage(ImageUsage::TRANSIENT_COLOR_ATTACHMENT);
                         }
-                        if let Some(id) = state.depth_temp_id {
-                            resources
-                                .image_resource_mut(id)
-                                .declare_usage(ImageUsage::TRANSIENT_DEPTH_ATTACHMENT)
+                        if let Some(depth) = state.depth {
+                            let usage = match (depth.load_op, depth.store_op) {
+                                (AttachmentLoadOp::Clear, AttachmentStoreOp::None) => {
+                                    ImageUsage::TRANSIENT_DEPTH_ATTACHMENT
+                                }
+                                _ => ImageUsage::DEPTH_ATTACHMENT,
+                            };
+                            resources.image_resource_mut(depth.image_id).declare_usage(usage)
                         }
                         common
                     }
@@ -547,10 +586,23 @@ impl<'graph> RenderSchedule<'graph> {
                 }
                 Command::Graphics { state, callback, .. } => {
                     let render_pass = {
-                        let resources = self.render_graph.resources.lock().unwrap();
+                        let mut resources = self.render_graph.resources.lock().unwrap();
 
-                        // TODO: initial layout as part of render pass (assumes UNDEFINED for now)
-                        cmd.notify_image_use(state.color_output_id, query_pool);
+                        // TODO: initial layout as part of render pass
+                        if let Some(id) = state.color_output_id {
+                            cmd.notify_image_use(id, query_pool);
+                            // TODO: resource transition when UNDEFINED is no longer ok for color
+                        }
+                        if let Some(depth) = state.depth {
+                            if depth.load_op == AttachmentLoadOp::Load {
+                                resources.transition_image_usage(
+                                    depth.image_id,
+                                    ImageUsage::DEPTH_ATTACHMENT,
+                                    context,
+                                    cmd.current,
+                                );
+                            }
+                        }
 
                         let mut clear_values = ArrayVec::<_, { RenderCache::MAX_ATTACHMENTS }>::new();
                         let color_clear_value = vk::ClearValue {
@@ -562,56 +614,82 @@ impl<'graph> RenderSchedule<'graph> {
                             depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
                         };
 
-                        // color output (always present for now)
-                        clear_values.push(color_clear_value);
-                        let color_output_resource = resources.image_resource(state.color_output_id);
-                        let color_output_desc = color_output_resource.desc();
-                        let color_output_image_view = color_output_resource.image_view();
+                        // get dimensions and sample count
+                        let size = state
+                            .color_output_id
+                            .or(state.depth.map(|depth| depth.image_id))
+                            .map(|id| resources.image_resource(id).desc().size())
+                            .unwrap();
+                        let samples = state
+                            .color_temp_id
+                            .map(|id| resources.image_resource(id).desc().samples)
+                            .unwrap_or(vk::SampleCountFlags::N1);
 
-                        // color temp (if present)
-                        let (samples, color_temp_image_view) = if let Some(color_temp_id) = state.color_temp_id {
-                            let color_temp_resource = resources.image_resource(color_temp_id);
-                            let color_temp_desc = color_temp_resource.desc();
-                            let color_temp_image_view = color_temp_resource.image_view();
+                        // color output
+                        let (color_format, color_output_image_view, color_temp_image_view) =
+                            if let Some(color_output_id) = state.color_output_id {
+                                let color_output_resource = resources.image_resource(color_output_id);
+                                let color_output_desc = color_output_resource.desc();
+                                let color_output_image_view = color_output_resource.image_view();
 
-                            assert_eq!(color_output_desc.size(), color_temp_desc.size());
-                            assert_eq!(color_output_desc.format, color_temp_desc.format);
+                                let format = color_output_desc.format;
+                                assert_eq!(size, color_output_desc.size());
 
-                            clear_values.push(color_clear_value);
+                                // color temp (if present)
+                                let color_temp_image_view = if let Some(color_temp_id) = state.color_temp_id {
+                                    let color_temp_resource = resources.image_resource(color_temp_id);
+                                    let color_temp_desc = color_temp_resource.desc();
+                                    let color_temp_image_view = color_temp_resource.image_view();
 
-                            (color_temp_desc.samples, Some(color_temp_image_view))
-                        } else {
-                            (vk::SampleCountFlags::N1, None)
-                        };
+                                    assert_eq!(size, color_temp_desc.size());
+                                    assert_eq!(format, color_temp_desc.format);
+
+                                    clear_values.push(color_clear_value);
+                                    Some(color_temp_image_view)
+                                } else {
+                                    None
+                                };
+
+                                clear_values.push(color_clear_value);
+                                (Some(format), Some(color_output_image_view), color_temp_image_view)
+                            } else {
+                                (None, None, None)
+                            };
 
                         // depth temp (if present)
-                        let (depth_format, depth_temp_image_view) = if let Some(depth_temp_id) = state.depth_temp_id {
-                            let depth_temp_resource = resources.image_resource(depth_temp_id);
-                            let depth_temp_desc = depth_temp_resource.desc();
-                            let depth_temp_image_view = depth_temp_resource.image_view();
+                        let (render_pass_depth, depth_image_view) = if let Some(depth) = state.depth {
+                            let depth_resource = resources.image_resource(depth.image_id);
+                            let depth_desc = depth_resource.desc();
+                            let depth_image_view = depth_resource.image_view();
 
-                            assert_eq!(color_output_desc.size(), depth_temp_desc.size());
-                            assert_eq!(samples, depth_temp_desc.samples);
+                            let format = depth_desc.format;
+                            assert_eq!(size, depth_desc.size());
+                            assert_eq!(samples, depth_desc.samples);
 
                             clear_values.push(depth_clear_value);
-
-                            (Some(depth_temp_desc.format), Some(depth_temp_image_view))
+                            (
+                                Some(RenderPassDepth {
+                                    format,
+                                    load_op: depth.load_op,
+                                    store_op: depth.store_op,
+                                }),
+                                Some(depth_image_view),
+                            )
                         } else {
                             (None, None)
                         };
 
-                        let render_pass = self.render_graph.render_cache.get_render_pass(
-                            color_output_desc.format,
-                            depth_format,
-                            samples,
-                        );
+                        let render_pass =
+                            self.render_graph
+                                .render_cache
+                                .get_render_pass(color_format, render_pass_depth, samples);
 
                         let framebuffer = self.render_graph.render_cache.get_framebuffer(
                             render_pass,
-                            color_output_desc.size(),
+                            size,
                             color_output_image_view,
                             color_temp_image_view,
-                            depth_temp_image_view,
+                            depth_image_view,
                         );
 
                         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
@@ -619,7 +697,10 @@ impl<'graph> RenderSchedule<'graph> {
                             .framebuffer(framebuffer.0)
                             .render_area(vk::Rect2D {
                                 offset: Default::default(),
-                                extent: color_output_desc.extent_2d(),
+                                extent: vk::Extent2D {
+                                    width: size.x,
+                                    height: size.y,
+                                },
                             })
                             .p_clear_values(&clear_values);
                         unsafe {
@@ -644,12 +725,14 @@ impl<'graph> RenderSchedule<'graph> {
                     unsafe { context.device.cmd_end_render_pass(cmd.current) };
 
                     // TODO: final layout as part of render pass
-                    self.render_graph
-                        .resources
-                        .lock()
-                        .unwrap()
-                        .image_resource_mut(state.color_output_id)
-                        .force_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
+                    if let Some(id) = state.color_output_id {
+                        self.render_graph
+                            .resources
+                            .lock()
+                            .unwrap()
+                            .image_resource_mut(id)
+                            .force_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
+                    }
                 }
             }
 

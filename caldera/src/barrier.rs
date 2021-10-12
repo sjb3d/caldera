@@ -421,6 +421,14 @@ image_usage_impl! {
         AccessCategory::WRITE
     ),
     (
+        DEPTH_ATTACHMENT,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+        AccessCategory::READ | AccessCategory::WRITE
+    ),
+    (
         FRAGMENT_STORAGE_READ,
         vk::ImageUsageFlags::STORAGE,
         vk::PipelineStageFlags::FRAGMENT_SHADER,

@@ -158,7 +158,7 @@ struct PipelineLayoutCache {
 impl PipelineLayoutCache {
     fn new(context: &SharedContext) -> Self {
         Self {
-            context: SharedContext::clone(&context),
+            context: SharedContext::clone(context),
             layouts: HashMap::new(),
         }
     }
@@ -189,6 +189,7 @@ pub struct GraphicsPipelineState {
     topology: vk::PrimitiveTopology,
     render_pass: vk::RenderPass, // TODO: replace with state for *compatible* pass
     samples: vk::SampleCountFlags,
+    depth_compare_op: vk::CompareOp,
 }
 
 impl GraphicsPipelineState {
@@ -199,6 +200,7 @@ impl GraphicsPipelineState {
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             render_pass,
             samples,
+            depth_compare_op: vk::CompareOp::GREATER_OR_EQUAL,
         }
     }
 
@@ -216,6 +218,11 @@ impl GraphicsPipelineState {
 
     pub fn with_topology(mut self, topology: vk::PrimitiveTopology) -> Self {
         self.topology = topology;
+        self
+    }
+
+    pub fn with_depth_compare_op(mut self, compare_op: vk::CompareOp) -> Self {
+        self.depth_compare_op = compare_op;
         self
     }
 }
@@ -590,7 +597,7 @@ impl PipelineCache {
             let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
                 .depth_test_enable(true)
                 .depth_write_enable(true)
-                .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
+                .depth_compare_op(state.depth_compare_op);
 
             let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
                 color_write_mask: vk::ColorComponentFlags::all(),

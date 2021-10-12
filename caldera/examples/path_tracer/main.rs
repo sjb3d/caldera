@@ -302,7 +302,7 @@ impl App {
         );
 
         let main_sample_count = vk::SampleCountFlags::N1;
-        let main_render_state = RenderState::new(swap_image, &[0f32, 0f32, 0f32, 0f32]);
+        let main_render_state = RenderState::new().with_color(swap_image, &[0f32, 0f32, 0f32, 0f32]);
 
         schedule.add_graphics(
             command_name!("main"),

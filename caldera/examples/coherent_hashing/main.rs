@@ -199,7 +199,7 @@ impl App {
         );
 
         let main_sample_count = vk::SampleCountFlags::N1;
-        let main_render_state = RenderState::new(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]);
+        let main_render_state = RenderState::new().with_color(swap_image, &[0.1f32, 0.1f32, 0.1f32, 0f32]);
 
         let image_size = UVec2::new(1024, 1024);
         let image_desc = ImageDesc::new_2d(image_size, vk::Format::R8_UNORM, vk::ImageAspectFlags::COLOR);

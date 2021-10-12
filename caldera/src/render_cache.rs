@@ -198,9 +198,16 @@ impl DeviceGraphExt for Device {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct RenderPassDepth {
+    pub(crate) format: vk::Format,
+    pub(crate) load_op: AttachmentLoadOp,
+    pub(crate) store_op: AttachmentStoreOp,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct RenderPassKey {
-    color_format: vk::Format,
-    depth_format: Option<vk::Format>,
+    color_format: Option<vk::Format>,
+    depth: Option<RenderPassDepth>,
     samples: vk::SampleCountFlags,
 }
 
@@ -251,9 +258,9 @@ struct ImageViewKey {
 struct FramebufferKey {
     render_pass: UniqueRenderPass,
     size: UVec2,
-    color_output_image_view: UniqueImageView,
+    color_output_image_view: Option<UniqueImageView>,
     color_temp_image_view: Option<UniqueImageView>,
-    depth_temp_image_view: Option<UniqueImageView>,
+    depth_image_view: Option<UniqueImageView>,
 }
 
 pub(crate) struct ResourceCache {
@@ -464,8 +471,8 @@ impl RenderCache {
 
     pub fn get_render_pass(
         &mut self,
-        color_format: vk::Format,
-        depth_format: Option<vk::Format>,
+        color_format: Option<vk::Format>,
+        depth: Option<RenderPassDepth>,
         samples: vk::SampleCountFlags,
     ) -> UniqueRenderPass {
         let context = &self.context;
@@ -473,14 +480,14 @@ impl RenderCache {
             .render_pass
             .entry(RenderPassKey {
                 color_format,
-                depth_format,
+                depth,
                 samples,
             })
             .or_insert_with(|| {
                 let render_pass = {
                     let is_msaa = samples != vk::SampleCountFlags::N1;
                     let mut attachments = ArrayVec::<_, { Self::MAX_ATTACHMENTS }>::new();
-                    let subpass_color_attachment = {
+                    let subpass_color_attachment = color_format.map(|color_format| {
                         let index = attachments.len() as u32;
                         attachments.push(vk::AttachmentDescription {
                             flags: vk::AttachmentDescriptionFlags::empty(),
@@ -501,8 +508,8 @@ impl RenderCache {
                             attachment: index,
                             layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                         }
-                    };
-                    let subpass_resolve_attachment = if is_msaa {
+                    });
+                    let subpass_resolve_attachment = color_format.filter(|_| is_msaa).map(|color_format| {
                         let index = attachments.len() as u32;
                         attachments.push(vk::AttachmentDescription {
                             flags: vk::AttachmentDescriptionFlags::empty(),
@@ -515,37 +522,42 @@ impl RenderCache {
                             initial_layout: vk::ImageLayout::UNDEFINED,
                             final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                         });
-                        Some(vk::AttachmentReference {
+                        vk::AttachmentReference {
                             attachment: index,
                             layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                        })
-                    } else {
-                        None
-                    };
-                    let subpass_depth_attachment = if let Some(depth_format) = depth_format {
+                        }
+                    });
+                    let subpass_depth_attachment = depth.as_ref().map(|depth| {
                         let index = attachments.len() as u32;
                         attachments.push(vk::AttachmentDescription {
                             flags: vk::AttachmentDescriptionFlags::empty(),
-                            format: depth_format,
+                            format: depth.format,
                             samples,
-                            load_op: vk::AttachmentLoadOp::CLEAR,
-                            store_op: vk::AttachmentStoreOp::DONT_CARE,
+                            load_op: match depth.load_op {
+                                AttachmentLoadOp::Load => vk::AttachmentLoadOp::LOAD,
+                                AttachmentLoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
+                            },
+                            store_op: match depth.store_op {
+                                AttachmentStoreOp::Store => vk::AttachmentStoreOp::STORE,
+                                AttachmentStoreOp::None => vk::AttachmentStoreOp::DONT_CARE,
+                            },
                             stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
                             stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
-                            initial_layout: vk::ImageLayout::UNDEFINED,
+                            initial_layout: match depth.load_op {
+                                AttachmentLoadOp::Load => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                AttachmentLoadOp::Clear => vk::ImageLayout::UNDEFINED,
+                            },
                             final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                         });
-                        Some(vk::AttachmentReference {
+                        vk::AttachmentReference {
                             attachment: index,
                             layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                        })
-                    } else {
-                        None
-                    };
+                        }
+                    });
                     let subpass_description = vk::SubpassDescription::builder()
                         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                         .p_color_attachments(
-                            slice::from_ref(&subpass_color_attachment),
+                            subpass_color_attachment.as_ref().map(slice::from_ref).unwrap_or(&[]),
                             subpass_resolve_attachment.as_ref().map(slice::from_ref),
                         )
                         .p_depth_stencil_attachment(subpass_depth_attachment.as_ref());
@@ -562,9 +574,9 @@ impl RenderCache {
         &mut self,
         render_pass: UniqueRenderPass,
         size: UVec2,
-        color_output_image_view: UniqueImageView,
+        color_output_image_view: Option<UniqueImageView>,
         color_temp_image_view: Option<UniqueImageView>,
-        depth_temp_image_view: Option<UniqueImageView>,
+        depth_image_view: Option<UniqueImageView>,
     ) -> UniqueFramebuffer {
         let context = &self.context;
         *self
@@ -574,18 +586,19 @@ impl RenderCache {
                 size,
                 color_output_image_view,
                 color_temp_image_view,
-                depth_temp_image_view,
+                depth_image_view,
             })
             .or_insert_with(|| {
                 let mut attachments = ArrayVec::<_, { Self::MAX_ATTACHMENTS }>::new();
-                if let Some(color_temp_image_view) = color_temp_image_view {
-                    attachments.push(color_temp_image_view.0);
+                if let Some(image_view) = color_temp_image_view {
+                    attachments.push(image_view.0);
                 }
-                attachments.push(color_output_image_view.0);
-                if let Some(depth_temp_image_view) = depth_temp_image_view {
-                    attachments.push(depth_temp_image_view.0);
+                if let Some(image_view) = color_output_image_view {
+                    attachments.push(image_view.0);
                 }
-
+                if let Some(image_view) = depth_image_view {
+                    attachments.push(image_view.0);
+                }
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(render_pass.0)
                     .p_attachments(&attachments)
