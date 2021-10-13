@@ -145,7 +145,7 @@ impl Drop for ShaderLoader {
     }
 }
 
-const MAX_DESCRIPTOR_SETS_PER_PIPELINE: usize = 3;
+const MAX_DESCRIPTOR_SETS_PER_PIPELINE: usize = 4;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct PipelineLayoutKey(ArrayVec<vk::DescriptorSetLayout, MAX_DESCRIPTOR_SETS_PER_PIPELINE>);
