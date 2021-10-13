@@ -536,26 +536,28 @@ impl Resources {
 
     pub fn allocate_temporary_buffer(&mut self, id: BufferId, allocator: &mut Allocator) {
         let buffer_resource = self.buffers.get_mut(id).unwrap();
-        *buffer_resource = match buffer_resource {
+        match buffer_resource {
             BufferResource::Described { desc, all_usage } => {
-                let all_usage_flags = all_usage.as_flags();
-                let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
-                let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
-                let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
-                let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
-                let accel = self.resource_cache.get_buffer_accel(desc, buffer, *all_usage);
-                BufferResource::Active {
-                    desc: *desc,
-                    alloc: Some(alloc),
-                    buffer,
-                    accel,
-                    bindless_id: None,
-                    current_usage: BufferUsage::empty(),
-                    all_usage_check: *all_usage,
+                if !all_usage.is_empty() {
+                    let all_usage_flags = all_usage.as_flags();
+                    let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+                    let info = self.resource_cache.get_buffer_info(desc, all_usage_flags);
+                    let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
+                    let buffer = self.resource_cache.get_buffer(desc, &info, &alloc, all_usage_flags);
+                    let accel = self.resource_cache.get_buffer_accel(desc, buffer, *all_usage);
+                    *buffer_resource = BufferResource::Active {
+                        desc: *desc,
+                        alloc: Some(alloc),
+                        buffer,
+                        accel,
+                        bindless_id: None,
+                        current_usage: BufferUsage::empty(),
+                        all_usage_check: *all_usage,
+                    }
                 }
             }
             _ => panic!("buffer is not temporary"),
-        };
+        }
     }
 
     pub fn remove_buffer(&mut self, id: BufferId) {
@@ -620,26 +622,28 @@ impl Resources {
 
     pub fn allocate_temporary_image(&mut self, id: ImageId, allocator: &mut Allocator) {
         let image_resource = self.images.get_mut(id).unwrap();
-        *image_resource = match image_resource {
+        match image_resource {
             ImageResource::Described { desc, all_usage } => {
-                let all_usage_flags = all_usage.as_flags();
-                let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
-                let info = self.resource_cache.get_image_info(desc, all_usage_flags);
-                let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
-                let image = self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags);
-                let image_view = self.resource_cache.get_image_view(desc, image);
-                ImageResource::Active {
-                    desc: *desc,
-                    _alloc: Some(alloc),
-                    bindless_id: None,
-                    image,
-                    image_view,
-                    current_usage: ImageUsage::empty(),
-                    all_usage_check: *all_usage,
+                if !all_usage.is_empty() {
+                    let all_usage_flags = all_usage.as_flags();
+                    let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+                    let info = self.resource_cache.get_image_info(desc, all_usage_flags);
+                    let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
+                    let image = self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags);
+                    let image_view = self.resource_cache.get_image_view(desc, image);
+                    *image_resource = ImageResource::Active {
+                        desc: *desc,
+                        _alloc: Some(alloc),
+                        bindless_id: None,
+                        image,
+                        image_view,
+                        current_usage: ImageUsage::empty(),
+                        all_usage_check: *all_usage,
+                    };
                 }
             }
             _ => panic!("image is not temporary"),
-        };
+        }
     }
 
     pub fn remove_image(&mut self, id: ImageId) {
