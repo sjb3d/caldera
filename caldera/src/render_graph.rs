@@ -275,6 +275,7 @@ impl RenderParameterDeclaration {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct RenderParameterAccess<'graph>(&'graph RenderGraph);
 
 impl<'graph> RenderParameterAccess<'graph> {
@@ -332,6 +333,14 @@ impl<'graph> RenderSchedule<'graph> {
             commands: Vec::new(),
             final_usage: Vec::new(),
         }
+    }
+
+    pub fn get_bindless_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+        self.render_graph
+            .resources
+            .lock()
+            .unwrap()
+            .bindless_descriptor_set_layout()
     }
 
     pub fn write_transfer(
