@@ -1,7 +1,10 @@
 use bytemuck::Contiguous;
 use spark::{vk, Device};
-use std::ops::{BitOr, BitOrAssign};
-use std::slice;
+use std::{
+    fmt,
+    ops::{BitOr, BitOrAssign},
+    slice,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccessCategory(u32);
@@ -56,7 +59,7 @@ macro_rules! base_usage_impl {
             }
 
             fn iter_set_bits(self) -> $usage_bit_iter {
-                $usage_bit_iter(self)
+                $usage_bit_iter(self.0)
             }
         }
 
@@ -73,16 +76,16 @@ macro_rules! base_usage_impl {
             }
         }
 
-        struct $usage_bit_iter($usage);
+        struct $usage_bit_iter(u32);
 
         impl Iterator for $usage_bit_iter {
             type Item = $usage_bit;
 
             fn next(&mut self) -> Option<Self::Item> {
-                let pos = self.0 .0.trailing_zeros();
+                let pos = self.0.trailing_zeros();
                 if pos < 32 {
                     let bit = 1 << pos;
-                    self.0 .0 &= !bit;
+                    self.0 &= !bit;
                     Some($usage_bit::from_integer(pos).unwrap())
                 } else {
                     None
@@ -102,6 +105,25 @@ macro_rules! buffer_usage_impl {
         }
 
         base_usage_impl!(BufferUsage, BufferUsageBit, BufferUsageBitIterator);
+
+        impl fmt::Display for BufferUsage {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let mut has_output = false;
+                for bit in self.iter_set_bits() {
+                    if has_output {
+                        f.write_str(" | ")?;
+                    }
+                    f.write_str(match bit {
+                        $(BufferUsageBit::$name => stringify!($name)),+
+                    })?;
+                    has_output = true;
+                }
+                if !has_output {
+                    f.write_str("0")?;
+                }
+                Ok(())
+            }
+        }
 
         impl BufferUsage {
             $(pub const $name: BufferUsage = BufferUsage(1 << (BufferUsageBit::$name as u32));)+
@@ -340,6 +362,25 @@ macro_rules! image_usage_impl {
         }
 
         base_usage_impl!(ImageUsage, ImageUsageBit, ImageUsageBitIterator);
+
+        impl fmt::Display for ImageUsage {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let mut has_output = false;
+                for bit in self.iter_set_bits() {
+                    if has_output {
+                        f.write_str(" | ")?;
+                    }
+                    f.write_str(match bit {
+                        $(ImageUsageBit::$name => stringify!($name)),+
+                    })?;
+                    has_output = true;
+                }
+                if !has_output {
+                    f.write_str("0")?;
+                }
+                Ok(())
+            }
+        }
 
         impl ImageUsage {
             $(pub const $name: ImageUsage = ImageUsage(1 << (ImageUsageBit::$name as u32));)+
