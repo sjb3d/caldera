@@ -742,6 +742,16 @@ impl<'graph> RenderSchedule<'graph> {
                             .image_resource_mut(id)
                             .force_usage(ImageUsage::COLOR_ATTACHMENT_WRITE);
                     }
+                    if let Some(depth) = state.depth {
+                        if depth.store_op == AttachmentStoreOp::Store {
+                            self.render_graph
+                                .resources
+                                .lock()
+                                .unwrap()
+                                .image_resource_mut(depth.image_id)
+                                .force_usage(ImageUsage::DEPTH_ATTACHMENT);
+                        }
+                    }
                 }
             }
 
