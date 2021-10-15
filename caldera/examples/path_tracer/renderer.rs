@@ -446,6 +446,24 @@ struct ShaderBindingRegion {
 }
 
 impl ShaderBindingRegion {
+    fn new(
+        rtpp: &vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
+        next_offset: u32,
+        record_size: u32,
+        entry_count: u32,
+    ) -> (Self, u32) {
+        let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
+
+        let offset = align_up(next_offset, rtpp.shader_group_base_alignment);
+        let stride = align_up(
+            rtpp.shader_group_handle_size + record_size,
+            rtpp.shader_group_handle_alignment,
+        );
+        let size = stride * entry_count;
+
+        (Self { offset, stride, size }, offset + size)
+    }
+
     fn into_device_address_region(self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
         vk::StridedDeviceAddressRegionKHR {
             device_address: base_device_address + self.offset as vk::DeviceSize,
@@ -1448,12 +1466,13 @@ impl Renderer {
             };
         }
 
-        // grab the shader group handles
         let rtpp = &context
             .physical_device_extra_properties
             .as_ref()
             .unwrap()
             .ray_tracing_pipeline;
+
+        // grab the shader group handles
         let handle_size = rtpp.shader_group_handle_size as usize;
         let shader_group_count = 1 + ShaderGroup::MAX_VALUE;
         let mut shader_group_handle_data = vec![0u8; shader_group_count * handle_size];
@@ -1484,58 +1503,28 @@ impl Renderer {
         let total_light_count = external_light_end;
 
         // figure out the layout
-        let rtpp = &context
-            .physical_device_extra_properties
-            .as_ref()
-            .unwrap()
-            .ray_tracing_pipeline;
-
-        let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
-        let mut next_offset = 0;
+        let next_offset = 0;
 
         // ray generation
         let raygen_record_size = 0;
-        let raygen_stride = align_up(
-            rtpp.shader_group_handle_size + raygen_record_size,
-            rtpp.shader_group_handle_alignment,
-        );
-        let raygen_region = ShaderBindingRegion {
-            offset: next_offset,
-            stride: raygen_stride,
-            size: raygen_stride,
-        };
-        next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
+        let (raygen_region, next_offset) = ShaderBindingRegion::new(rtpp, next_offset, raygen_record_size, 1);
 
         // miss shaders
         let miss_record_size = 0;
-        let miss_stride = align_up(
-            rtpp.shader_group_handle_size + miss_record_size,
-            rtpp.shader_group_handle_alignment,
-        );
-        let miss_entry_count = Self::MISS_ENTRY_COUNT;
-        let miss_region = ShaderBindingRegion {
-            offset: next_offset,
-            stride: miss_stride,
-            size: miss_stride * miss_entry_count,
-        };
-        next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
+        let (miss_region, next_offset) =
+            ShaderBindingRegion::new(rtpp, next_offset, miss_record_size, Self::MISS_ENTRY_COUNT);
 
         // hit shaders
         let hit_record_size = mem::size_of::<ExtendTriangleHitRecord>()
             .max(mem::size_of::<IntersectDiscRecord>())
             .max(mem::size_of::<IntersectSphereRecord>())
             .max(mem::size_of::<IntersectMandelbulbRecord>()) as u32;
-        let hit_stride = align_up(
-            rtpp.shader_group_handle_size + hit_record_size,
-            rtpp.shader_group_handle_alignment,
+        let (hit_region, next_offset) = ShaderBindingRegion::new(
+            rtpp,
+            next_offset,
+            hit_record_size,
+            (scene.instances.len() as u32) * Self::HIT_ENTRY_COUNT_PER_INSTANCE,
         );
-        let hit_entry_count = (scene.instances.len() as u32) * Self::HIT_ENTRY_COUNT_PER_INSTANCE;
-        let hit_region = ShaderBindingRegion {
-            offset: next_offset,
-            stride: hit_stride,
-            size: hit_stride * hit_entry_count,
-        };
-        next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
 
         let total_size = next_offset;
 

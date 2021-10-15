@@ -285,6 +285,24 @@ struct ShaderBindingRegion {
 }
 
 impl ShaderBindingRegion {
+    fn new(
+        rtpp: &vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
+        next_offset: u32,
+        record_size: u32,
+        entry_count: u32,
+    ) -> (Self, u32) {
+        let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
+
+        let offset = align_up(next_offset, rtpp.shader_group_base_alignment);
+        let stride = align_up(
+            rtpp.shader_group_handle_size + record_size,
+            rtpp.shader_group_handle_alignment,
+        );
+        let size = stride * entry_count;
+
+        (Self { offset, stride, size }, offset + size)
+    }
+
     fn into_device_address_region(self, base_device_address: vk::DeviceAddress) -> vk::StridedDeviceAddressRegionKHR {
         vk::StridedDeviceAddressRegionKHR {
             device_address: base_device_address + self.offset as vk::DeviceSize,
@@ -353,45 +371,16 @@ impl AccelInfo {
                 .unwrap()
                 .ray_tracing_pipeline;
 
-            let align_up = |n: u32, a: u32| (n + a - 1) & !(a - 1);
-
-            let mut next_offset = 0;
+            let next_offset = 0;
 
             let raygen_record_size = 0;
-            let raygen_stride = align_up(
-                rtpp.shader_group_handle_size + raygen_record_size,
-                rtpp.shader_group_handle_alignment,
-            );
-            let raygen_region = ShaderBindingRegion {
-                offset: next_offset,
-                stride: raygen_stride,
-                size: raygen_stride,
-            };
-            next_offset += align_up(raygen_region.size, rtpp.shader_group_base_alignment);
+            let (raygen_region, next_offset) = ShaderBindingRegion::new(rtpp, next_offset, raygen_record_size, 1);
 
             let miss_record_size = 0;
-            let miss_stride = align_up(
-                rtpp.shader_group_handle_size + miss_record_size,
-                rtpp.shader_group_handle_alignment,
-            );
-            let miss_region = ShaderBindingRegion {
-                offset: next_offset,
-                stride: miss_stride,
-                size: miss_stride,
-            };
-            next_offset += align_up(miss_region.size, rtpp.shader_group_base_alignment);
+            let (miss_region, next_offset) = ShaderBindingRegion::new(rtpp, next_offset, miss_record_size, 1);
 
             let hit_record_size = mem::size_of::<HitRecordData>() as u32;
-            let hit_stride = align_up(
-                rtpp.shader_group_handle_size + hit_record_size,
-                rtpp.shader_group_handle_alignment,
-            );
-            let hit_region = ShaderBindingRegion {
-                offset: next_offset,
-                stride: hit_stride,
-                size: hit_stride,
-            };
-            next_offset += align_up(hit_region.size, rtpp.shader_group_base_alignment);
+            let (hit_region, next_offset) = ShaderBindingRegion::new(rtpp, next_offset, hit_record_size, 1);
 
             (raygen_region, miss_region, hit_region, next_offset)
         };
