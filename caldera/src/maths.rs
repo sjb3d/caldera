@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use std::ops::Mul;
+use std::ops::{Add, Mul};
 
 pub use std::f32::consts::PI;
 pub use ultraviolet::*;
@@ -372,5 +372,52 @@ impl Mul<Vec2> for Scale2Offset2 {
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn mul(self, rhs: Vec2) -> Self::Output {
         self.scale.mul_add(rhs, self.offset)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FieldOfView {
+    pub tan_min: Vec2,
+    pub tan_max: Vec2,
+}
+
+impl FieldOfView {
+    pub fn new_symmetric(vertical_fov: f32, aspect_ratio: f32) -> Self {
+        let tan_fov_y = (0.5 * vertical_fov).tan();
+        let tan_fov_x = aspect_ratio * tan_fov_y;
+        Self {
+            tan_min: Vec2::new(-tan_fov_x, -tan_fov_y),
+            tan_max: Vec2::new(tan_fov_x, tan_fov_y),
+        }
+    }
+
+    pub fn size(&self) -> Vec2 {
+        self.tan_max - self.tan_min
+    }
+
+    pub fn view_xy_from_uv(&self) -> Scale2Offset2 {
+        Scale2Offset2::new(self.size(), self.tan_min) * Scale2Offset2::new(Vec2::new(-1.0, 1.0), Vec2::new(1.0, 0.0))
+    }
+
+    pub fn perspective_reversed_infinite_z(&self, z_near: f32) -> Mat4 {
+        let tan_from_clip = Scale2Offset2::new(self.size(), self.tan_min)
+            * Scale2Offset2::new(Vec2::new(0.5, -0.5), Vec2::broadcast(0.5));
+        let clip_from_tan = tan_from_clip.inversed();
+        Mat4::new(
+            Vec4::new(clip_from_tan.scale.x, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, clip_from_tan.scale.y, 0.0, 0.0),
+            Vec4::new(clip_from_tan.offset.x, clip_from_tan.offset.y, 0.0, -1.0),
+            Vec4::new(0.0, 0.0, z_near, 0.0),
+        )
+    }
+}
+
+impl Add<Vec2> for FieldOfView {
+    type Output = Self;
+    fn add(self, rhs: Vec2) -> Self::Output {
+        Self {
+            tan_min: self.tan_min + rhs,
+            tan_max: self.tan_max + rhs,
+        }
     }
 }
