@@ -596,8 +596,8 @@ impl ResourceLoader {
         }
     }
 
-    pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {
-        self.shared.resources.lock().unwrap().image_resource(id).image_view().0
+    pub fn get_image_view(&self, id: ImageId, view_desc: ImageViewDesc) -> vk::ImageView {
+        self.shared.resources.lock().unwrap().image_view(id, view_desc).0
     }
 
     pub fn get_image_bindless_id(&self, id: ImageId) -> BindlessId {

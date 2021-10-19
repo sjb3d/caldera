@@ -203,9 +203,10 @@ impl App {
                     set_viewport_helper(&context.device, cmd, swap_size);
 
                     if let Some(trace_image) = trace_image {
-                        let trace_image_view = params.get_image_view(trace_image);
-
-                        let copy_descriptor_set = CopyDescriptorSet::create(descriptor_pool, trace_image_view);
+                        let copy_descriptor_set = CopyDescriptorSet::create(
+                            descriptor_pool,
+                            params.get_image_view(trace_image, ImageViewDesc::default()),
+                        );
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
 

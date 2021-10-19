@@ -509,8 +509,6 @@ impl AccelInfo {
                 params.add_image(output_image_id, ImageUsage::RAY_TRACING_STORAGE_WRITE);
             },
             move |params, cmd| {
-                let output_image_view = params.get_image_view(output_image_id);
-
                 let trace_descriptor_set = TraceDescriptorSet::create(
                     descriptor_pool,
                     |buf: &mut TraceData| {
@@ -520,7 +518,7 @@ impl AccelInfo {
                         }
                     },
                     params.get_buffer_accel(top_level.buffer_id),
-                    output_image_view,
+                    params.get_image_view(output_image_id, ImageViewDesc::default()),
                 );
 
                 unsafe {

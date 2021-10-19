@@ -1103,7 +1103,7 @@ impl Renderer {
                 let pixel: [f32; 2] = [sample.x(), sample.y()];
                 writer.write(&pixel);
             }
-            loader.get_image_view(writer.finish().await)
+            loader.get_image_view(writer.finish().await, ImageViewDesc::default())
         });
 
         let loader = resource_loader.clone();
@@ -1134,7 +1134,7 @@ impl Renderer {
                 let pixel: [u32; 4] = [s0, s1, s2, s3];
                 writer.write(&pixel);
             }
-            loader.get_image_view(writer.finish().await)
+            loader.get_image_view(writer.finish().await, ImageViewDesc::default())
         });
 
         let loader = resource_loader.clone();
@@ -1163,7 +1163,7 @@ impl Renderer {
             ];
             writer.write(SMITS_TABLE);
 
-            loader.get_image_view(writer.finish().await)
+            loader.get_image_view(writer.finish().await, ImageViewDesc::default())
         });
 
         const WAVELENGTH_MIN: u32 = 380;
@@ -1202,7 +1202,7 @@ impl Renderer {
                 }
             }
 
-            loader.get_image_view(writer.finish().await)
+            loader.get_image_view(writer.finish().await, ImageViewDesc::default())
         });
 
         const CONDUCTOR_RESOLUTION: u32 = 10;
@@ -1257,7 +1257,7 @@ impl Renderer {
                 }
             }
 
-            loader.get_image_view(writer.finish().await)
+            loader.get_image_view(writer.finish().await, ImageViewDesc::default())
         });
 
         // HACK: use the first illuminant in the scene as the pdf for wavelength sampling
@@ -1337,8 +1337,8 @@ impl Renderer {
             let inv_cdf_image_id = writer.finish();
 
             (
-                loader.get_image_view(pdf_image_id.await),
-                loader.get_image_view(inv_cdf_image_id.await),
+                loader.get_image_view(pdf_image_id.await, ImageViewDesc::default()),
+                loader.get_image_view(inv_cdf_image_id.await, ImageViewDesc::default()),
             )
         });
 
@@ -1355,7 +1355,7 @@ impl Renderer {
             for wavelength in WAVELENGTH_MIN..WAVELENGTH_MAX {
                 writer.write(&sweep.next(wavelength as f32 + 0.5).xyzw());
             }
-            loader.get_image_view(writer.finish().await)
+            loader.get_image_view(writer.finish().await, ImageViewDesc::default())
         });
 
         let result_image_id = resource_loader.graphics({
@@ -2044,9 +2044,9 @@ impl Renderer {
                     let camera = *camera;
                     move |params, cmd| {
                         let temp_image_views = [
-                            params.get_image_view(temp_images.0),
-                            params.get_image_view(temp_images.1),
-                            params.get_image_view(temp_images.2),
+                            params.get_image_view(temp_images.0, ImageViewDesc::default()),
+                            params.get_image_view(temp_images.1, ImageViewDesc::default()),
+                            params.get_image_view(temp_images.2, ImageViewDesc::default()),
                         ];
 
                         let size_flt = self.params.size().as_float();
@@ -2212,11 +2212,11 @@ impl Renderer {
                     let sample_index = progress.next_sample_index;
                     move |params, cmd| {
                         let temp_image_views = [
-                            params.get_image_view(temp_images.0),
-                            params.get_image_view(temp_images.1),
-                            params.get_image_view(temp_images.2),
+                            params.get_image_view(temp_images.0, ImageViewDesc::default()),
+                            params.get_image_view(temp_images.1, ImageViewDesc::default()),
+                            params.get_image_view(temp_images.2, ImageViewDesc::default()),
                         ];
-                        let result_image_view = params.get_image_view(self.result_image_id);
+                        let result_image_view = params.get_image_view(self.result_image_id, ImageViewDesc::default());
 
                         let descriptor_set = FilterDescriptorSet::create(
                             descriptor_pool,

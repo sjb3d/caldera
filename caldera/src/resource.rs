@@ -109,7 +109,6 @@ pub(crate) enum ImageResource {
         desc: ImageDesc,
         _alloc: Option<Alloc>,
         image: UniqueImage,
-        image_view: UniqueImageView,
         bindless_id: Option<BindlessId>,
         current_usage: ImageUsage,
         all_usage_check: ImageUsage,
@@ -128,13 +127,6 @@ impl ImageResource {
         match self {
             ImageResource::Described { .. } => panic!("image is only described"),
             ImageResource::Active { image, .. } => *image,
-        }
-    }
-
-    pub fn image_view(&self) -> UniqueImageView {
-        match self {
-            ImageResource::Described { .. } => panic!("image is only described"),
-            ImageResource::Active { image_view, .. } => *image_view,
         }
     }
 
@@ -534,6 +526,10 @@ impl Resources {
         self.buffers.get_mut(id).unwrap()
     }
 
+    pub fn buffer_desc(&self, id: BufferId) -> &BufferDesc {
+        self.buffers.get(id).unwrap().desc()
+    }
+
     pub fn allocate_temporary_buffer(&mut self, id: BufferId, allocator: &mut Allocator) {
         let buffer_resource = self.buffers.get_mut(id).unwrap();
         match buffer_resource {
@@ -578,12 +574,10 @@ impl Resources {
         image: UniqueImage,
         current_usage: ImageUsage,
     ) -> ImageId {
-        let image_view = self.resource_cache.get_image_view(desc, image);
         self.images.insert(ImageResource::Active {
             desc: *desc,
             _alloc: None,
             image,
-            image_view,
             bindless_id: None,
             current_usage,
             all_usage_check: all_usage,
@@ -596,7 +590,9 @@ impl Resources {
         let info = self.resource_cache.get_image_info(desc, all_usage_flags);
         let alloc = self.global_allocator.allocate(&info.mem_req, memory_property_flags);
         let image = self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags);
-        let image_view = self.resource_cache.get_image_view(desc, image);
+        let image_view = self
+            .resource_cache
+            .get_image_view(desc, image, ImageViewDesc::default());
         let bindless_id = self
             .bindless
             .as_mut()
@@ -605,7 +601,6 @@ impl Resources {
             desc: *desc,
             _alloc: Some(alloc),
             image,
-            image_view,
             bindless_id,
             current_usage: ImageUsage::empty(),
             all_usage_check: all_usage,
@@ -620,6 +615,16 @@ impl Resources {
         self.images.get_mut(id).unwrap()
     }
 
+    pub fn image_desc(&self, id: ImageId) -> &ImageDesc {
+        self.images.get(id).unwrap().desc()
+    }
+
+    pub fn image_view(&mut self, id: ImageId, view_desc: ImageViewDesc) -> UniqueImageView {
+        let resource = self.images.get(id).unwrap();
+        self.resource_cache
+            .get_image_view(resource.desc(), resource.image(), view_desc)
+    }
+
     pub fn allocate_temporary_image(&mut self, id: ImageId, allocator: &mut Allocator) {
         let image_resource = self.images.get_mut(id).unwrap();
         match image_resource {
@@ -630,13 +635,11 @@ impl Resources {
                     let info = self.resource_cache.get_image_info(desc, all_usage_flags);
                     let alloc = allocator.allocate(&info.mem_req, memory_property_flags);
                     let image = self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags);
-                    let image_view = self.resource_cache.get_image_view(desc, image);
                     *image_resource = ImageResource::Active {
                         desc: *desc,
                         _alloc: Some(alloc),
                         bindless_id: None,
                         image,
-                        image_view,
                         current_usage: ImageUsage::empty(),
                         all_usage_check: *all_usage,
                     };

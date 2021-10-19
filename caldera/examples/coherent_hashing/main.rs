@@ -229,12 +229,10 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let circles = &self.circles;
                 move |params, cmd| {
-                    let input_image_view = params.get_image_view(input_image);
-
                     let descriptor_set = GenerateImageDescriptorSet::create(
                         descriptor_pool,
                         |buf: &mut GenerateImageUniforms| *buf = GenerateImageUniforms { circles: *circles },
-                        input_image_view,
+                        params.get_image_view(input_image, ImageViewDesc::default()),
                     );
 
                     dispatch_helper(
@@ -262,16 +260,12 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer_id);
-                    let max_ages_buffer = params.get_buffer(max_ages_buffer_id);
-                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer_id);
-
                     let descriptor_set = ClearHashTableDescriptorSet::create(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
-                        entries_buffer,
-                        max_ages_buffer,
-                        age_histogram_buffer,
+                        params.get_buffer(entries_buffer_id),
+                        params.get_buffer(max_ages_buffer_id),
+                        params.get_buffer(age_histogram_buffer_id),
                     );
 
                     dispatch_helper(
@@ -299,16 +293,12 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer_id);
-                    let max_ages_buffer = params.get_buffer(max_ages_buffer_id);
-                    let input_image_view = params.get_image_view(input_image);
-
                     let descriptor_set = UpdateHashTableDescriptorSet::create(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
-                        entries_buffer,
-                        max_ages_buffer,
-                        input_image_view,
+                        params.get_buffer(entries_buffer_id),
+                        params.get_buffer(max_ages_buffer_id),
+                        params.get_image_view(input_image, ImageViewDesc::default()),
                     );
 
                     dispatch_helper(
@@ -335,14 +325,11 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer_id);
-                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer_id);
-
                     let descriptor_set = MakeAgeHistogramDescriptorSet::create(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
-                        entries_buffer,
-                        age_histogram_buffer,
+                        params.get_buffer(entries_buffer_id),
+                        params.get_buffer(age_histogram_buffer_id),
                     );
 
                     dispatch_helper(
@@ -370,16 +357,12 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 move |params, cmd| {
-                    let entries_buffer = params.get_buffer(entries_buffer_id);
-                    let max_ages_buffer = params.get_buffer(max_ages_buffer_id);
-                    let output_image_view = params.get_image_view(output_image);
-
                     let descriptor_set = UpdateHashTableDescriptorSet::create(
                         descriptor_pool,
                         |buf: &mut HashTableInfo| *buf = hash_table_info,
-                        entries_buffer,
-                        max_ages_buffer,
-                        output_image_view,
+                        params.get_buffer(entries_buffer_id),
+                        params.get_buffer(max_ages_buffer_id),
+                        params.get_image_view(output_image, ImageViewDesc::default()),
                     );
 
                     dispatch_helper(
@@ -412,11 +395,6 @@ impl App {
                 let ui_platform = &mut base.ui_platform;
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
-                    let input_image_view = params.get_image_view(input_image);
-                    let output_image_view = params.get_image_view(output_image);
-                    let entries_buffer = params.get_buffer(entries_buffer_id);
-                    let age_histogram_buffer = params.get_buffer(age_histogram_buffer_id);
-
                     set_viewport_helper(&context.device, cmd, swap_size);
                     let ortho_from_screen =
                         Scale2Offset2::new(Vec2::broadcast(2.0) / swap_size.as_float(), Vec2::broadcast(-1.0));
@@ -430,8 +408,8 @@ impl App {
                                 ortho_from_quad: ortho_from_screen * screen_from_image,
                             };
                         },
-                        input_image_view,
-                        output_image_view,
+                        params.get_image_view(input_image, ImageViewDesc::default()),
+                        params.get_image_view(output_image, ImageViewDesc::default()),
                     );
                     let state = GraphicsPipelineState::new(render_pass, main_sample_count)
                         .with_topology(vk::PrimitiveTopology::TRIANGLE_STRIP);
@@ -457,7 +435,7 @@ impl App {
                         |buf: &mut HashTableInfo| {
                             *buf = hash_table_info;
                         },
-                        entries_buffer,
+                        params.get_buffer(entries_buffer_id),
                     );
                     draw_helper(
                         &context.device,
@@ -481,7 +459,7 @@ impl App {
                         |buf: &mut HashTableInfo| {
                             *buf = hash_table_info;
                         },
-                        age_histogram_buffer,
+                        params.get_buffer(age_histogram_buffer_id),
                     );
                     draw_helper(
                         &context.device,

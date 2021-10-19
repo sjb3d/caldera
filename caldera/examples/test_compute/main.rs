@@ -85,7 +85,7 @@ impl App {
                 writer.write(&pixel);
             }
 
-            resource_loader.get_image_view(writer.finish().await)
+            resource_loader.get_image_view(writer.finish().await, ImageViewDesc::default())
         });
         let trace_image_ids = {
             let size = Self::trace_image_size();
@@ -182,9 +182,9 @@ impl App {
                     move |params, cmd| {
                         let sample_image_view = sample_image_view;
                         let trace_image_views = [
-                            params.get_image_view(trace_image_ids.0),
-                            params.get_image_view(trace_image_ids.1),
-                            params.get_image_view(trace_image_ids.2),
+                            params.get_image_view(trace_image_ids.0, ImageViewDesc::default()),
+                            params.get_image_view(trace_image_ids.1, ImageViewDesc::default()),
+                            params.get_image_view(trace_image_ids.2, ImageViewDesc::default()),
                         ];
 
                         let descriptor_set = TraceDescriptorSet::create(
@@ -251,9 +251,9 @@ impl App {
                 let ui_renderer = &mut base.ui_renderer;
                 move |params, cmd, render_pass| {
                     let trace_image_views = [
-                        params.get_image_view(trace_images.0),
-                        params.get_image_view(trace_images.1),
-                        params.get_image_view(trace_images.2),
+                        params.get_image_view(trace_images.0, ImageViewDesc::default()),
+                        params.get_image_view(trace_images.1, ImageViewDesc::default()),
+                        params.get_image_view(trace_images.2, ImageViewDesc::default()),
                     ];
 
                     set_viewport_helper(&context.device, cmd, swap_size);

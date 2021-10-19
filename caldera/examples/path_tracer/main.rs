@@ -325,7 +325,6 @@ impl App {
 
                     if let Some(result_image) = result_image {
                         let renderer_params = &renderer.unwrap().params;
-                        let result_image_view = params.get_image_view(result_image);
 
                         let rec709_from_xyz = rec709_from_xyz_matrix()
                             * chromatic_adaptation_matrix(
@@ -350,7 +349,7 @@ impl App {
                                     tone_map_method: renderer_params.tone_map_method.into_integer(),
                                 }
                             },
-                            result_image_view,
+                            params.get_image_view(result_image, ImageViewDesc::default()),
                         );
 
                         let state = GraphicsPipelineState::new(render_pass, main_sample_count);
@@ -572,9 +571,6 @@ impl CommandlineApp {
                             let context = &self.context;
                             let renderer_params = &renderer.params;
                             move |params, cmd| {
-                                let result_image_view = params.get_image_view(result_image);
-                                let capture_buffer = params.get_buffer(capture_buffer);
-
                                 let rec709_from_xyz = rec709_from_xyz_matrix()
                                     * chromatic_adaptation_matrix(
                                         bradford_lms_from_xyz_matrix(),
@@ -599,8 +595,8 @@ impl CommandlineApp {
                                             tone_map_method: renderer_params.tone_map_method.into_integer(),
                                         };
                                     },
-                                    capture_buffer,
-                                    result_image_view,
+                                    params.get_buffer(capture_buffer),
+                                    params.get_image_view(result_image, ImageViewDesc::default()),
                                 );
 
                                 dispatch_helper(

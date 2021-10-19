@@ -51,6 +51,18 @@ pub struct ImageDesc {
     pub samples: vk::SampleCountFlags,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ImageViewDesc {
+    pub format: Option<vk::Format>,
+}
+
+impl ImageViewDesc {
+    pub fn with_format(mut self, format: vk::Format) -> Self {
+        self.format = Some(format);
+        self
+    }
+}
+
 impl ImageDesc {
     pub fn new_1d(width: u32, format: vk::Format, aspect_mask: vk::ImageAspectFlags) -> Self {
         ImageDesc {
@@ -252,6 +264,7 @@ struct ImageKey {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct ImageViewKey {
     image: UniqueImage,
+    view_desc: ImageViewDesc,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -424,25 +437,33 @@ impl ResourceCache {
             })
     }
 
-    pub fn get_image_view(&mut self, desc: &ImageDesc, image: UniqueImage) -> UniqueImageView {
+    pub fn get_image_view(
+        &mut self,
+        desc: &ImageDesc,
+        image: UniqueImage,
+        view_desc: ImageViewDesc,
+    ) -> UniqueImageView {
         let context = &self.context;
-        *self.image_view.entry(ImageViewKey { image }).or_insert_with(|| {
-            let image_view_create_info = vk::ImageViewCreateInfo {
-                image: Some(image.0),
-                view_type: desc.image_view_type(),
-                format: desc.format,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: desc.aspect_mask,
-                    base_mip_level: 0,
-                    level_count: vk::REMAINING_MIP_LEVELS,
-                    base_array_layer: 0,
-                    layer_count: vk::REMAINING_ARRAY_LAYERS,
-                },
-                ..Default::default()
-            };
-            let image_view = unsafe { context.device.create_image_view(&image_view_create_info, None) }.unwrap();
-            Unique::new(image_view, context.allocate_handle_uid())
-        })
+        *self
+            .image_view
+            .entry(ImageViewKey { image, view_desc })
+            .or_insert_with(|| {
+                let image_view_create_info = vk::ImageViewCreateInfo {
+                    image: Some(image.0),
+                    view_type: desc.image_view_type(),
+                    format: view_desc.format.unwrap_or(desc.format),
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: desc.aspect_mask,
+                        base_mip_level: 0,
+                        level_count: vk::REMAINING_MIP_LEVELS,
+                        base_array_layer: 0,
+                        layer_count: vk::REMAINING_ARRAY_LAYERS,
+                    },
+                    ..Default::default()
+                };
+                let image_view = unsafe { context.device.create_image_view(&image_view_create_info, None) }.unwrap();
+                Unique::new(image_view, context.allocate_handle_uid())
+            })
     }
 }
 

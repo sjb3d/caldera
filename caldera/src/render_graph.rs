@@ -99,7 +99,7 @@ impl RenderGraph {
     }
 
     pub fn get_buffer_desc(&self, id: BufferId) -> BufferDesc {
-        *self.resources.lock().unwrap().buffer_resource(id).desc()
+        *self.resources.lock().unwrap().buffer_desc(id)
     }
 
     pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
@@ -107,7 +107,7 @@ impl RenderGraph {
     }
 
     pub fn get_image_desc(&self, id: ImageId) -> ImageDesc {
-        *self.resources.lock().unwrap().image_resource(id).desc()
+        *self.resources.lock().unwrap().image_desc(id)
     }
 
     pub fn create_sampler(&mut self, create_info: &vk::SamplerCreateInfo) -> SamplerId {
@@ -301,9 +301,9 @@ impl<'graph> RenderParameterAccess<'graph> {
         self.0.resources.lock().unwrap().buffer_resource(id).accel().unwrap()
     }
 
-    pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {
+    pub fn get_image_view(&self, id: ImageId, view_desc: ImageViewDesc) -> vk::ImageView {
         // TODO: cache these, avoid lock per parameter
-        self.0.resources.lock().unwrap().image_resource(id).image_view().0
+        self.0.resources.lock().unwrap().image_view(id, view_desc).0
     }
 }
 
@@ -375,17 +375,11 @@ impl<'graph> RenderSchedule<'graph> {
     }
 
     pub fn get_image_desc(&self, id: ImageId) -> ImageDesc {
-        *self.render_graph.resources.lock().unwrap().image_resource(id).desc()
+        *self.render_graph.resources.lock().unwrap().image_desc(id)
     }
 
-    pub fn get_image_view(&self, id: ImageId) -> vk::ImageView {
-        self.render_graph
-            .resources
-            .lock()
-            .unwrap()
-            .image_resource(id)
-            .image_view()
-            .0
+    pub fn get_image_view(&self, id: ImageId, view_desc: ImageViewDesc) -> vk::ImageView {
+        self.render_graph.resources.lock().unwrap().image_view(id, view_desc).0
     }
 
     pub fn create_buffer(&mut self, desc: &BufferDesc, all_usage: BufferUsage) -> BufferId {
@@ -627,28 +621,28 @@ impl<'graph> RenderSchedule<'graph> {
                         let size = state
                             .color_output_id
                             .or(state.depth.map(|depth| depth.image_id))
-                            .map(|id| resources.image_resource(id).desc().size())
+                            .map(|id| resources.image_desc(id).size())
                             .unwrap();
                         let samples = state
                             .color_temp_id
-                            .map(|id| resources.image_resource(id).desc().samples)
+                            .map(|id| resources.image_desc(id).samples)
                             .unwrap_or(vk::SampleCountFlags::N1);
 
                         // color output
                         let (color_format, color_output_image_view, color_temp_image_view) =
                             if let Some(color_output_id) = state.color_output_id {
-                                let color_output_resource = resources.image_resource(color_output_id);
-                                let color_output_desc = color_output_resource.desc();
-                                let color_output_image_view = color_output_resource.image_view();
+                                let color_output_desc = *resources.image_desc(color_output_id);
+                                let color_output_image_view =
+                                    resources.image_view(color_output_id, ImageViewDesc::default());
 
                                 let format = color_output_desc.format;
                                 assert_eq!(size, color_output_desc.size());
 
                                 // color temp (if present)
                                 let color_temp_image_view = if let Some(color_temp_id) = state.color_temp_id {
-                                    let color_temp_resource = resources.image_resource(color_temp_id);
-                                    let color_temp_desc = color_temp_resource.desc();
-                                    let color_temp_image_view = color_temp_resource.image_view();
+                                    let color_temp_desc = *resources.image_desc(color_temp_id);
+                                    let color_temp_image_view =
+                                        resources.image_view(color_temp_id, ImageViewDesc::default());
 
                                     assert_eq!(size, color_temp_desc.size());
                                     assert_eq!(format, color_temp_desc.format);
@@ -667,9 +661,8 @@ impl<'graph> RenderSchedule<'graph> {
 
                         // depth temp (if present)
                         let (render_pass_depth, depth_image_view) = if let Some(depth) = state.depth {
-                            let depth_resource = resources.image_resource(depth.image_id);
-                            let depth_desc = depth_resource.desc();
-                            let depth_image_view = depth_resource.image_view();
+                            let depth_desc = *resources.image_desc(depth.image_id);
+                            let depth_image_view = resources.image_view(depth.image_id, ImageViewDesc::default());
 
                             let format = depth_desc.format;
                             assert_eq!(size, depth_desc.size());
