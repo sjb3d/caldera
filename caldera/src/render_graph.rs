@@ -61,8 +61,8 @@ pub struct RenderGraph {
     resources: SharedResources,
     render_cache: RenderCache,
     temp_allocator: Allocator,
-    ping_pong_current_set: ResourceSet,
-    ping_pong_prev_set: ResourceSet,
+    bounce_current_set: ResourceSet,
+    bounce_prev_set: ResourceSet,
     import_set: ResourceSet,
     transfer_staging: StagingBuffer,
 }
@@ -72,15 +72,15 @@ impl RenderGraph {
         context: &SharedContext,
         resources: &SharedResources,
         temp_chunk_size: u32,
-        ping_pong_chunk_size: u32,
+        bounce_chunk_size: u32,
         staging_size_per_frame: u32,
     ) -> Self {
         Self {
             resources: SharedResources::clone(resources),
             render_cache: RenderCache::new(context),
             temp_allocator: Allocator::new(context, temp_chunk_size),
-            ping_pong_current_set: ResourceSet::new(context, ping_pong_chunk_size),
-            ping_pong_prev_set: ResourceSet::new(context, ping_pong_chunk_size),
+            bounce_current_set: ResourceSet::new(context, bounce_chunk_size),
+            bounce_prev_set: ResourceSet::new(context, bounce_chunk_size),
             import_set: ResourceSet::new(context, 0),
             transfer_staging: StagingBuffer::new(
                 context,
@@ -103,7 +103,17 @@ impl RenderGraph {
     }
 
     pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
-        self.resources.lock().unwrap().create_image(desc, all_usage)
+        self.resources.lock().unwrap().create_image(desc, all_usage, None)
+    }
+
+    pub fn create_bounce_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
+        let image_id =
+            self.resources
+                .lock()
+                .unwrap()
+                .create_image(desc, all_usage, Some(&mut self.bounce_current_set.allocator));
+        self.bounce_current_set.image_ids.push(image_id);
+        image_id
     }
 
     pub fn get_image_desc(&self, id: ImageId) -> ImageDesc {
@@ -119,9 +129,9 @@ impl RenderGraph {
     }
 
     pub(crate) fn begin_frame(&mut self) {
-        mem::swap(&mut self.ping_pong_current_set, &mut self.ping_pong_prev_set);
+        mem::swap(&mut self.bounce_current_set, &mut self.bounce_prev_set);
         let mut resources = self.resources.lock().unwrap();
-        self.ping_pong_current_set.begin_frame(&mut resources);
+        self.bounce_current_set.begin_frame(&mut resources);
         self.import_set.begin_frame(&mut resources);
         self.transfer_staging.begin_frame();
     }
@@ -137,18 +147,16 @@ impl RenderGraph {
 
         self.temp_allocator.ui_stats_table_rows(ui, "temp memory");
 
-        self.ping_pong_prev_set
-            .allocator
-            .ui_stats_table_rows(ui, "ping pong memory");
+        self.bounce_prev_set.allocator.ui_stats_table_rows(ui, "bounce memory");
 
-        ui.text("ping pong buffer");
+        ui.text("bounce buffer");
         ui.next_column();
-        ui.text(format!("{}", self.ping_pong_prev_set.buffer_ids.len()));
+        ui.text(format!("{}", self.bounce_prev_set.buffer_ids.len()));
         ui.next_column();
 
-        ui.text("ping pong image");
+        ui.text("bounce image");
         ui.next_column();
-        ui.text(format!("{}", self.ping_pong_prev_set.image_ids.len()));
+        ui.text(format!("{}", self.bounce_prev_set.image_ids.len()));
         ui.next_column();
     }
 }
@@ -388,6 +396,10 @@ impl<'graph> RenderSchedule<'graph> {
 
     pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
         self.render_graph.create_image(desc, all_usage)
+    }
+
+    pub fn create_bounce_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
+        self.render_graph.create_bounce_image(desc, all_usage)
     }
 
     pub fn import_buffer(

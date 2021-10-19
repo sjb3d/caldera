@@ -563,12 +563,12 @@ impl ResourceLoader {
     }
 
     pub fn image_writer(&self, desc: &ImageDesc, all_usage: ImageUsage) -> impl Future<Output = ImageWriter> {
-        let image_id = self
-            .shared
-            .resources
-            .lock()
-            .unwrap()
-            .create_image(desc, all_usage | ImageUsage::TRANSFER_WRITE);
+        let image_id =
+            self.shared
+                .resources
+                .lock()
+                .unwrap()
+                .create_image(desc, all_usage | ImageUsage::TRANSFER_WRITE, None);
 
         let size = desc.staging_size() as u32;
         let offset = ResourceStagingOffsetFuture {

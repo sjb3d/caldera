@@ -584,11 +584,18 @@ impl Resources {
         })
     }
 
-    pub fn create_image(&mut self, desc: &ImageDesc, all_usage: ImageUsage) -> ImageId {
+    pub fn create_image(
+        &mut self,
+        desc: &ImageDesc,
+        all_usage: ImageUsage,
+        allocator: Option<&mut Allocator>,
+    ) -> ImageId {
         let all_usage_flags = all_usage.as_flags();
         let memory_property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
         let info = self.resource_cache.get_image_info(desc, all_usage_flags);
-        let alloc = self.global_allocator.allocate(&info.mem_req, memory_property_flags);
+        let alloc = allocator
+            .unwrap_or(&mut self.global_allocator)
+            .allocate(&info.mem_req, memory_property_flags);
         let image = self.resource_cache.get_image(desc, &info, &alloc, all_usage_flags);
         let image_view = self
             .resource_cache
