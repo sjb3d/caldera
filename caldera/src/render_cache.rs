@@ -2,7 +2,8 @@ use crate::prelude::*;
 use arrayvec::ArrayVec;
 use imgui::Ui;
 use spark::{vk, Builder, Device};
-use std::{collections::HashMap, slice};
+use std::{collections::HashMap, iter, slice};
+use tinyvec::ArrayVec as TinyVec;
 
 pub trait FormatExt {
     fn bits_per_element(&self) -> usize;
@@ -46,21 +47,9 @@ pub struct ImageDesc {
     pub height_or_zero: u32,
     pub layer_count_or_zero: u32,
     pub mip_count: u32,
-    pub format: vk::Format,
+    pub formats: TinyVec<[vk::Format; 2]>,
     pub aspect_mask: vk::ImageAspectFlags,
     pub samples: vk::SampleCountFlags,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct ImageViewDesc {
-    pub format: Option<vk::Format>,
-}
-
-impl ImageViewDesc {
-    pub fn with_format(mut self, format: vk::Format) -> Self {
-        self.format = Some(format);
-        self
-    }
 }
 
 impl ImageDesc {
@@ -70,7 +59,7 @@ impl ImageDesc {
             height_or_zero: 0,
             layer_count_or_zero: 0,
             mip_count: 1,
-            format,
+            formats: iter::once(format).collect(),
             aspect_mask,
             samples: vk::SampleCountFlags::N1,
         }
@@ -82,10 +71,15 @@ impl ImageDesc {
             height_or_zero: size.y,
             layer_count_or_zero: 0,
             mip_count: 1,
-            format,
+            formats: iter::once(format).collect(),
             aspect_mask,
             samples: vk::SampleCountFlags::N1,
         }
+    }
+
+    pub fn with_additional_format(mut self, format: vk::Format) -> Self {
+        self.formats.push(format);
+        self
     }
 
     pub fn with_layer_count(mut self, layer_count: u32) -> Self {
@@ -101,6 +95,10 @@ impl ImageDesc {
     pub fn with_samples(mut self, samples: vk::SampleCountFlags) -> Self {
         self.samples = samples;
         self
+    }
+
+    pub fn first_format(&self) -> vk::Format {
+        *self.formats.first().unwrap()
     }
 
     pub fn size(&self) -> UVec2 {
@@ -144,7 +142,7 @@ impl ImageDesc {
 
     pub(crate) fn staging_size(&self) -> usize {
         assert_eq!(self.samples, vk::SampleCountFlags::N1);
-        let bits_per_element = self.format.bits_per_element();
+        let bits_per_element = self.first_format().bits_per_element();
         let layer_count = self.layer_count_or_zero.max(1) as usize;
         let mut mip_width = self.width as usize;
         let mut mip_height = self.height_or_zero.max(1) as usize;
@@ -156,6 +154,18 @@ impl ImageDesc {
             mip_height /= 2;
         }
         mip_offset
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ImageViewDesc {
+    pub format: Option<vk::Format>,
+}
+
+impl ImageViewDesc {
+    pub fn with_format(mut self, format: vk::Format) -> Self {
+        self.format = Some(format);
+        self
     }
 }
 
@@ -189,22 +199,27 @@ impl DeviceGraphExt for Device {
     }
 
     fn create_image_from_desc(&self, desc: &ImageDesc, usage_flags: vk::ImageUsageFlags) -> spark::Result<vk::Image> {
-        let image_create_info = vk::ImageCreateInfo {
-            image_type: desc.image_type(),
-            format: desc.format,
-            extent: vk::Extent3D {
+        let mut format_list = vk::ImageFormatListCreateInfo::builder().p_view_formats(&desc.formats);
+        let image_create_info = vk::ImageCreateInfo::builder()
+            .flags(if desc.formats.len() > 1 {
+                vk::ImageCreateFlags::MUTABLE_FORMAT
+            } else {
+                vk::ImageCreateFlags::empty()
+            })
+            .image_type(desc.image_type())
+            .format(desc.first_format())
+            .extent(vk::Extent3D {
                 width: desc.width,
                 height: desc.height_or_zero.max(1),
                 depth: 1,
-            },
-            mip_levels: desc.mip_count,
-            array_layers: desc.layer_count_or_zero.max(1),
-            samples: desc.samples,
-            tiling: vk::ImageTiling::OPTIMAL,
-            usage: usage_flags,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            ..Default::default()
-        };
+            })
+            .mip_levels(desc.mip_count)
+            .array_layers(desc.layer_count_or_zero.max(1))
+            .samples(desc.samples)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(usage_flags)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .insert_next(&mut format_list);
         unsafe { self.create_image(&image_create_info, None) }
     }
 }
@@ -451,7 +466,7 @@ impl ResourceCache {
                 let image_view_create_info = vk::ImageViewCreateInfo {
                     image: Some(image.0),
                     view_type: desc.image_view_type(),
-                    format: view_desc.format.unwrap_or(desc.format),
+                    format: view_desc.format.unwrap_or(desc.first_format()),
                     subresource_range: vk::ImageSubresourceRange {
                         aspect_mask: desc.aspect_mask,
                         base_mip_level: 0,

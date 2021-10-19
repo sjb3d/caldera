@@ -635,7 +635,7 @@ impl<'graph> RenderSchedule<'graph> {
                                 let color_output_image_view =
                                     resources.image_view(color_output_id, ImageViewDesc::default());
 
-                                let format = color_output_desc.format;
+                                let format = color_output_desc.first_format();
                                 assert_eq!(size, color_output_desc.size());
 
                                 // color temp (if present)
@@ -645,7 +645,7 @@ impl<'graph> RenderSchedule<'graph> {
                                         resources.image_view(color_temp_id, ImageViewDesc::default());
 
                                     assert_eq!(size, color_temp_desc.size());
-                                    assert_eq!(format, color_temp_desc.format);
+                                    assert_eq!(format, color_temp_desc.first_format());
 
                                     clear_values.push(color_clear_value);
                                     Some(color_temp_image_view)
@@ -664,7 +664,7 @@ impl<'graph> RenderSchedule<'graph> {
                             let depth_desc = *resources.image_desc(depth.image_id);
                             let depth_image_view = resources.image_view(depth.image_id, ImageViewDesc::default());
 
-                            let format = depth_desc.format;
+                            let format = depth_desc.first_format();
                             assert_eq!(size, depth_desc.size());
                             assert_eq!(samples, depth_desc.samples);
 

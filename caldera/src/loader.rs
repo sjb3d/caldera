@@ -425,7 +425,7 @@ impl ResourceLoader {
 
                     let desc = image_resource.desc();
 
-                    let bits_per_elements = desc.format.bits_per_element();
+                    let bits_per_elements = desc.first_format().bits_per_element();
                     let layer_count = desc.layer_count_or_zero.max(1) as usize;
                     let mut mip_width = desc.width as usize;
                     let mut mip_height = desc.height_or_zero.max(1) as usize;
