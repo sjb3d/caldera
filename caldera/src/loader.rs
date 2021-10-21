@@ -633,6 +633,14 @@ where
     SpawnResult(tokio::spawn(fut))
 }
 
+pub fn spawn_blocking<F, R>(f: F) -> SpawnResult<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    SpawnResult(tokio::task::spawn_blocking(f))
+}
+
 pub struct SpawnResult<T>(tokio::task::JoinHandle<T>);
 
 impl<T> Future for SpawnResult<T> {
