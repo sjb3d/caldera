@@ -28,7 +28,7 @@ impl BackgroundTaskSystem {
         let (send, mut recv) = mpsc::channel(1);
         thread::spawn({
             move || {
-                let rt = Builder::new_current_thread().enable_all().build().unwrap();
+                let rt = Builder::new_multi_thread().enable_all().build().unwrap();
                 rt.block_on(async {
                     while let Some(task) = recv.recv().await {
                         rt.spawn(task);
