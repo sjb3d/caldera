@@ -325,9 +325,9 @@ impl DescriptorPool {
     const COUNT: usize = CommandBufferPool::COUNT;
 
     // per frame maximums
-    const MAX_DESCRIPTORS_PER_FRAME: u32 = 512;
-    const MAX_SETS_PER_FRAME: u32 = 512;
-    const MAX_UNIFORM_DATA_PER_FRAME: u32 = 64 * 1024;
+    const MAX_DESCRIPTORS_PER_FRAME: u32 = 64 * 1024;
+    const MAX_SETS_PER_FRAME: u32 = 64 * 1024;
+    const MAX_UNIFORM_DATA_PER_FRAME: u32 = 1 * 1024 * 1024;
 
     const MAX_UNIFORM_DATA_PER_SET: usize = 2 * 1024;
     const MAX_DESCRIPTORS_PER_SET: usize = 16;
