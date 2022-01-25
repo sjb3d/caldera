@@ -47,7 +47,7 @@ impl Swapchain {
         let surface_formats = unsafe {
             context
                 .instance
-                .get_physical_device_surface_formats_khr_to_vec(context.physical_device, surface)
+                .get_physical_device_surface_formats_khr_to_vec(context.physical_device, Some(surface))
         }
         .unwrap();
 
