@@ -96,7 +96,7 @@ Here is a test scene for some conductors using spectral reflectance data from [r
 
 ![trace_material_conductors](images/material_conductors.jpg)
 
-If we change the illuminant to F10 (which has a very spiky distribution), we can check the effect that wavelength importance sampling has on colour noise. The following images use gold lit with F10, all with 8 paths per pixel and 3 wavelengths per path. The first image samples wavelengths uniformly, the second samples only the hero wavelength for that path proportional to F10, the third image samples all wavelengths for that path proportional to F10 (reproducing part of the result of Continuous Importance Sampling):
+If we change the illuminant to F10 (which has a very spiky distribution), we can check the effect that wavelength importance sampling has on colour noise. The following images use gold lit with F10, all with 8 paths per pixel and 3 wavelengths per path. The first image samples wavelengths uniformly, the second samples only the hero wavelength for that path proportional to F10, the third image samples all wavelengths for that path proportional to F10 (reproducing part of the result of [Continuous Multiple Importance Sampling](http://iliyan.com/publications/ContinuousMIS)):
 
 Uniform Sampling | Sample Hero Wavelength Only | Sample All Wavelengths
 :---: | :---: | :---:
