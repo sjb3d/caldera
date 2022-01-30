@@ -41,20 +41,20 @@ vec4 rand_u01(uint seq_index)
 EXTEND_PAYLOAD(g_extend);
 OCCLUSION_PAYLOAD(g_occlusion);
 
-HERO_VEC sample_wavelengths(out HERO_VEC pdfs)
+vecW sample_wavelengths(out vecW pdfs)
 {
     const vec4 wavelength_rand_u01 = rand_u01(0);
-    HERO_VEC wavelengths;
+    vecW wavelengths;
     switch (g_path_trace.wavelength_sampling_method) {
         case WAVELENGTH_SAMPLING_METHOD_UNIFORM: {
             const float hero_wavelength = mix(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelength_rand_u01.x);
             wavelengths = expand_wavelengths_from_hero(hero_wavelength);
-            pdfs = HERO_VEC(WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN));
+            pdfs = vecW(WAVELENGTHS_PER_RAY/(SMITS_WAVELENGTH_MAX - SMITS_WAVELENGTH_MIN));
         } break;
         case WAVELENGTH_SAMPLING_METHOD_HERO_MIS: {
             const float hero_wavelength = texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x;
             wavelengths = expand_wavelengths_from_hero(hero_wavelength);
-            pdfs = HERO_VEC(
+            pdfs = vecW(
                   texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x
                 + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x
 #if WAVELENGTHS_PER_RAY >= 3
@@ -67,7 +67,7 @@ HERO_VEC sample_wavelengths(out HERO_VEC pdfs)
         } break;
         case WAVELENGTH_SAMPLING_METHOD_CONTINUOUS_MIS: {
             // offset a single sample for stratification (rather than using x/y/z)
-            wavelengths = HERO_VEC_NEW(
+            wavelengths = PER_WAVELENGTH(
                 texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x,
                 texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 1.f/WAVELENGTHS_PER_RAY)).x,
                 texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 2.f/WAVELENGTHS_PER_RAY)).x,
@@ -79,7 +79,7 @@ HERO_VEC sample_wavelengths(out HERO_VEC pdfs)
                 This will need revisiting to track some terms per-wavelength once refraction
                 is implemented properly.
             */
-            pdfs = WAVELENGTHS_PER_RAY*HERO_VEC_NEW(
+            pdfs = WAVELENGTHS_PER_RAY*PER_WAVELENGTH(
                 texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x,
                 texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x,
                 texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x,
@@ -89,17 +89,17 @@ HERO_VEC sample_wavelengths(out HERO_VEC pdfs)
     return wavelengths;
 }
 
-HERO_VEC illuminant(HERO_VEC wavelengths, uint index, vec3 tint)
+vecW illuminant(vecW wavelengths, uint index, vec3 tint)
 {
-    HERO_VEC power = HERO_VEC_NEW(
+    vecW power = PER_WAVELENGTH(
         smits_power_from_rec709(wavelengths.x, tint, g_smits_table),
         smits_power_from_rec709(wavelengths.y, tint, g_smits_table),
         smits_power_from_rec709(wavelengths.z, tint, g_smits_table),
         smits_power_from_rec709(wavelengths.w, tint, g_smits_table));
     if (index != 0) {
         const float layer = float(index - 1);
-        const HERO_VEC coord = unlerp(HERO_VEC(SMITS_WAVELENGTH_MIN), HERO_VEC(SMITS_WAVELENGTH_MAX), wavelengths);
-        power *= HERO_VEC_NEW(
+        const vecW coord = unlerp(vecW(SMITS_WAVELENGTH_MIN), vecW(SMITS_WAVELENGTH_MAX), wavelengths);
+        power *= PER_WAVELENGTH(
             texture(g_illuminants, vec2(coord.x, layer)).x,
             texture(g_illuminants, vec2(coord.y, layer)).x,
             texture(g_illuminants, vec2(coord.z, layer)).x,
@@ -109,12 +109,12 @@ HERO_VEC illuminant(HERO_VEC wavelengths, uint index, vec3 tint)
 }
 
 void evaluate_bsdf(
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     uint bsdf_type,
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out HERO_VEC f,
+    out vecW f,
     out float solid_angle_pdf)
 {
 #define PARAMS out_dir, in_dir, params, f, solid_angle_pdf
@@ -131,13 +131,13 @@ void evaluate_bsdf(
 }
 
 void sample_bsdf(
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     uint bsdf_type,
     vec3 out_dir,
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out HERO_VEC estimator,
+    out vecW estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
@@ -155,14 +155,14 @@ void sample_bsdf(
 }
 
 void sample_single_light(
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     uint light_index,
     vec3 target_position,
     vec3 target_normal,
     vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
-    out HERO_VEC light_emission,
+    out vecW light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
     out float light_epsilon)
@@ -205,13 +205,13 @@ void sample_single_light(
 }
 
 void sample_all_lights(
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     vec3 target_position,
     vec3 target_normal,
     vec2 light_rand_u01,
     out vec3 light_position_or_extdir,
     out Normal32 light_normal,
-    out HERO_VEC light_emission,
+    out vecW light_emission,
     out float light_solid_angle_pdf,
     out bool light_is_external,
     out float light_epsilon)
@@ -242,12 +242,12 @@ void sample_all_lights(
 }
 
 void evaluate_single_light(
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     uint primitive_index,
     uint light_index,
     vec3 target_position,
     vec3 light_position_or_extdir,
-    out HERO_VEC light_emission,
+    out vecW light_emission,
     out float light_solid_angle_pdf)
 {
     LightInfoEntry light_info = g_path_trace.light_info_table.entries[light_index];
@@ -344,12 +344,12 @@ void main()
     float prev_epsilon;
     vec3 prev_in_dir;
     float prev_in_solid_angle_pdf_or_negative;
-    HERO_VEC prev_sample;
+    vecW prev_sample;
     float path_max_roughness;
 
     // pick wavelengths for this ray
-    HERO_VEC wavelength_pdfs;
-    const HERO_VEC wavelengths = sample_wavelengths(wavelength_pdfs);
+    vecW wavelength_pdfs;
+    const vecW wavelengths = sample_wavelengths(wavelength_pdfs);
 
     // sample the camera
     {
@@ -375,7 +375,7 @@ void main()
     }
 
     // trace a path from the camera
-    HERO_VEC result_sum = HERO_VEC(0.f);
+    vecW result_sum = vecW(0.f);
     uint segment_index = 0;
     for (;;) {
         // extend the path using the sampled (incoming) direction
@@ -387,7 +387,7 @@ void main()
         // compute reflectance for this wavelength
         {
             const vec3 tint = get_rgb_reflectance(hit.bsdf_params);
-            HERO_VEC reflectances = HERO_VEC_NEW(
+            vecW reflectances = PER_WAVELENGTH(
                 smits_power_from_rec709(wavelengths.x, tint, g_smits_table),
                 smits_power_from_rec709(wavelengths.y, tint, g_smits_table),
                 smits_power_from_rec709(wavelengths.z, tint, g_smits_table),
@@ -418,7 +418,7 @@ void main()
         for (uint light_index = light_index_begin; light_index != light_index_end; ++light_index) {
             // evaluate the light here
             const vec3 light_position_or_extdir = hit.position_or_extdir;
-            HERO_VEC light_emission;
+            vecW light_emission;
             float light_solid_angle_pdf;
             evaluate_single_light(
                 wavelengths,
@@ -495,7 +495,7 @@ void main()
             // sample from all light sources
             vec3 light_position_or_extdir;
             Normal32 light_normal;
-            HERO_VEC light_emission;
+            vecW light_emission;
             float light_solid_angle_pdf;
             bool light_is_external;
             float light_epsilon;
@@ -523,7 +523,7 @@ void main()
             // evaluate the BRDF
             const float in_cos_theta = in_dir_ls.z;
             const uint bsdf_type = get_bsdf_type(hit.info);
-            HERO_VEC hit_f;
+            vecW hit_f;
             float hit_solid_angle_pdf;
             if (in_cos_theta > 0.f || bsdf_has_transmission(bsdf_type)) {
                 evaluate_bsdf(
@@ -535,7 +535,7 @@ void main()
                     hit_f,
                     hit_solid_angle_pdf);
             } else {
-                hit_f = HERO_VEC(0.f);
+                hit_f = vecW(0.f);
                 hit_solid_angle_pdf = 0.f;
             }
             
@@ -545,10 +545,10 @@ void main()
             const float mis_weight = 1.f/(1.f + other_ratio);
 
             // compute the sample assuming the ray is not occluded
-            const HERO_VEC result = prev_sample * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
+            const vecW result = prev_sample * hit_f * (mis_weight*abs(in_cos_theta)/light_solid_angle_pdf) * light_emission;
 
             // trace an occlusion ray if necessary
-            if (any(greaterThan(result, HERO_VEC(0.f)))) {
+            if (any(greaterThan(result, vecW(0.f)))) {
                 const vec3 hit_geom_normal = get_dir(hit.geom_normal);
                 const float hit_epsilon = get_epsilon(hit.info);
                 const vec3 adjusted_hit_position = hit.position_or_extdir + hit_geom_normal*hit_epsilon;
@@ -585,7 +585,7 @@ void main()
 
             // RR
             if (segment_index > 4) {
-                const HERO_VEC reflectance = get_reflectance(hit.bsdf_params);
+                const vecW reflectance = get_reflectance(hit.bsdf_params);
                 const float survive_prob = clamp(max_element(reflectance), .1f, .95f);
                 if (!split_random_variable(survive_prob, bsdf_rand_u01.y)) {
                     break;
@@ -594,7 +594,7 @@ void main()
             }
 
             vec3 in_dir_ls;
-            HERO_VEC estimator;
+            vecW estimator;
             float solid_angle_pdf_or_negative;
             sample_bsdf(
                 wavelengths,
@@ -620,7 +620,7 @@ void main()
     }
 
     // save out in XYZ
-    const HERO_VEC coord = unlerp(HERO_VEC(SMITS_WAVELENGTH_MIN), HERO_VEC(SMITS_WAVELENGTH_MAX), wavelengths);
+    const vecW coord = unlerp(vecW(SMITS_WAVELENGTH_MIN), vecW(SMITS_WAVELENGTH_MAX), wavelengths);
     const vec3 result
         = result_sum.x*texture(g_xyz_matching, coord.x).xyz
         + result_sum.y*texture(g_xyz_matching, coord.y).xyz

@@ -16,21 +16,21 @@ float offset_wavelength(float base, float fraction)
 #define WAVELENGTHS_PER_RAY         3
 
 #if WAVELENGTHS_PER_RAY == 2
-#define HERO_VEC                    vec2
-#define HERO_VEC_NEW(A, B, C, D)    HERO_VEC((A), (B))
+#define vecW                        vec2
+#define PER_WAVELENGTH(A, B, C, D)  vecW((A), (B))
 #elif WAVELENGTHS_PER_RAY == 3
-#define HERO_VEC                    vec3
-#define HERO_VEC_NEW(A, B, C, D)    HERO_VEC((A), (B), (C))
+#define vecW                        vec3
+#define PER_WAVELENGTH(A, B, C, D)  vecW((A), (B), (C))
 #elif WAVELENGTHS_PER_RAY == 4
-#define HERO_VEC                    vec4
-#define HERO_VEC_NEW(A, B, C, D)    HERO_VEC((A), (B), (C), (D))
+#define vecW                        vec4
+#define PER_WAVELENGTH(A, B, C, D)  vecW((A), (B), (C), (D))
 #else
 #error Unsupported WAVELENGTHS_PER_RAY value
 #endif
 
-HERO_VEC expand_wavelengths_from_hero(float hero_wavelength)
+vecW expand_wavelengths_from_hero(float hero_wavelength)
 {
-    return HERO_VEC_NEW(
+    return PER_WAVELENGTH(
         hero_wavelength,
         offset_wavelength(hero_wavelength, 1.f/WAVELENGTHS_PER_RAY),
         offset_wavelength(hero_wavelength, 2.f/WAVELENGTHS_PER_RAY),

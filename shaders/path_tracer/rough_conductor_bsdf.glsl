@@ -5,14 +5,14 @@
 
 void get_eta_k(
     sampler1DArray conductors,
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     uint material_index,
-    out HERO_VEC eta,
-    out HERO_VEC k)
+    out vecW eta,
+    out vecW k)
 {
-    const HERO_VEC wavelengths_u = unlerp(
-        HERO_VEC(SMITS_WAVELENGTH_MIN),
-        HERO_VEC(SMITS_WAVELENGTH_MAX),
+    const vecW wavelengths_u = unlerp(
+        vecW(SMITS_WAVELENGTH_MIN),
+        vecW(SMITS_WAVELENGTH_MAX),
         wavelengths);
     const float layer = float(material_index);
     const vec2 eta_k0 = texture(conductors, vec2(wavelengths_u.x, layer)).xy;
@@ -23,20 +23,20 @@ void get_eta_k(
 #if WAVELENGTHS_PER_RAY >= 4
     const vec2 eta_k3 = texture(conductors, vec2(wavelengths_u.w, layer)).xy;
 #endif
-    eta = HERO_VEC_NEW(eta_k0.x, eta_k1.x, eta_k2.x, eta_k3.x);
-    k = HERO_VEC_NEW(eta_k0.y, eta_k1.y, eta_k2.y, eta_k3.y);
+    eta = PER_WAVELENGTH(eta_k0.x, eta_k1.x, eta_k2.x, eta_k3.x);
+    k = PER_WAVELENGTH(eta_k0.y, eta_k1.y, eta_k2.y, eta_k3.y);
 }
 
 void rough_conductor_bsdf_eval(
     sampler1DArray conductors,
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out HERO_VEC f,
+    out vecW f,
     out float solid_angle_pdf)
 {
-    const HERO_VEC reflectance = get_reflectance(params);
+    const vecW reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
@@ -47,7 +47,7 @@ void rough_conductor_bsdf_eval(
     const vec3 h = normalize(v + l);
     const float h_dot_v = abs(dot(h, v));
 
-    HERO_VEC eta, k;
+    vecW eta, k;
     get_eta_k(conductors, wavelengths, get_material_index(params), eta, k);
 
     f   = reflectance
@@ -59,16 +59,16 @@ void rough_conductor_bsdf_eval(
 
 void rough_conductor_bsdf_sample(
     sampler1DArray conductors,
-    HERO_VEC wavelengths,
+    vecW wavelengths,
     vec3 out_dir,
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out HERO_VEC estimator,
+    out vecW estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-    const HERO_VEC reflectance = get_reflectance(params);
+    const vecW reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
@@ -81,7 +81,7 @@ void rough_conductor_bsdf_sample(
     const vec3 l = in_dir;
     const float h_dot_v = abs(dot(h, v));
 
-    HERO_VEC eta, k;
+    vecW eta, k;
     get_eta_k(conductors, wavelengths, get_material_index(params), eta, k);
 
     estimator

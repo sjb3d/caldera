@@ -6,10 +6,10 @@ void smooth_plastic_bsdf_eval(
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out HERO_VEC f,
+    out vecW f,
     out float solid_angle_pdf)
 {
-    const HERO_VEC reflectance = get_reflectance(params);
+    const vecW reflectance = get_reflectance(params);
     const float roughness = 0.f;
 
     const float n_dot_l = in_dir.z;
@@ -26,11 +26,11 @@ void smooth_plastic_bsdf_sample(
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out HERO_VEC estimator,
+    out vecW estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-    const HERO_VEC reflectance = get_reflectance(params);
+    const vecW reflectance = get_reflectance(params);
     const float roughness = 0.f;
 
     const float n_dot_v = out_dir.z;
@@ -49,14 +49,14 @@ void smooth_plastic_bsdf_sample(
 
     const float n_dot_l = in_dir.z;
     if (sample_diffuse) {
-        const HERO_VEC diff_f = reflectance*(diffuse_strength/PI);
+        const vecW diff_f = reflectance*(diffuse_strength/PI);
 
         estimator = diff_f/(diffuse_probability*get_hemisphere_cosine_weighted_proj_pdf());
         solid_angle_pdf_or_negative = diffuse_probability*get_hemisphere_cosine_weighted_pdf(n_dot_l);
     } else {
         const float spec_f = fresnel_schlick(PLASTIC_F0, n_dot_v);
 
-        estimator = HERO_VEC(spec_f)/spec_probability;
+        estimator = vecW(spec_f)/spec_probability;
         solid_angle_pdf_or_negative = -1.f;
     }
 }

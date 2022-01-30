@@ -7,10 +7,10 @@ void rough_plastic_bsdf_eval(
     vec3 out_dir,
     vec3 in_dir,
     BsdfParams params,
-    out HERO_VEC f,
+    out vecW f,
     out float solid_angle_pdf)
 {
-    const HERO_VEC reflectance = get_reflectance(params);
+    const vecW reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
@@ -24,14 +24,14 @@ void rough_plastic_bsdf_eval(
     const float diffuse_strength = remaining_diffuse_strength(n_dot_v, PLASTIC_F0, roughness);
     const float diffuse_probability = max(diffuse_strength, MIN_LAYER_PROBABILITY);
 
-    const HERO_VEC diff_f = reflectance*(diffuse_strength/PI);
+    const vecW diff_f = reflectance*(diffuse_strength/PI);
     const float spec_f = fresnel_schlick(PLASTIC_F0, h_dot_v)*ggx_brdf_without_fresnel(h, v, l, alpha);
 
     const float diff_solid_angle_pdf = get_hemisphere_cosine_weighted_pdf(n_dot_l);
     const float spec_solid_angle_pdf = ggx_vndf_sampled_pdf(v, h, alpha);
     const float combined_solid_angle_pdf = mix(spec_solid_angle_pdf, diff_solid_angle_pdf, diffuse_probability);
 
-    f = diff_f + HERO_VEC(spec_f);
+    f = diff_f + vecW(spec_f);
     solid_angle_pdf = combined_solid_angle_pdf;
 }
 
@@ -40,11 +40,11 @@ void rough_plastic_bsdf_sample(
     BsdfParams params,
     vec3 bsdf_rand_u01,
     out vec3 in_dir,
-    out HERO_VEC estimator,
+    out vecW estimator,
     out float solid_angle_pdf_or_negative,
     inout float path_max_roughness)
 {
-    const HERO_VEC reflectance = get_reflectance(params);
+    const vecW reflectance = get_reflectance(params);
     const float roughness = get_roughness(params);
     const vec2 alpha = ggx_alpha_from_roughness(roughness);
 
@@ -73,9 +73,9 @@ void rough_plastic_bsdf_sample(
     const float combined_solid_angle_pdf = mix(spec_solid_angle_pdf, diff_solid_angle_pdf, diffuse_probability);
 
     const float spec_f = fresnel_schlick(PLASTIC_F0, h_dot_v)*ggx_brdf_without_fresnel(h, v, l, alpha);
-    const HERO_VEC diff_f = reflectance*(diffuse_strength/PI);
+    const vecW diff_f = reflectance*(diffuse_strength/PI);
 
-    const HERO_VEC f = HERO_VEC(spec_f) + diff_f;
+    const vecW f = vecW(spec_f) + diff_f;
     estimator = f * n_dot_l / combined_solid_angle_pdf;
     solid_angle_pdf_or_negative = combined_solid_angle_pdf;
 }

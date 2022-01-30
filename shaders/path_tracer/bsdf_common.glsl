@@ -83,7 +83,7 @@ vec3 get_rgb_reflectance(BsdfParams p)
         unpackHalf2x16(p.bits.x),
         unpackHalf2x16(p.bits.y).x);
 }
-BsdfParams replace_reflectance(BsdfParams p, HERO_VEC reflectance)
+BsdfParams replace_reflectance(BsdfParams p, vecW reflectance)
 {
     p.bits.x = packHalf2x16(reflectance.xy);
 #if WAVELENGTHS_PER_RAY == 3
@@ -94,9 +94,9 @@ BsdfParams replace_reflectance(BsdfParams p, HERO_VEC reflectance)
 #endif
     return p;
 }
-HERO_VEC get_reflectance(BsdfParams p)
+vecW get_reflectance(BsdfParams p)
 {
-    HERO_VEC tmp;
+    vecW tmp;
     tmp.xy = unpackHalf2x16(p.bits.x);
 #if WAVELENGTHS_PER_RAY == 3
     tmp.z = unpackHalf2x16(p.bits.y).x;
