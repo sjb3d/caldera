@@ -1,3 +1,5 @@
+#ifndef INCLUDED_SPECTRUM
+#define INCLUDED_SPECTRUM
 
 #define SMITS_WAVELENGTH_MIN    380.f
 #define SMITS_WAVELENGTH_MAX    720.f
@@ -11,16 +13,28 @@ float offset_wavelength(float base, float fraction)
     return result;
 }
 
-#define WAVELENGTHS_PER_RAY     3
-#define HERO_VEC                vec3
+#define WAVELENGTHS_PER_RAY         3
+
+#if WAVELENGTHS_PER_RAY == 2
+#define HERO_VEC                    vec2
+#define HERO_VEC_NEW(A, B, C, D)    HERO_VEC((A), (B))
+#elif WAVELENGTHS_PER_RAY == 3
+#define HERO_VEC                    vec3
+#define HERO_VEC_NEW(A, B, C, D)    HERO_VEC((A), (B), (C))
+#elif WAVELENGTHS_PER_RAY == 4
+#define HERO_VEC                    vec4
+#define HERO_VEC_NEW(A, B, C, D)    HERO_VEC((A), (B), (C), (D))
+#else
+#error Unsupported WAVELENGTHS_PER_RAY value
+#endif
 
 HERO_VEC expand_wavelengths_from_hero(float hero_wavelength)
 {
-    HERO_VEC wavelengths;
-    wavelengths.x = hero_wavelength;
-    wavelengths.y = offset_wavelength(hero_wavelength, 1.f/WAVELENGTHS_PER_RAY);
-    wavelengths.z = offset_wavelength(hero_wavelength, 2.f/WAVELENGTHS_PER_RAY);
-    return wavelengths;
+    return HERO_VEC_NEW(
+        hero_wavelength,
+        offset_wavelength(hero_wavelength, 1.f/WAVELENGTHS_PER_RAY),
+        offset_wavelength(hero_wavelength, 2.f/WAVELENGTHS_PER_RAY),
+        offset_wavelength(hero_wavelength, 3.f/WAVELENGTHS_PER_RAY));
 }
 
 float smits_power_from_rec709(float wavelength, vec3 col, sampler2D table)
@@ -67,3 +81,5 @@ float smits_power_from_rec709(float wavelength, vec3 col, sampler2D table)
     }
     return ret;
 }
+
+#endif // ndef INCLUDED_SPECTRUM

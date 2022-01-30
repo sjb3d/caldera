@@ -55,27 +55,35 @@ HERO_VEC sample_wavelengths(out HERO_VEC pdfs)
             const float hero_wavelength = texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x;
             wavelengths = expand_wavelengths_from_hero(hero_wavelength);
             pdfs = HERO_VEC(
-                    texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x
+                  texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x
                 + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x
+#if WAVELENGTHS_PER_RAY >= 3
                 + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x
+#endif
+#if WAVELENGTHS_PER_RAY >= 4
+                + texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.w)).x
+#endif
             );
         } break;
         case WAVELENGTH_SAMPLING_METHOD_CONTINUOUS_MIS: {
             // offset a single sample for stratification (rather than using x/y/z)
-            wavelengths = HERO_VEC(
+            wavelengths = HERO_VEC_NEW(
                 texture(g_wavelength_inv_cdf, wavelength_rand_u01.x).x,
                 texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 1.f/WAVELENGTHS_PER_RAY)).x,
-                texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 2.f/WAVELENGTHS_PER_RAY)).x);
+                texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 2.f/WAVELENGTHS_PER_RAY)).x,
+                texture(g_wavelength_inv_cdf, fract(wavelength_rand_u01.x + 3.f/WAVELENGTHS_PER_RAY)).x);
+
             /*
                 We are taking some shortcuts here due to the path pdf not being wavelength-dependent yet.
                 This let us compute the weight ahead of time using only the wavelength pdf.
                 This will need revisiting to track some terms per-wavelength once refraction
                 is implemented properly.
             */
-            pdfs = WAVELENGTHS_PER_RAY*HERO_VEC(
+            pdfs = WAVELENGTHS_PER_RAY*HERO_VEC_NEW(
                 texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.x)).x,
                 texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.y)).x,
-                texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x);
+                texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.z)).x,
+                texture(g_wavelength_pdf, unlerp(SMITS_WAVELENGTH_MIN, SMITS_WAVELENGTH_MAX, wavelengths.w)).x);
         } break;
     }
     return wavelengths;
@@ -83,16 +91,19 @@ HERO_VEC sample_wavelengths(out HERO_VEC pdfs)
 
 HERO_VEC illuminant(HERO_VEC wavelengths, uint index, vec3 tint)
 {
-    HERO_VEC power;
-    power.x = smits_power_from_rec709(wavelengths.x, tint, g_smits_table);
-    power.y = smits_power_from_rec709(wavelengths.y, tint, g_smits_table);
-    power.z = smits_power_from_rec709(wavelengths.z, tint, g_smits_table);
+    HERO_VEC power = HERO_VEC_NEW(
+        smits_power_from_rec709(wavelengths.x, tint, g_smits_table),
+        smits_power_from_rec709(wavelengths.y, tint, g_smits_table),
+        smits_power_from_rec709(wavelengths.z, tint, g_smits_table),
+        smits_power_from_rec709(wavelengths.w, tint, g_smits_table));
     if (index != 0) {
         const float layer = float(index - 1);
         const HERO_VEC coord = unlerp(HERO_VEC(SMITS_WAVELENGTH_MIN), HERO_VEC(SMITS_WAVELENGTH_MAX), wavelengths);
-        power.x *= texture(g_illuminants, vec2(coord.x, layer)).x;
-        power.y *= texture(g_illuminants, vec2(coord.y, layer)).x;
-        power.z *= texture(g_illuminants, vec2(coord.z, layer)).x;
+        power *= HERO_VEC_NEW(
+            texture(g_illuminants, vec2(coord.x, layer)).x,
+            texture(g_illuminants, vec2(coord.y, layer)).x,
+            texture(g_illuminants, vec2(coord.z, layer)).x,
+            texture(g_illuminants, vec2(coord.w, layer)).x);
     }
     return power;
 }
@@ -375,11 +386,12 @@ void main()
 
         // compute reflectance for this wavelength
         {
-            const vec3 tint = get_reflectance(hit.bsdf_params);
-            HERO_VEC reflectances;
-            reflectances.x = smits_power_from_rec709(wavelengths.x, tint, g_smits_table);
-            reflectances.y = smits_power_from_rec709(wavelengths.y, tint, g_smits_table);
-            reflectances.z = smits_power_from_rec709(wavelengths.z, tint, g_smits_table);
+            const vec3 tint = get_rgb_reflectance(hit.bsdf_params);
+            HERO_VEC reflectances = HERO_VEC_NEW(
+                smits_power_from_rec709(wavelengths.x, tint, g_smits_table),
+                smits_power_from_rec709(wavelengths.y, tint, g_smits_table),
+                smits_power_from_rec709(wavelengths.z, tint, g_smits_table),
+                smits_power_from_rec709(wavelengths.w, tint, g_smits_table));
             hit.bsdf_params = replace_reflectance(hit.bsdf_params, reflectances);
         }
 
@@ -612,7 +624,12 @@ void main()
     const vec3 result
         = result_sum.x*texture(g_xyz_matching, coord.x).xyz
         + result_sum.y*texture(g_xyz_matching, coord.y).xyz
+#if WAVELENGTHS_PER_RAY >= 3
         + result_sum.z*texture(g_xyz_matching, coord.z).xyz
+#endif
+#if WAVELENGTHS_PER_RAY >= 4
+        + result_sum.w*texture(g_xyz_matching, coord.w).xyz
+#endif
         ;
     imageStore(g_result[0], ivec2(gl_LaunchIDEXT.xy), vec4(result.x, vec3(0.f)));
     imageStore(g_result[1], ivec2(gl_LaunchIDEXT.xy), vec4(result.y, vec3(0.f)));

@@ -17,9 +17,14 @@ void get_eta_k(
     const float layer = float(material_index);
     const vec2 eta_k0 = texture(conductors, vec2(wavelengths_u.x, layer)).xy;
     const vec2 eta_k1 = texture(conductors, vec2(wavelengths_u.y, layer)).xy;
+#if WAVELENGTHS_PER_RAY >= 3
     const vec2 eta_k2 = texture(conductors, vec2(wavelengths_u.z, layer)).xy;
-    eta = HERO_VEC(eta_k0.x, eta_k1.x, eta_k2.x);
-    k = HERO_VEC(eta_k0.y, eta_k1.y, eta_k2.y);
+#endif
+#if WAVELENGTHS_PER_RAY >= 4
+    const vec2 eta_k3 = texture(conductors, vec2(wavelengths_u.w, layer)).xy;
+#endif
+    eta = HERO_VEC_NEW(eta_k0.x, eta_k1.x, eta_k2.x, eta_k3.x);
+    k = HERO_VEC_NEW(eta_k0.y, eta_k1.y, eta_k2.y, eta_k3.y);
 }
 
 void rough_conductor_bsdf_eval(
