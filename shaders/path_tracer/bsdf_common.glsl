@@ -52,6 +52,8 @@ struct BsdfParams {
 #endif
 };
 
+#define BSDF_PARAMS_MATERIAL_INDEX_SHIFT  24
+
 #define BSDF_PARAMS_FRONT_HIT_BIT         0x80000000U
 #define BSDF_PARAMS_MATERIAL_INDEX_MASK   0x0f000000U
 #define BSDF_PARAMS_ROUGHNESS_MASK        0x00ff0000U
@@ -71,7 +73,7 @@ BsdfParams create_bsdf_params(
 #endif
     p.BSDF_PARAMS_BITS_LAST = p.BSDF_PARAMS_BITS_LAST
         | packUnorm4x8(vec4(0.f, 0.f, roughness, 0.f))
-        | ((material_index << 24) & BSDF_PARAMS_MATERIAL_INDEX_MASK)
+        | ((material_index << BSDF_PARAMS_MATERIAL_INDEX_SHIFT) & BSDF_PARAMS_MATERIAL_INDEX_MASK)
         | (is_front_hit ? BSDF_PARAMS_FRONT_HIT_BIT : 0)
         ;
     return p;
@@ -119,7 +121,7 @@ float get_roughness(BsdfParams p)
 
 uint get_material_index(BsdfParams p)
 {
-    return (p.BSDF_PARAMS_BITS_LAST & BSDF_PARAMS_MATERIAL_INDEX_MASK) >> 8;
+    return (p.BSDF_PARAMS_BITS_LAST & BSDF_PARAMS_MATERIAL_INDEX_MASK) >> BSDF_PARAMS_MATERIAL_INDEX_SHIFT;
 }
 bool is_front_hit(BsdfParams p)
 {
