@@ -23,6 +23,7 @@ use std::{
     path::{Path, PathBuf},
     slice,
     sync::Arc,
+    time::Instant,
 };
 use structopt::StructOpt;
 use strum::{EnumString, EnumVariantNames, VariantNames};
@@ -515,7 +516,7 @@ impl CommandlineApp {
     }
 
     fn run(&mut self, filename: &Path) {
-        let mut render_started = false;
+        let mut start_instant = None;
         loop {
             let cbar = self.systems.acquire_command_buffer();
 
@@ -544,9 +545,9 @@ impl CommandlineApp {
                     &camera,
                 );
 
-                if !render_started {
+                if start_instant.is_none() {
                     println!("starting render");
-                    render_started = true;
+                    start_instant = Some(Instant::now());
                 }
 
                 if self.progress.done(&renderer.params) {
@@ -636,6 +637,11 @@ impl CommandlineApp {
 
         println!("waiting for fence");
         self.systems.command_buffer_pool.wait_after_submit();
+        println!(
+            "render time for {} samples: {} seconds",
+            self.renderer.get().unwrap().params.sample_count(),
+            Instant::now().duration_since(start_instant.unwrap()).as_secs_f32()
+        );
 
         println!("saving image to {:?}", filename);
         let params = &self.renderer.get().unwrap().params;
