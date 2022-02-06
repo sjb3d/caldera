@@ -25,6 +25,7 @@ void main()
         const float t_min = min_element(t);
         const float t_max = max_element(t);
         g_attrib.geom_normal = make_normal32(p + t_min*d);
+        g_attrib.epsilon_exponent = default_epsilon_exponent(g_record.header.unit_scale);
         if (!reportIntersectionEXT(t_min, PROCEDURAL_HIT_FRONT)) {
             g_attrib.geom_normal = make_normal32(p + t_max*d);
             g_attrib.epsilon_exponent = default_epsilon_exponent(g_record.header.unit_scale);
