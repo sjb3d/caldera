@@ -1,10 +1,13 @@
 #version 460 core
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_ARB_gpu_shader_int64 : require
 
 #extension GL_GOOGLE_include_directive : require
 #include "maths.glsl"
 #include "extend_common.glsl"
+#include "path_trace_common.glsl"
 
 layout(shaderRecordEXT, scalar) buffer ExtendProceduralHitRecord {
     ProceduralHitRecordHeader header;
@@ -25,6 +28,14 @@ void main()
     const vec3 hit_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_WorldRayOriginEXT + gl_HitTEXT*gl_WorldRayDirectionEXT;
 
+    // show the side of the hit
+    uint bsdf_type = get_bsdf_type(g_record.header.shader);
+    vec3 reflectance = g_record.header.shader.reflectance;
+    if ((g_path_trace.flags & PATH_TRACE_FLAG_CHECK_HIT_FACE) != 0) {
+        bsdf_type = BSDF_TYPE_DIFFUSE;
+        reflectance = is_front_hit ? HIT_FRONT_COLOR : HIT_BACK_COLOR;
+    }
+
     g_extend.info = create_hit_info(
         get_bsdf_type(g_record.header.shader),
         is_emissive(g_record.header.shader),
@@ -34,7 +45,7 @@ void main()
     g_extend.geom_normal = make_normal32(hit_normal_vec_ws);
     g_extend.shading_normal = g_extend.geom_normal;
     g_extend.bsdf_params = create_bsdf_params(
-        g_record.header.shader.reflectance,
+        reflectance,
         g_record.header.shader.roughness,
         get_material_index(g_record.header.shader),
         is_front_hit);

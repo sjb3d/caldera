@@ -4,7 +4,6 @@
 #include "maths.glsl"
 
 // reference: https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/ and PBRT book
-
 #define FRESNEL_CONDUCTOR_IMPL(VEC_T)                                                                   \
     VEC_T fresnel_conductor(VEC_T eta, VEC_T k, float cos_theta)                                        \
     {                                                                                                   \

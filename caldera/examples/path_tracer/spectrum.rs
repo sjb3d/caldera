@@ -722,19 +722,23 @@ pub fn xyz_from_spectral_reflectance_sweep(
     sum * (CIE_WAVELENGTH_STEP_SIZE / n)
 }
 
-pub struct SampledRefractiveIndex {
+pub struct ConductorSample {
     pub wavelength: f32,
     pub eta: f32,
     pub k: f32,
 }
-macro_rules! refractive_index_samples {
-    ($(($w:literal, $e:literal, $k:literal)),+) => { [ $(
-        SampledRefractiveIndex { wavelength: $w * 1000.0, eta: $e, k: $k, },
-    )+ ] }
+macro_rules! conductor_samples {
+    ($n:ident, $(($w:literal, $e:literal, $k:literal)),+) => {
+        #[allow(clippy::approx_constant)]
+        pub const $n: &[ConductorSample] = &[
+            $(ConductorSample { wavelength: $w * 1000.0, eta: $e, k: $k, },)+
+        ];
+    }
 }
 
 // from https://refractiveindex.info (CC0 1.0 universal public domain)
-pub const ALUMINIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    ALUMINIUM_SAMPLES,
     (0.35692, 0.35785, 4.1856),
     (0.37211, 0.3933, 4.3726),
     (0.38795, 0.43317, 4.5661),
@@ -758,7 +762,8 @@ pub const ALUMINIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_sampl
     (0.82146, 2.7061, 8.1106),
     (0.85642, 2.4465, 7.9982)
 );
-pub const ALUMINIUM_ANTIMONIDE_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    ALUMINIUM_ANTIMONIDE_SAMPLES,
     (0.3263, 3.81, 3.16),
     (0.3351, 3.91, 2.97),
     (0.3444, 3.96, 2.81),
@@ -785,8 +790,8 @@ pub const ALUMINIUM_ANTIMONIDE_SAMPLES: &[SampledRefractiveIndex] = &refractive_
     (0.8266, 3.54, 0.0002),
     (0.8856, 3.5, 0.0001)
 );
-#[allow(clippy::approx_constant)]
-pub const CHROMIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    CHROMIUM_SAMPLES,
     (0.32, 1.65, 2.47),
     (0.332, 1.69, 2.53),
     (0.342, 1.76, 2.58),
@@ -809,7 +814,8 @@ pub const CHROMIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_sample
     (0.821, 3.2, 3.48),
     (0.892, 3.3, 3.52)
 );
-pub const COPPER_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    COPPER_SAMPLES,
     (0.37527, 1.2161, 2.1422),
     (0.38307, 1.2373, 2.1891),
     (0.39103, 1.2613, 2.2277),
@@ -845,7 +851,8 @@ pub const COPPER_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!
     (0.7249, 0.20067, 4.3347),
     (0.73997, 0.19753, 4.4732)
 );
-pub const IRON_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    IRON_SAMPLES,
     (0.354, 1.93, 2.35),
     (0.368, 2.02, 2.43),
     (0.381, 2.12, 2.5),
@@ -865,7 +872,8 @@ pub const IRON_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
     (0.821, 2.94, 3.39),
     (0.892, 2.96, 3.56)
 );
-pub const GOLD_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    GOLD_SAMPLES,
     (0.35972, 1.6006, 1.7597),
     (0.36559, 1.581, 1.7714),
     (0.37155, 1.5645, 1.7856),
@@ -920,7 +928,8 @@ pub const GOLD_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
     (0.82079, 0.19621, 4.8669),
     (0.83418, 0.20151, 4.9695)
 );
-pub const SILVER_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    SILVER_SAMPLES,
     (0.35324, 0.20172, 1.286),
     (0.36025, 0.18151, 1.4005),
     (0.36741, 0.16741, 1.5059),
@@ -967,7 +976,8 @@ pub const SILVER_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!
     (0.8226, 0.19051, 5.1453),
     (0.83893, 0.19387, 5.2583)
 );
-pub const TITANIUM_NITRIDE_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    TITANIUM_NITRIDE_SAMPLES,
     (0.31, 2.27, 1.23),
     (0.3542, 2.14, 1.06),
     (0.4133, 1.74, 1.04),
@@ -976,7 +986,8 @@ pub const TITANIUM_NITRIDE_SAMPLES: &[SampledRefractiveIndex] = &refractive_inde
     (0.8266, 1.82, 3.81),
     (1.2399, 2.69, 5.04)
 );
-pub const TUNGSTEN_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    TUNGSTEN_SAMPLES,
     (0.30996, 1.8008, 4.3314),
     (0.330625, 2.0193, 3.578),
     (0.354241, 1.327, 3.806),
@@ -990,7 +1001,8 @@ pub const TUNGSTEN_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_sample
     (0.826561, 1.1957, 9.6069),
     (0.991874, 2.1933, 11.8617)
 );
-pub const VANADIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    VANADIUM_SAMPLES,
     (0.311, 2.17, 3.06),
     (0.32, 2.28, 3.15),
     (0.332, 2.37, 3.22),
@@ -1014,7 +1026,8 @@ pub const VANADIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_sample
     (0.821, 3.16, 3.25),
     (0.892, 3.12, 3.34)
 );
-pub const VANADIUM_NITRIDE_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    VANADIUM_NITRIDE_SAMPLES,
     (0.2755, 2.19, 1.56),
     (0.31, 2.2, 1.54),
     (0.3542, 2.18, 1.58),
@@ -1024,7 +1037,8 @@ pub const VANADIUM_NITRIDE_SAMPLES: &[SampledRefractiveIndex] = &refractive_inde
     (0.8266, 2.73, 2.92),
     (1.2399, 3.19, 3.66)
 );
-pub const LITHIUM_SAMPLES: &[SampledRefractiveIndex] = &refractive_index_samples!(
+conductor_samples!(
+    LITHIUM_SAMPLES,
     (0.32627, 0.34301, 1.38479),
     (0.33062, 0.3382, 1.41929),
     (0.33509, 0.33429, 1.43588),

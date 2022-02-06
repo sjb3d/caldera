@@ -4,6 +4,9 @@
 #include "bsdf_common.glsl"
 #include "normal_pack.glsl"
 
+#define HIT_FRONT_COLOR                 vec3(.8f, .8f, .8f)
+#define HIT_BACK_COLOR                  vec3(.8f, .05f, .05f)
+
 #define LOG2_EPSILON_FACTOR             (-18)
 
 int default_epsilon_exponent(float unit_scale)

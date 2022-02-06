@@ -789,11 +789,11 @@ impl ply::PropertyAccess for PlyFace {
         match (key.as_ref(), property) {
             ("vertex_indices", ply::Property::ListInt(v)) => {
                 assert_eq!(v.len(), 3);
-                for (dst, src) in self.indices.as_mut_slice().iter_mut().zip(v.iter().rev()) {
+                for (dst, src) in self.indices.as_mut_slice().iter_mut().zip(v.iter()) {
                     *dst = *src as u32;
                 }
             }
-            (k, _) => panic!("unknown key {}", k),
+            _ => {}
         }
     }
 }
@@ -817,7 +817,7 @@ pub fn load_ply(filename: &Path) -> Geometry {
             "face" => {
                 faces = face_parser.read_payload_for_element(&mut f, element, &header).unwrap();
             }
-            _ => panic!("unexpected element {:?}", element),
+            _ => {}
         }
     }
 
@@ -878,9 +878,9 @@ pub fn create_material_test_scene(ply_filename: &Path, surfaces: &[Surface], ill
             )
             .with_quad(
                 Vec3::new(-floor_size, eps, wall_distance),
-                Vec3::new(floor_size, eps, wall_distance),
-                Vec3::new(floor_size, floor_size, wall_distance),
                 Vec3::new(-floor_size, floor_size, wall_distance),
+                Vec3::new(floor_size, floor_size, wall_distance),
+                Vec3::new(floor_size, eps, wall_distance),
             )
             .build(),
     );
@@ -900,19 +900,19 @@ pub fn create_material_test_scene(ply_filename: &Path, surfaces: &[Surface], ill
 
     let object_geometry = scene.add_geometry(object_mesh);
     let max_half_extent = half_extent.component_max();
-    let y_offset = half_extent.y / max_half_extent;
+    let y_offset = 1.01 * half_extent.y / max_half_extent;
     let spacing = 1.5;
     for (i, surface) in surfaces.iter().enumerate() {
         let object_transform = scene.add_transform(Transform {
             world_from_local: Similarity3::new(
                 Vec3::new(
                     ((i as f32) - (surfaces.len() as f32 - 1.0) * 0.5) * spacing,
-                    y_offset - centre.y / max_half_extent,
+                    y_offset,
                     0.0,
                 ),
                 Rotor3::from_rotation_xz(0.75 * PI),
                 1.0 / max_half_extent,
-            ),
+            ) * Similarity3::new(-centre, Rotor3::identity(), 1.0),
         });
         let object_material = scene.add_material(Material {
             reflectance: Reflectance::Constant(Vec3::one()),

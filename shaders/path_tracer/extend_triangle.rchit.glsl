@@ -100,8 +100,15 @@ void main()
     const vec3 hit_shading_normal_vec_ws = gl_ObjectToWorldEXT * vec4(hit_shading_normal_vec_ls, 0.f);
     const vec3 hit_pos_ws = gl_ObjectToWorldEXT * vec4(hit_pos_ls, 1.f);
 
+    // show the side of the hit
+    uint bsdf_type = get_bsdf_type(g_record.shader);
+    if ((g_path_trace.flags & PATH_TRACE_FLAG_CHECK_HIT_FACE) != 0) {
+        bsdf_type = BSDF_TYPE_DIFFUSE;
+        reflectance = is_front_hit ? HIT_FRONT_COLOR : HIT_BACK_COLOR;
+    }
+
     g_extend.info = create_hit_info(
-        get_bsdf_type(g_record.shader),
+        bsdf_type,
         is_emissive(g_record.shader),
         g_record.shader.light_index,
         default_epsilon_exponent(g_record.unit_scale));

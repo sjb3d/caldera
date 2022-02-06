@@ -142,6 +142,7 @@ impl PathTraceFlags {
     const ALLOW_BSDF_SAMPLING: PathTraceFlags = PathTraceFlags(0x4);
     const SPHERE_LIGHTS_SAMPLE_SOLID_ANGLE: PathTraceFlags = PathTraceFlags(0x8);
     const PLANAR_LIGHTS_ARE_TWO_SIDED: PathTraceFlags = PathTraceFlags(0x10);
+    const CHECK_HIT_FACE: PathTraceFlags = PathTraceFlags(0x20);
 }
 
 impl BitOr for PathTraceFlags {
@@ -546,6 +547,10 @@ pub struct RendererParams {
     /// Quad and disc lights emit light from both sides
     #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="disable", global=true)]
     pub planar_lights_are_two_sided: BoolParam,
+
+    /// Override all materials to be diffuse with white front faces and red back faces
+    #[structopt(long, parse(try_from_str=try_bool_from_str), default_value="disable", global=true)]
+    pub check_hit_face: BoolParam,
 
     /// Which sampling techniques are allowed
     #[structopt(long, possible_values=SamplingTechnique::VARIANTS, default_value = "lights-and-surfaces", global=true)]
@@ -1237,12 +1242,12 @@ impl Renderer {
                     Conductor::Vanadium => VANADIUM_SAMPLES,
                     Conductor::VanadiumNitride => VANADIUM_NITRIDE_SAMPLES,
                     Conductor::Custom => &[
-                        SampledRefractiveIndex {
+                        ConductorSample {
                             wavelength: WAVELENGTH_MIN as f32,
                             eta: 2.0,
                             k: 0.0,
                         },
-                        SampledRefractiveIndex {
+                        ConductorSample {
                             wavelength: WAVELENGTH_MAX as f32,
                             eta: 2.0,
                             k: 0.0,
@@ -1977,6 +1982,10 @@ impl Renderer {
                 "Planar Lights Are Two Sided",
                 &mut self.params.planar_lights_are_two_sided,
             );
+            needs_reset |= ui.checkbox(
+                "Check Hit Face",
+                &mut self.params.check_hit_face
+            );
         }
 
         if CollapsingHeader::new("Film").default_open(true).build(ui) {
@@ -2082,6 +2091,9 @@ impl Renderer {
                         }
                         if self.params.planar_lights_are_two_sided {
                             path_trace_flags |= PathTraceFlags::PLANAR_LIGHTS_ARE_TWO_SIDED;
+                        }
+                        if self.params.check_hit_face {
+                            path_trace_flags |= PathTraceFlags::CHECK_HIT_FACE;
                         }
 
                         let light_info_table_address = unsafe {
