@@ -8,10 +8,10 @@ pub fn enable_extensions(window: &Window, extensions: &mut InstanceExtensions) {
         RawWindowHandle::Xlib(..) => extensions.enable_khr_xlib_surface(),
 
         #[cfg(target_os = "windows")]
-        RawWindowHandle::Windows(..) => extensions.enable_khr_win32_surface(),
+        RawWindowHandle::Win32(..) => extensions.enable_khr_win32_surface(),
 
         #[cfg(target_os = "android")]
-        RawWindowHandle::Android(..) => extensions.enable_khr_android_surface(),
+        RawWindowHandle::AndroidNdk(..) => extensions.enable_khr_android_surface(),
 
         _ => unimplemented!(),
     }
@@ -30,7 +30,7 @@ pub fn create(instance: &Instance, window: &Window) -> Result<vk::SurfaceKHR> {
         }
 
         #[cfg(target_os = "windows")]
-        RawWindowHandle::Windows(handle) => {
+        RawWindowHandle::Win32(handle) => {
             let create_info = vk::Win32SurfaceCreateInfoKHR {
                 hwnd: handle.hwnd,
                 ..Default::default()
@@ -39,7 +39,7 @@ pub fn create(instance: &Instance, window: &Window) -> Result<vk::SurfaceKHR> {
         }
 
         #[cfg(target_os = "android")]
-        RawWindowHandle::Android(handle) => {
+        RawWindowHandle::AndroidNdk(handle) => {
             let create_info = vk::AndroidSurfaceCreateInfoKHR {
                 window: handle.a_native_window as _,
                 ..Default::default()
