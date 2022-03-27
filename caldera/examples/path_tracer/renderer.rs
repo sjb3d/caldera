@@ -1982,10 +1982,7 @@ impl Renderer {
                 "Planar Lights Are Two Sided",
                 &mut self.params.planar_lights_are_two_sided,
             );
-            needs_reset |= ui.checkbox(
-                "Check Hit Face",
-                &mut self.params.check_hit_face
-            );
+            needs_reset |= ui.checkbox("Check Hit Face", &mut self.params.check_hit_face);
         }
 
         if CollapsingHeader::new("Film").default_open(true).build(ui) {
