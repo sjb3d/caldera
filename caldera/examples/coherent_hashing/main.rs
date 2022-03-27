@@ -187,7 +187,9 @@ impl App {
             &base.systems.pipeline_cache,
         );
 
-        let swap_vk_image = base.display.acquire(cbar.image_available_semaphore.unwrap());
+        let swap_vk_image = base
+            .display
+            .acquire(&base.window, cbar.image_available_semaphore.unwrap());
         let swap_size = base.display.swapchain.get_size();
         let swap_format = base.display.swapchain.get_format();
         let swap_image = schedule.import_image(

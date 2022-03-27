@@ -7,6 +7,9 @@ pub fn enable_extensions(window: &Window, extensions: &mut InstanceExtensions) {
         #[cfg(target_os = "linux")]
         RawWindowHandle::Xlib(..) => extensions.enable_khr_xlib_surface(),
 
+        #[cfg(target_os = "linux")]
+        RawWindowHandle::Wayland(..) => extensions.enable_khr_wayland_surface(),
+
         #[cfg(target_os = "windows")]
         RawWindowHandle::Win32(..) => extensions.enable_khr_win32_surface(),
 
@@ -27,6 +30,16 @@ pub fn create(instance: &Instance, window: &Window) -> Result<vk::SurfaceKHR> {
                 ..Default::default()
             };
             unsafe { instance.create_xlib_surface_khr(&create_info, None) }
+        }
+
+        #[cfg(target_os = "linux")]
+        RawWindowHandle::Wayland(handle) => {
+            let create_info = vk::WaylandSurfaceCreateInfoKHR {
+                display: handle.display as _,
+                surface: handle.surface as _,
+                ..Default::default()
+            };
+            unsafe { instance.create_wayland_surface_khr(&create_info, None) }
         }
 
         #[cfg(target_os = "windows")]

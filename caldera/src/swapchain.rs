@@ -21,6 +21,7 @@ impl Swapchain {
 
     fn create(
         context: &Context,
+        window_extent: vk::Extent2D,
         usage: vk::ImageUsageFlags,
         old_swapchain: Option<vk::SwapchainKHR>,
     ) -> (vk::SwapchainKHR, vk::SurfaceFormatKHR, UVec2) {
@@ -31,7 +32,10 @@ impl Swapchain {
                 .get_physical_device_surface_capabilities_khr(context.physical_device, surface)
         }
         .unwrap();
-        let extent = surface_capabilities.current_extent;
+        let mut extent = surface_capabilities.current_extent;
+        if extent.width == u32::MAX && extent.height == u32::MAX {
+            extent = window_extent;
+        }
         let surface_supported = unsafe {
             context.instance.get_physical_device_surface_support_khr(
                 context.physical_device,
@@ -82,8 +86,8 @@ impl Swapchain {
         (swapchain, surface_format, UVec2::new(extent.width, extent.height))
     }
 
-    pub fn new(context: &SharedContext, usage: vk::ImageUsageFlags) -> Self {
-        let (swapchain, surface_format, size) = Swapchain::create(context, usage, None);
+    pub fn new(context: &SharedContext, window_extent: vk::Extent2D, usage: vk::ImageUsageFlags) -> Self {
+        let (swapchain, surface_format, size) = Swapchain::create(context, window_extent, usage, None);
 
         let images = unsafe { context.device.get_swapchain_images_khr_to_vec(swapchain) }.unwrap();
         let uid = context.allocate_handle_uid();
@@ -97,8 +101,9 @@ impl Swapchain {
         }
     }
 
-    pub fn recreate(&mut self, usage: vk::ImageUsageFlags) {
-        let (swapchain, surface_format, size) = Swapchain::create(&self.context, usage, Some(self.swapchain));
+    pub fn recreate(&mut self, window_extent: vk::Extent2D, usage: vk::ImageUsageFlags) {
+        let (swapchain, surface_format, size) =
+            Swapchain::create(&self.context, window_extent, usage, Some(self.swapchain));
         unsafe { self.context.device.destroy_swapchain_khr(Some(self.swapchain), None) };
 
         let images = unsafe { self.context.device.get_swapchain_images_khr_to_vec(swapchain) }.unwrap();

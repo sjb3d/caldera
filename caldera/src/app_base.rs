@@ -117,8 +117,15 @@ pub struct AppBase {
 impl AppDisplay {
     pub const SWAPCHAIN_USAGE: vk::ImageUsageFlags = vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
-    pub fn new(context: &SharedContext) -> Self {
-        let swapchain = Swapchain::new(context, Self::SWAPCHAIN_USAGE);
+    pub fn new(context: &SharedContext, window: &Window) -> Self {
+        let window_extent = {
+            let inner_size = window.inner_size();
+            vk::Extent2D {
+                width: inner_size.width,
+                height: inner_size.height,
+            }
+        };
+        let swapchain = Swapchain::new(context, window_extent, Self::SWAPCHAIN_USAGE);
 
         Self {
             swapchain,
@@ -126,10 +133,17 @@ impl AppDisplay {
         }
     }
 
-    pub fn acquire(&mut self, image_available_semaphore: vk::Semaphore) -> UniqueImage {
+    pub fn acquire(&mut self, window: &Window, image_available_semaphore: vk::Semaphore) -> UniqueImage {
         loop {
             if self.recreate_swapchain {
-                self.swapchain.recreate(Self::SWAPCHAIN_USAGE);
+                let window_extent = {
+                    let inner_size = window.inner_size();
+                    vk::Extent2D {
+                        width: inner_size.width,
+                        height: inner_size.height,
+                    }
+                };
+                self.swapchain.recreate(window_extent, Self::SWAPCHAIN_USAGE);
                 self.recreate_swapchain = false;
             }
             match self.swapchain.acquire(image_available_semaphore) {
@@ -228,7 +242,7 @@ pub enum AppEventResult {
 impl AppBase {
     pub fn new(window: Window, params: &ContextParams) -> Self {
         let context = Context::new(Some(&window), params);
-        let display = AppDisplay::new(&context);
+        let display = AppDisplay::new(&context, &window);
 
         let mut ui_context = imgui::Context::create();
         ui_context.fonts().add_font(&[imgui::FontSource::DefaultFontData {
