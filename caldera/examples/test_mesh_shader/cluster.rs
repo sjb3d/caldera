@@ -203,7 +203,7 @@ impl<'m> ClusterBuilder<'m> {
         Self {
             mesh,
             triangle_list_per_vertex: TriangleListPerVertex::new(mesh),
-            available_triangles: bitvec![1; mesh.triangles.len()],
+            available_triangles: BitVec::repeat(true, mesh.triangles.len()),
             vertex_remap: ClusterVertexRemap::new(mesh),
         }
     }
