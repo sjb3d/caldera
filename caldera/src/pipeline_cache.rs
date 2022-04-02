@@ -615,12 +615,12 @@ impl PipelineCache {
                 .p_vertex_input_state(Some(&vertex_input_state_create_info))
                 .p_input_assembly_state(Some(&input_assembly_state_create_info))
                 .p_viewport_state(Some(&viewport_state_create_info))
-                .p_rasterization_state(&rasterization_state_create_info)
+                .p_rasterization_state(Some(&rasterization_state_create_info))
                 .p_multisample_state(Some(&multisample_state_create_info))
                 .p_depth_stencil_state(Some(&depth_stencil_state))
                 .p_color_blend_state(Some(&color_blend_state_create_info))
                 .p_dynamic_state(Some(&pipeline_dynamic_state_create_info))
-                .layout(pipeline_layout)
+                .layout(Some(pipeline_layout))
                 .render_pass(Some(state.render_pass));
 
             unsafe {

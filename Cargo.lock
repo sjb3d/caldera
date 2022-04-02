@@ -1880,7 +1880,7 @@ dependencies = [
 [[package]]
 name = "spark"
 version = "0.1.0"
-source = "git+https://github.com/sjb3d/spark/#6f12597850d62060c5348e99a30d718be5a764cf"
+source = "git+https://github.com/sjb3d/spark/#4fb5f1a2839af724420c3716baa3134644df3d3f"
 dependencies = [
  "lazy_static",
  "shared_library",
@@ -1889,7 +1889,7 @@ dependencies = [
 [[package]]
 name = "spark-imgui"
 version = "0.1.0"
-source = "git+https://github.com/sjb3d/spark/#6f12597850d62060c5348e99a30d718be5a764cf"
+source = "git+https://github.com/sjb3d/spark/#4fb5f1a2839af724420c3716baa3134644df3d3f"
 dependencies = [
  "arrayvec",
  "imgui",
