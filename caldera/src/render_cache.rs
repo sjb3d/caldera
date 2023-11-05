@@ -1,6 +1,5 @@
 use crate::prelude::*;
 use arrayvec::ArrayVec;
-use imgui::Ui;
 use spark::{vk, Builder, Device};
 use std::{collections::HashMap, iter, slice};
 use tinyvec::ArrayVec as TinyVec;
@@ -320,21 +319,19 @@ impl ResourceCache {
         }
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui, name: &str) {
-        ui.text(format!("{} buffer cache", name));
-        ui.next_column();
-        ui.text(format!("{},{}", self.buffer_info.len(), self.buffer.len()));
-        ui.next_column();
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui, name: &str) {
+        ui.label(format!("{} buffer cache", name));
+        ui.label(format!("{},{}", self.buffer_info.len(), self.buffer.len()));
+        ui.end_row();
 
-        ui.text(format!("{} image cache", name));
-        ui.next_column();
-        ui.text(format!(
+        ui.label(format!("{} image cache", name));
+        ui.label(format!(
             "{},{},{}",
             self.image_info.len(),
             self.image.len(),
             self.image_view.len()
         ));
-        ui.next_column();
+        ui.end_row();
     }
 
     pub fn get_buffer_info(&mut self, desc: &BufferDesc, all_usage_flags: vk::BufferUsageFlags) -> BufferInfo {
@@ -493,15 +490,14 @@ impl RenderCache {
         }
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui) {
-        for (name, len) in &[
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui) {
+        for &(name, len) in &[
             ("render pass", self.render_pass.len()),
             ("framebuffer", self.framebuffer.len()),
         ] {
-            ui.text(name);
-            ui.next_column();
-            ui.text(format!("{}", len));
-            ui.next_column();
+            ui.label(name);
+            ui.label(format!("{}", len));
+            ui.end_row();
         }
     }
 

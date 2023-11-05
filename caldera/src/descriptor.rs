@@ -1,6 +1,5 @@
 use crate::{command_buffer::CommandBufferPool, context::SharedContext};
 use arrayvec::ArrayVec;
-use imgui::{ProgressBar, Ui};
 use spark::{vk, Builder};
 use std::{
     any::TypeId,
@@ -139,11 +138,12 @@ impl StagingBuffer {
         }
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui, title: &str) {
-        ui.text(title);
-        ui.next_column();
-        ProgressBar::new((self.last_usage as f32) / (self.size_per_frame as f32)).build(ui);
-        ui.next_column();
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui, title: &str) {
+        ui.label(title);
+        ui.add(egui::ProgressBar::new(
+            (self.last_usage as f32) / (self.size_per_frame as f32),
+        ));
+        ui.end_row();
     }
 }
 
@@ -639,7 +639,7 @@ impl DescriptorPool {
         }
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui) {
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui) {
         if let Some(uniform_data_pool) = self.uniform_data_pool.as_ref() {
             uniform_data_pool.ui_stats_table_rows(ui, "uniform data");
         }

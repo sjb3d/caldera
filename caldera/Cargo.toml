@@ -9,12 +9,12 @@ publish = false
 caldera-macro = { path = "../caldera-macro" }
 arrayvec = "0.7.2"
 spark = { git = "https://github.com/sjb3d/spark/" }
-spark-imgui = { git = "https://github.com/sjb3d/spark/" }
+spark-egui = { git = "https://github.com/sjb3d/spark/" }
 notify = "4.0.17"
-winit = "0.26.1"
-raw-window-handle = "0.4.2"
-imgui = "0.8.2"
-imgui-winit-support = { version = "0.8.2", features = ["winit-26"] }
+winit = "0.28"
+raw-window-handle = "0.5"
+egui = "0.23"
+egui-winit = "0.23"
 bytemuck = { version = "1.8.0", features = ["derive", "min_const_generics"] }
 ultraviolet = { version = "0.9.0", features = ["int", "bytemuck"] }
 structopt = "0.3.26"

@@ -1,9 +1,6 @@
-use crate::accel::*;
-use crate::prelude::*;
-use crate::scene::*;
+use crate::{accel::*, prelude::*, scene::*};
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::{CollapsingHeader, Drag, ProgressBar, Slider, StyleColor, Ui};
 use rand::{prelude::*, rngs::SmallRng};
 use rayon::prelude::*;
 use spark::vk;
@@ -1883,132 +1880,176 @@ impl Renderer {
         }
     }
 
-    pub fn debug_ui(&mut self, progress: &mut RenderProgress, ui: &Ui) {
+    pub fn debug_ui(&mut self, progress: &mut RenderProgress, ui: &mut egui::Ui) {
         let mut needs_reset = false;
 
-        if CollapsingHeader::new("Stats").default_open(true).build(ui) {
-            ui.text(format!("Unique BLAS: {}", self.accel.unique_bottom_level_accel_count()));
-            ui.text(format!(
+        egui::CollapsingHeader::new("Stats").default_open(true).show(ui, |ui| {
+            ui.label(format!("Unique BLAS: {}", self.accel.unique_bottom_level_accel_count()));
+            ui.label(format!(
                 "Instanced BLAS: {}",
                 self.accel.instanced_bottom_level_accel_count()
             ));
-            ui.text(format!("Unique Prims: {}", self.accel.unique_primitive_count()));
-            ui.text(format!("Instanced Prims: {}", self.accel.instanced_primitive_count()));
-            ui.text(format!(
+            ui.label(format!("Unique Prims: {}", self.accel.unique_primitive_count()));
+            ui.label(format!("Instanced Prims: {}", self.accel.instanced_primitive_count()));
+            ui.label(format!(
                 "Sampled Lights: {}",
                 self.shader_binding_data.sampled_light_count
             ));
-            ui.text(format!("Total Lights: {}", self.shader_binding_data.external_light_end));
-        }
+            ui.label(format!("Total Lights: {}", self.shader_binding_data.external_light_end));
+        });
 
-        if CollapsingHeader::new("Renderer").default_open(true).build(ui) {
-            ProgressBar::new(progress.fraction(&self.params)).build(ui);
-            Slider::new("Log2 Samples", 0, Self::LOG2_MAX_SAMPLES_PER_SEQUENCE)
-                .build(ui, &mut self.params.log2_sample_count);
-
-            ui.text("Sequence Type:");
-            needs_reset |= ui.radio_button("PMJ", &mut self.params.sequence_type, SequenceType::Pmj);
-            needs_reset |= ui.radio_button("Sobol", &mut self.params.sequence_type, SequenceType::Sobol);
-
-            ui.text("Wavelength Sampling Method:");
-            needs_reset |= ui.radio_button(
-                "Uniform",
-                &mut self.params.wavelength_sampling_method,
-                WavelengthSamplingMethod::Uniform,
-            );
-            needs_reset |= ui.radio_button(
-                "Hero MIS",
-                &mut self.params.wavelength_sampling_method,
-                WavelengthSamplingMethod::HeroMIS,
-            );
-            needs_reset |= ui.radio_button(
-                "Continuous MIS",
-                &mut self.params.wavelength_sampling_method,
-                WavelengthSamplingMethod::ContinuousMIS,
-            );
-
-            ui.text("Sampling Technique:");
-            needs_reset |= ui.radio_button(
-                "Lights Only",
-                &mut self.params.sampling_technique,
-                SamplingTechnique::LightsOnly,
-            );
-            needs_reset |= ui.radio_button(
-                "Surfaces Only",
-                &mut self.params.sampling_technique,
-                SamplingTechnique::SurfacesOnly,
-            );
-            needs_reset |= ui.radio_button(
-                "Lights And Surfaces",
-                &mut self.params.sampling_technique,
-                SamplingTechnique::LightsAndSurfaces,
-            );
-
-            let id = ui.push_id("MIS Heuristic");
-            if self.params.sampling_technique == SamplingTechnique::LightsAndSurfaces {
-                ui.text("MIS Heuristic:");
-                needs_reset |= ui.radio_button(
-                    "None",
-                    &mut self.params.mis_heuristic,
-                    MultipleImportanceHeuristic::None,
+        egui::CollapsingHeader::new("Renderer")
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.add(egui::ProgressBar::new(progress.fraction(&self.params)));
+                ui.add(
+                    egui::Slider::new(
+                        &mut self.params.log2_sample_count,
+                        0..=Self::LOG2_MAX_SAMPLES_PER_SEQUENCE,
+                    )
+                    .prefix("Log2 Samples: "),
                 );
-                needs_reset |= ui.radio_button(
-                    "Balance",
-                    &mut self.params.mis_heuristic,
-                    MultipleImportanceHeuristic::Balance,
+
+                ui.label("Sequence Type:");
+                needs_reset |= ui
+                    .radio_value(&mut self.params.sequence_type, SequenceType::Pmj, "PMJ")
+                    .changed();
+                needs_reset |= ui
+                    .radio_value(&mut self.params.sequence_type, SequenceType::Sobol, "Sobol")
+                    .changed();
+
+                ui.label("Wavelength Sampling Method:");
+                needs_reset |= ui
+                    .radio_value(
+                        &mut self.params.wavelength_sampling_method,
+                        WavelengthSamplingMethod::Uniform,
+                        "Uniform",
+                    )
+                    .changed();
+                needs_reset |= ui
+                    .radio_value(
+                        &mut self.params.wavelength_sampling_method,
+                        WavelengthSamplingMethod::HeroMIS,
+                        "Hero MIS",
+                    )
+                    .changed();
+                needs_reset |= ui
+                    .radio_value(
+                        &mut self.params.wavelength_sampling_method,
+                        WavelengthSamplingMethod::ContinuousMIS,
+                        "Continuous MIS",
+                    )
+                    .changed();
+
+                ui.label("Sampling Technique:");
+                needs_reset |= ui
+                    .radio_value(
+                        &mut self.params.sampling_technique,
+                        SamplingTechnique::LightsOnly,
+                        "Lights Only",
+                    )
+                    .changed();
+                needs_reset |= ui
+                    .radio_value(
+                        &mut self.params.sampling_technique,
+                        SamplingTechnique::SurfacesOnly,
+                        "Surfaces Only",
+                    )
+                    .changed();
+                needs_reset |= ui
+                    .radio_value(
+                        &mut self.params.sampling_technique,
+                        SamplingTechnique::LightsAndSurfaces,
+                        "Lights And Surfaces",
+                    )
+                    .changed();
+
+                ui.push_id("MIS Heuristic", |ui| {
+                    if self.params.sampling_technique == SamplingTechnique::LightsAndSurfaces {
+                        ui.label("MIS Heuristic:");
+                        needs_reset |= ui
+                            .radio_value(
+                                &mut self.params.mis_heuristic,
+                                MultipleImportanceHeuristic::None,
+                                "None",
+                            )
+                            .changed();
+                        needs_reset |= ui
+                            .radio_value(
+                                &mut self.params.mis_heuristic,
+                                MultipleImportanceHeuristic::Balance,
+                                "Balance",
+                            )
+                            .changed();
+                        needs_reset |= ui
+                            .radio_value(
+                                &mut self.params.mis_heuristic,
+                                MultipleImportanceHeuristic::Power2,
+                                "Power2",
+                            )
+                            .changed();
+                    } else {
+                        // TODO: show disabled
+                        ui.label("MIS Heuristic:");
+                        ui.radio(true, "None");
+                        ui.radio(false, "Balance");
+                        ui.radio(false, "Power2");
+                    }
+                });
+
+                needs_reset |= ui
+                    .add(egui::Slider::new(&mut self.params.max_bounces, 0..=24).prefix("Max Bounces: "))
+                    .changed();
+                needs_reset |= ui
+                    .checkbox(&mut self.params.accumulate_roughness, "Accumulate Roughness")
+                    .changed();
+                needs_reset |= ui
+                    .checkbox(
+                        &mut self.params.sphere_lights_sample_solid_angle,
+                        "Sample Sphere Light Solid Angle",
+                    )
+                    .changed();
+                needs_reset |= ui
+                    .checkbox(
+                        &mut self.params.planar_lights_are_two_sided,
+                        "Planar Lights Are Two Sided",
+                    )
+                    .changed();
+                needs_reset |= ui.checkbox(&mut self.params.check_hit_face, "Check Hit Face").changed();
+            });
+
+        egui::CollapsingHeader::new("Film").default_open(true).show(ui, |ui| {
+            ui.label("Filter:");
+            needs_reset |= ui
+                .radio_value(&mut self.params.filter_type, FilterType::Box, "Box")
+                .changed();
+            needs_reset |= ui
+                .radio_value(&mut self.params.filter_type, FilterType::Gaussian, "Gaussian")
+                .changed();
+            needs_reset |= ui
+                .radio_value(&mut self.params.filter_type, FilterType::Mitchell, "Mitchell")
+                .changed();
+
+            ui.push_id("Tone Map", |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.params.log2_exposure_scale)
+                        .speed(0.05)
+                        .prefix("Exposure Bias: "),
                 );
-                needs_reset |= ui.radio_button(
-                    "Power2",
-                    &mut self.params.mis_heuristic,
-                    MultipleImportanceHeuristic::Power2,
+                ui.label("Tone Map:");
+                ui.radio_value(&mut self.params.tone_map_method, ToneMapMethod::None, "None");
+                ui.radio_value(
+                    &mut self.params.tone_map_method,
+                    ToneMapMethod::FilmicSrgb,
+                    "Filmic sRGB",
                 );
-            } else {
-                ui.text_disabled("MIS Heuristic:");
-                let style = ui.push_style_color(StyleColor::Text, ui.style_color(StyleColor::TextDisabled));
-                ui.radio_button_bool("None", true);
-                ui.radio_button_bool("Balance", false);
-                ui.radio_button_bool("Power2", false);
-                style.pop();
-            }
-            id.pop();
-
-            needs_reset |= Slider::new("Max Bounces", 0, 24).build(ui, &mut self.params.max_bounces);
-            needs_reset |= ui.checkbox("Accumulate Roughness", &mut self.params.accumulate_roughness);
-            needs_reset |= ui.checkbox(
-                "Sample Sphere Light Solid Angle",
-                &mut self.params.sphere_lights_sample_solid_angle,
-            );
-            needs_reset |= ui.checkbox(
-                "Planar Lights Are Two Sided",
-                &mut self.params.planar_lights_are_two_sided,
-            );
-            needs_reset |= ui.checkbox("Check Hit Face", &mut self.params.check_hit_face);
-        }
-
-        if CollapsingHeader::new("Film").default_open(true).build(ui) {
-            ui.text("Filter:");
-            needs_reset |= ui.radio_button("Box", &mut self.params.filter_type, FilterType::Box);
-            needs_reset |= ui.radio_button("Gaussian", &mut self.params.filter_type, FilterType::Gaussian);
-            needs_reset |= ui.radio_button("Mitchell", &mut self.params.filter_type, FilterType::Mitchell);
-
-            let id = ui.push_id("Tone Map");
-            Drag::new("Exposure Bias")
-                .speed(0.05)
-                .build(ui, &mut self.params.log2_exposure_scale);
-            ui.text("Tone Map:");
-            ui.radio_button("None", &mut self.params.tone_map_method, ToneMapMethod::None);
-            ui.radio_button(
-                "Filmic sRGB",
-                &mut self.params.tone_map_method,
-                ToneMapMethod::FilmicSrgb,
-            );
-            ui.radio_button(
-                "ACES (fitted)",
-                &mut self.params.tone_map_method,
-                ToneMapMethod::AcesFit,
-            );
-            id.pop();
-        }
+                ui.radio_value(
+                    &mut self.params.tone_map_method,
+                    ToneMapMethod::AcesFit,
+                    "ACES (fitted)",
+                );
+            });
+        });
 
         if progress.next_sample_index > self.params.sample_count() {
             needs_reset = true;

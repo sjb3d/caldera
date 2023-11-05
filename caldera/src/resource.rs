@@ -1,6 +1,5 @@
 use crate::prelude::*;
 use bytemuck::Contiguous;
-use imgui::Ui;
 use slotmap::{new_key_type, SlotMap};
 use spark::{vk, Builder, Device};
 use std::{
@@ -405,17 +404,16 @@ impl Bindless {
         })
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui) {
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui) {
         for class_index in 0..Self::CLASS_COUNT {
             let class = BindlessClass::from_integer(class_index as u8).unwrap();
-            ui.text(match class {
+            ui.label(match class {
                 BindlessClass::StorageBuffer => "bindless buffers",
                 BindlessClass::SampledImage2D => "bindless sampled2d",
                 BindlessClass::Sampler => "bindless sampler",
             });
-            ui.next_column();
-            ui.text(format!("{}", self.indices[class_index].next));
-            ui.next_column();
+            ui.label(format!("{}", self.indices[class_index].next));
+            ui.end_row();
         }
     }
 }
@@ -699,18 +697,16 @@ impl Resources {
         self.samplers.get(id).unwrap()
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui) {
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui) {
         self.global_allocator.ui_stats_table_rows(ui, "global memory");
 
-        ui.text("buffers");
-        ui.next_column();
-        ui.text(format!("{}", self.buffers.len()));
-        ui.next_column();
+        ui.label("buffers");
+        ui.label(format!("{}", self.buffers.len()));
+        ui.end_row();
 
-        ui.text("images");
-        ui.next_column();
-        ui.text(format!("{}", self.images.len()));
-        ui.next_column();
+        ui.label("images");
+        ui.label(format!("{}", self.images.len()));
+        ui.end_row();
 
         self.resource_cache.ui_stats_table_rows(ui, "graph");
 

@@ -1,5 +1,4 @@
 use crate::context::*;
-use imgui::Ui;
 use spark::{vk, Builder};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -119,13 +118,12 @@ impl Allocator {
         }
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui, name: &str) {
-        ui.text(name);
-        ui.next_column();
-        ui.text(format!(
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui, name: &str) {
+        ui.label(name);
+        ui.label(format!(
             "{} MB",
             self.chunks.iter().map(|chunk| chunk.size as usize).sum::<usize>() / (1024 * 1024)
         ));
-        ui.next_column();
+        ui.end_row();
     }
 }

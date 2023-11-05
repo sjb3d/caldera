@@ -1,6 +1,5 @@
 use crate::{command_buffer::*, context::*};
 use arrayvec::ArrayVec;
-use imgui::Ui;
 use spark::{vk, Device};
 use std::{ffi::CStr, mem};
 
@@ -133,21 +132,18 @@ impl QueryPool {
         self.emit_timestamp_impl(cmd, None);
     }
 
-    pub fn ui_timestamp_table(&mut self, ui: &Ui) {
-        ui.checkbox("Enabled", &mut self.is_enabled);
-        ui.columns(2, "QueryPoolBegin", true);
-        ui.text("Pass");
-        ui.next_column();
-        ui.text("Time (us)");
-        ui.next_column();
-        ui.separator();
-        for (name, time_us) in &self.last_us {
-            ui.text(name.to_str().unwrap());
-            ui.next_column();
-            ui.text(format!("{:>7.1}", time_us));
-            ui.next_column();
-        }
-        ui.columns(1, "QueryPoolEnd", false);
+    pub fn ui_timestamp_table(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.is_enabled, "Enabled");
+        egui::Grid::new("timestamp_grid").show(ui, |ui| {
+            ui.label("Pass");
+            ui.label("Time (us)");
+            ui.end_row();
+            for (name, time_us) in &self.last_us {
+                ui.label(name.to_str().unwrap());
+                ui.label(format!("{:>7.1}", time_us));
+                ui.end_row();
+            }
+        });
     }
 }
 

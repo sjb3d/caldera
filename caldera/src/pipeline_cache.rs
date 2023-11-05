@@ -1,6 +1,5 @@
 use crate::context::SharedContext;
 use arrayvec::ArrayVec;
-use imgui::Ui;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use spark::{vk, Builder, Device};
 use std::{
@@ -117,11 +116,10 @@ impl ShaderLoader {
         }
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui) {
-        ui.text("shader");
-        ui.next_column();
-        ui.text(format!("{}", self.current_shaders.len()));
-        ui.next_column();
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui) {
+        ui.label("shader");
+        ui.label(format!("{}", self.current_shaders.len()));
+        ui.end_row();
     }
 }
 
@@ -636,7 +634,7 @@ impl PipelineCache {
 
     pub fn get_ui(
         &self,
-        ui_renderer: &spark_imgui::Renderer,
+        egui_renderer: &spark_egui::Renderer,
         render_pass: vk::RenderPass,
         samples: vk::SampleCountFlags,
     ) -> vk::Pipeline {
@@ -645,7 +643,7 @@ impl PipelineCache {
             .pipelines
             .borrow_mut()
             .entry(key)
-            .or_insert_with(|| ui_renderer.create_pipeline(&self.context.device, render_pass, samples))
+            .or_insert_with(|| egui_renderer.create_pipeline(&self.context.device, render_pass, samples))
     }
 
     pub fn get_ray_tracing(
@@ -773,13 +771,12 @@ impl PipelineCache {
         })
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &imgui::Ui) {
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui) {
         self.shader_loader.ui_stats_table_rows(ui);
 
-        ui.text("pipeline");
-        ui.next_column();
-        ui.text(format!("{}", self.pipelines.borrow_mut().len()));
-        ui.next_column();
+        ui.label("pipeline");
+        ui.label(format!("{}", self.pipelines.borrow_mut().len()));
+        ui.end_row();
     }
 }
 

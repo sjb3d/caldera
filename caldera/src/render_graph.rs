@@ -1,6 +1,5 @@
 use crate::prelude::*;
 use arrayvec::ArrayVec;
-use imgui::Ui;
 use spark::{vk, Builder};
 use std::{ffi::CStr, mem};
 
@@ -140,7 +139,7 @@ impl RenderGraph {
         self.transfer_staging.end_frame();
     }
 
-    pub fn ui_stats_table_rows(&self, ui: &Ui) {
+    pub fn ui_stats_table_rows(&self, ui: &mut egui::Ui) {
         self.resources.lock().unwrap().ui_stats_table_rows(ui);
 
         self.render_cache.ui_stats_table_rows(ui);
@@ -149,15 +148,13 @@ impl RenderGraph {
 
         self.bounce_prev_set.allocator.ui_stats_table_rows(ui, "bounce memory");
 
-        ui.text("bounce buffer");
-        ui.next_column();
-        ui.text(format!("{}", self.bounce_prev_set.buffer_ids.len()));
-        ui.next_column();
+        ui.label("bounce buffer");
+        ui.label(format!("{}", self.bounce_prev_set.buffer_ids.len()));
+        ui.end_row();
 
-        ui.text("bounce image");
-        ui.next_column();
-        ui.text(format!("{}", self.bounce_prev_set.image_ids.len()));
-        ui.next_column();
+        ui.label("bounce image");
+        ui.label(format!("{}", self.bounce_prev_set.image_ids.len()));
+        ui.end_row();
     }
 }
 

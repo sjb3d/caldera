@@ -4,7 +4,6 @@ mod loader;
 use crate::{cluster::*, loader::*};
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::Key;
 use spark::vk;
 use std::{
     mem,
@@ -238,31 +237,31 @@ impl App {
     }
 
     fn render(&mut self, base: &mut AppBase) {
-        let ui = base.ui_context.frame();
-        if ui.is_key_pressed(Key::Escape) {
-            base.exit_requested = true;
-        }
-        imgui::Window::new("Debug")
-            .position([5.0, 5.0], imgui::Condition::FirstUseEver)
-            .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, || {
-                ui.checkbox("Rotate", &mut self.is_rotating);
-                ui.text("Render Mode:");
-                ui.radio_button("Standard", &mut self.render_mode, RenderMode::Standard);
-                if self.has_mesh_shader {
-                    ui.radio_button("Clusters", &mut self.render_mode, RenderMode::Clusters);
-                } else {
-                    ui.text_disabled("Mesh Shaders Not Supported!");
-                }
-                ui.text("Cluster Settings:");
-                ui.checkbox("Backface Culling", &mut self.do_backface_culling);
-            });
-
         let cbar = base.systems.acquire_command_buffer();
-        base.ui_renderer
-            .begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
 
-        base.systems.draw_ui(&ui);
+        base.ui_begin_frame();
+        base.egui_ctx.clone().input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                base.exit_requested = true;
+            }
+        });
+        egui::Window::new("Debug")
+            .default_pos([5.0, 5.0])
+            .default_size([350.0, 150.0])
+            .show(&base.egui_ctx, |ui| {
+                ui.checkbox(&mut self.is_rotating, "Rotate");
+                ui.label("Render Mode:");
+                ui.radio_value(&mut self.render_mode, RenderMode::Standard, "Standard");
+                if self.has_mesh_shader {
+                    ui.radio_value(&mut self.render_mode, RenderMode::Clusters, "Clusters");
+                } else {
+                    ui.label("Mesh Shaders Not Supported!");
+                }
+                ui.label("Cluster Settings:");
+                ui.checkbox(&mut self.do_backface_culling, "Backface Culling");
+            });
+        base.systems.draw_ui(&base.egui_ctx);
+        base.ui_end_frame(cbar.pre_swapchain_cmd);
 
         let mut schedule = base.systems.resource_loader.begin_schedule(
             &mut base.systems.render_graph,
@@ -307,11 +306,10 @@ impl App {
             let descriptor_pool = &base.systems.descriptor_pool;
             let pipeline_cache = &base.systems.pipeline_cache;
             let task_group_size = self.task_group_size;
-            let window = &base.window;
             let render_mode = self.render_mode;
             let do_backface_culling = self.do_backface_culling;
-            let ui_platform = &mut base.ui_platform;
-            let ui_renderer = &mut base.ui_renderer;
+            let pixels_per_point = base.egui_ctx.pixels_per_point();
+            let egui_renderer = &mut base.egui_renderer;
             move |_params, cmd, render_pass| {
                 set_viewport_helper(&context.device, cmd, swap_size);
 
@@ -444,10 +442,16 @@ impl App {
                     }
                 }
 
-                // draw imgui
-                ui_platform.prepare_render(&ui, window);
-                let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
-                ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                // draw ui
+                let egui_pipeline = pipeline_cache.get_ui(egui_renderer, render_pass, main_sample_count);
+                egui_renderer.render(
+                    &context.device,
+                    cmd,
+                    egui_pipeline,
+                    swap_size.x,
+                    swap_size.y,
+                    pixels_per_point,
+                );
             }
         });
 
@@ -464,7 +468,7 @@ impl App {
             .present(swap_vk_image, rendering_finished_semaphore.unwrap());
 
         if self.is_rotating {
-            self.angle += base.ui_context.io().delta_time;
+            self.angle += base.egui_ctx.input(|i| i.stable_dt);
         }
     }
 }

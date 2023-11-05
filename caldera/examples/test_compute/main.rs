@@ -1,6 +1,5 @@
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::{Drag, Key, Slider};
 use rand::{prelude::*, rngs::SmallRng};
 use rayon::prelude::*;
 use spark::vk;
@@ -114,32 +113,34 @@ impl App {
     }
 
     fn render(&mut self, base: &mut AppBase) {
-        let ui = base.ui_context.frame();
-        if ui.is_key_pressed(Key::Escape) {
-            base.exit_requested = true;
-        }
-        imgui::Window::new("Debug")
-            .position([5.0, 5.0], imgui::Condition::FirstUseEver)
-            .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, || {
-                let mut needs_reset = false;
-                Drag::new("Exposure")
-                    .speed(0.05f32)
-                    .build(&ui, &mut self.log2_exposure_scale);
-                Slider::new("Target Pass Count", 1, Self::MAX_PASS_COUNT).build(&ui, &mut self.target_pass_count);
-                ui.text(format!("Passes: {}", self.next_pass_index));
-                needs_reset |= ui.button("Reset");
+        let cbar = base.systems.acquire_command_buffer();
 
-                if needs_reset {
+        base.ui_begin_frame();
+        base.egui_ctx.clone().input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                base.exit_requested = true;
+            }
+        });
+        egui::Window::new("Debug")
+            .default_pos([5.0, 5.0])
+            .default_size([350.0, 150.0])
+            .show(&base.egui_ctx, |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.log2_exposure_scale)
+                        .speed(0.05f32)
+                        .prefix("Exposure: "),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.target_pass_count, 1..=Self::MAX_PASS_COUNT).prefix("Max Pass Count: "),
+                );
+                ui.label(format!("Passes: {}", self.next_pass_index));
+
+                if ui.button("Reset").clicked() {
                     self.next_pass_index = 0;
                 }
             });
-
-        let cbar = base.systems.acquire_command_buffer();
-        base.ui_renderer
-            .begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
-
-        base.systems.draw_ui(&ui);
+        base.systems.draw_ui(&base.egui_ctx);
+        base.ui_end_frame(cbar.pre_swapchain_cmd);
 
         let mut schedule = base.systems.resource_loader.begin_schedule(
             &mut base.systems.render_graph,
@@ -248,9 +249,8 @@ impl App {
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let trace_images = &self.trace_image_ids;
                 let log2_exposure_scale = self.log2_exposure_scale;
-                let window = &base.window;
-                let ui_platform = &mut base.ui_platform;
-                let ui_renderer = &mut base.ui_renderer;
+                let pixels_per_point = base.egui_ctx.pixels_per_point();
+                let egui_renderer = &mut base.egui_renderer;
                 move |params, cmd, render_pass| {
                     let trace_image_views = [
                         params.get_image_view(trace_images.0, ImageViewDesc::default()),
@@ -282,11 +282,16 @@ impl App {
                         3,
                     );
 
-                    // draw imgui
-                    ui_platform.prepare_render(&ui, window);
-
-                    let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
-                    ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                    // draw ui
+                    let egui_pipeline = pipeline_cache.get_ui(egui_renderer, render_pass, main_sample_count);
+                    egui_renderer.render(
+                        &context.device,
+                        cmd,
+                        egui_pipeline,
+                        swap_size.x,
+                        swap_size.y,
+                        pixels_per_point,
+                    );
                 }
             },
         );
@@ -349,16 +354,16 @@ fn main() {
             .video_modes()
             .filter(|m| m.size() == size)
             .max_by(|a, b| {
-                let t = |m: &VideoMode| (m.bit_depth(), m.refresh_rate());
+                let t = |m: &VideoMode| (m.bit_depth(), m.refresh_rate_millihertz());
                 Ord::cmp(&t(a), &t(b))
             })
             .unwrap();
         println!(
-            "full screen mode: {}x{} {}bpp {}Hz",
+            "full screen mode: {}x{} {}bpp {}mHz",
             video_mode.size().width,
             video_mode.size().height,
             video_mode.bit_depth(),
-            video_mode.refresh_rate()
+            video_mode.refresh_rate_millihertz()
         );
         window_builder.with_fullscreen(Some(Fullscreen::Exclusive(video_mode)))
     } else {

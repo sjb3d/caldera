@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use spark::{vk, Device};
 use std::{slice, time::Instant};
 use winit::{
@@ -107,10 +106,9 @@ pub struct AppBase {
     pub exit_requested: bool,
     pub context: SharedContext,
     pub display: AppDisplay,
-    pub last_instant: Instant,
-    pub ui_context: imgui::Context,
-    pub ui_platform: WinitPlatform,
-    pub ui_renderer: spark_imgui::Renderer,
+    pub egui_ctx: egui::Context,
+    pub egui_winit: egui_winit::State,
+    pub egui_renderer: spark_egui::Renderer,
     pub systems: AppSystems,
 }
 
@@ -200,27 +198,25 @@ impl AppSystems {
         cbar
     }
 
-    pub fn draw_ui(&mut self, ui: &imgui::Ui) {
-        imgui::Window::new("Memory")
-            .position([360.0, 5.0], imgui::Condition::FirstUseEver)
-            .size([270.0, 310.0], imgui::Condition::FirstUseEver)
-            .collapsed(true, imgui::Condition::Once)
-            .build(ui, || {
-                ui.columns(2, "StatsBegin", true);
-                ui.text("Stat");
-                ui.next_column();
-                ui.text("Value");
-                ui.next_column();
-                ui.separator();
-                self.pipeline_cache.ui_stats_table_rows(ui);
-                self.render_graph.ui_stats_table_rows(ui);
-                self.descriptor_pool.ui_stats_table_rows(ui);
-                ui.columns(1, "StatsEnd", false);
+    pub fn draw_ui(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Memory")
+            .default_pos([360.0, 5.0])
+            .default_size([270.0, 310.0])
+            .default_open(false)
+            .show(ctx, |ui| {
+                egui::Grid::new("memory_grid").show(ui, |ui| {
+                    ui.label("Stat");
+                    ui.label("Value");
+                    ui.end_row();
+                    self.pipeline_cache.ui_stats_table_rows(ui);
+                    self.render_graph.ui_stats_table_rows(ui);
+                    self.descriptor_pool.ui_stats_table_rows(ui);
+                });
             });
-        imgui::Window::new("Timestamps")
-            .position([410.0, 30.0], imgui::Condition::FirstUseEver)
-            .size([220.0, 120.0], imgui::Condition::FirstUseEver)
-            .build(ui, || {
+        egui::Window::new("Timestamps")
+            .default_pos([410.0, 30.0])
+            .default_size([220.0, 120.0])
+            .show(ctx, |ui| {
                 self.query_pool.ui_timestamp_table(ui);
             });
     }
@@ -244,23 +240,25 @@ impl AppBase {
         let context = Context::new(Some(&window), params);
         let display = AppDisplay::new(&context, &window);
 
-        let mut ui_context = imgui::Context::create();
-        ui_context.fonts().add_font(&[imgui::FontSource::DefaultFontData {
-            config: Some(imgui::FontConfig {
-                size_pixels: 13.0,
-                ..Default::default()
-            }),
-        }]);
+        let egui_max_vertex_count = 64 * 1024;
+        let egui_max_texture_side = context
+            .physical_device_properties
+            .limits
+            .max_image_dimension_2d
+            .min(2048);
 
-        let mut ui_platform = WinitPlatform::init(&mut ui_context);
-        ui_platform.attach_window(ui_context.io_mut(), &window, HiDpiMode::Default);
-
-        let ui_renderer = spark_imgui::Renderer::new(
+        let egui_ctx = egui::Context::default();
+        let mut egui_winit = egui_winit::State::new(&window);
+        egui_winit.set_pixels_per_point(window.scale_factor() as f32);
+        egui_winit.set_max_texture_side(egui_max_texture_side as usize);
+        let egui_renderer = spark_egui::Renderer::new(
             &context.device,
             &context.physical_device_properties,
             &context.physical_device_memory_properties,
-            &mut ui_context,
+            egui_max_vertex_count,
+            egui_max_texture_side,
         );
+
         let systems = AppSystems::new(&context);
 
         Self {
@@ -268,12 +266,36 @@ impl AppBase {
             exit_requested: false,
             context,
             display,
-            last_instant: Instant::now(),
-            ui_context,
-            ui_platform,
-            ui_renderer,
+            egui_ctx,
+            egui_winit,
+            egui_renderer,
             systems,
         }
+    }
+
+    pub fn ui_begin_frame(&mut self) {
+        let raw_input = self.egui_winit.take_egui_input(&self.window);
+        self.egui_ctx.begin_frame(raw_input);
+    }
+
+    pub fn ui_end_frame(&mut self, cmd: vk::CommandBuffer) {
+        let egui::FullOutput {
+            platform_output,
+            repaint_after: _repaint_after,
+            textures_delta,
+            shapes,
+        } = self.egui_ctx.end_frame();
+        self.egui_winit
+            .handle_platform_output(&self.window, &self.egui_ctx, platform_output);
+
+        let clipped_primitives = self.egui_ctx.tessellate(shapes);
+        self.egui_renderer.update(
+            &self.context.device,
+            &self.context.physical_device_memory_properties,
+            cmd,
+            clipped_primitives,
+            textures_delta,
+        );
     }
 
     pub fn process_event<T>(
@@ -284,41 +306,25 @@ impl AppBase {
     ) -> AppEventResult {
         let mut result = AppEventResult::None;
         match event {
-            Event::NewEvents(_) => {
-                let now = Instant::now();
-                self.ui_context.io_mut().update_delta_time(now - self.last_instant);
-                self.last_instant = now;
-            }
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                self.exit_requested = true;
-            }
-            Event::MainEventsCleared => {
-                self.ui_platform
-                    .prepare_frame(self.ui_context.io_mut(), &self.window)
-                    .expect("failed to prepare frame");
-                self.window.request_redraw();
-            }
-            Event::RedrawRequested(_) => {
+            Event::RedrawEventsCleared => {
                 result = AppEventResult::Redraw;
+            }
+            Event::WindowEvent { event, .. } => {
+                let event_response = self.egui_winit.on_event(&self.egui_ctx, &event);
+                if event_response.repaint {
+                    self.window.request_redraw();
+                }
             }
             Event::LoopDestroyed => {
                 result = AppEventResult::Destroy;
             }
-            event => {
-                self.ui_platform
-                    .handle_event(self.ui_context.io_mut(), &self.window, event);
-            }
+            _ => {}
         }
-
-        *control_flow = if self.exit_requested {
-            ControlFlow::Exit
+        if self.exit_requested {
+            control_flow.set_exit();
         } else {
-            ControlFlow::Poll
-        };
-
+            control_flow.set_poll();
+        }
         result
     }
 }
@@ -327,6 +333,6 @@ impl Drop for AppBase {
     fn drop(&mut self) {
         unsafe { self.context.device.device_wait_idle() }.unwrap();
 
-        self.ui_renderer.delete(&self.context.device);
+        self.egui_renderer.destroy(&self.context.device);
     }
 }

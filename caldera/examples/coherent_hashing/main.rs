@@ -1,7 +1,6 @@
 use arrayvec::ArrayVec;
 use bytemuck::{Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::{Key, Slider};
 use primes::{PrimeSet as _, Sieve};
 use rand::{distributions::Uniform, prelude::*, rngs::SmallRng};
 use spark::vk;
@@ -156,29 +155,29 @@ impl App {
     }
 
     fn render(&mut self, base: &mut AppBase) {
-        let ui = base.ui_context.frame();
-        if ui.is_key_pressed(Key::Escape) {
-            base.exit_requested = true;
-        }
-        imgui::Window::new("Debug")
-            .position([5.0, 5.0], imgui::Condition::FirstUseEver)
-            .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, || {
-                if ui.button("Random circles") {
+        let cbar = base.systems.acquire_command_buffer();
+
+        base.ui_begin_frame();
+        base.egui_ctx.clone().input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                base.exit_requested = true;
+            }
+        });
+        egui::Window::new("Debug")
+            .default_pos([5.0, 5.0])
+            .default_size([350.0, 150.0])
+            .show(&base.egui_ctx, |ui| {
+                if ui.button("Random circles").clicked() {
                     self.circles = make_circles(&mut self.rng);
                 }
-                Slider::new("Table size", 0.001, 0.12).build(&ui, &mut self.table_size);
-                ui.checkbox("Store max age", &mut self.store_max_age);
-                if ui.button("Random offsets") {
+                ui.add(egui::Slider::new(&mut self.table_size, 0.001..=0.12).prefix("Table size: "));
+                ui.checkbox(&mut self.store_max_age, "Store max age");
+                if ui.button("Random offsets").clicked() {
                     self.hash_table_offsets = make_hash_table_offsets(&mut self.rng, &mut self.primes);
                 }
             });
-
-        let cbar = base.systems.acquire_command_buffer();
-        base.ui_renderer
-            .begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
-
-        base.systems.draw_ui(&ui);
+        base.systems.draw_ui(&base.egui_ctx);
+        base.ui_end_frame(cbar.pre_swapchain_cmd);
 
         let mut schedule = base.systems.resource_loader.begin_schedule(
             &mut base.systems.render_graph,
@@ -393,9 +392,8 @@ impl App {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
-                let window = &base.window;
-                let ui_platform = &mut base.ui_platform;
-                let ui_renderer = &mut base.ui_renderer;
+                let pixels_per_point = base.egui_ctx.pixels_per_point();
+                let egui_renderer = &mut base.egui_renderer;
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_size);
                     let ortho_from_screen =
@@ -474,10 +472,16 @@ impl App {
                         4,
                     );
 
-                    // draw imgui
-                    ui_platform.prepare_render(&ui, window);
-                    let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
-                    ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                    // draw ui
+                    let egui_pipeline = pipeline_cache.get_ui(egui_renderer, render_pass, main_sample_count);
+                    egui_renderer.render(
+                        &context.device,
+                        cmd,
+                        egui_pipeline,
+                        swap_size.x,
+                        swap_size.y,
+                        pixels_per_point,
+                    );
                 }
             },
         );

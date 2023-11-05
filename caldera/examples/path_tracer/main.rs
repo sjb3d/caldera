@@ -11,11 +11,9 @@ mod prelude {
     pub use crate::spectrum::*;
 }
 
-use crate::renderer::*;
-use crate::scene::*;
+use crate::{renderer::*, scene::*};
 use bytemuck::{Contiguous, Pod, Zeroable};
 use caldera::prelude::*;
-use imgui::{CollapsingHeader, Drag, Key, MouseButton, Slider};
 use spark::vk;
 use std::{
     ffi::CString,
@@ -101,57 +99,60 @@ impl ViewAdjust {
         }
     }
 
-    fn update(&mut self, io: &imgui::Io) -> bool {
+    fn update(&mut self, display_size: UVec2, io: &egui::InputState) -> bool {
         let mut was_updated = false;
-        if io.want_capture_mouse {
-            self.drag_start = None;
-        } else {
-            let display_size: Vec2 = io.display_size.into();
+        {
             let aspect_ratio = (display_size.x as f32) / (display_size.y as f32);
 
             let xy_from_st = Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * self.fov_y).tan(), Vec2::zero());
             let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, -2.0), Vec2::new(1.0, 1.0));
-            let coord_from_uv = Scale2Offset2::new(display_size, Vec2::zero());
+            let coord_from_uv = Scale2Offset2::new(Vec2::from(display_size), Vec2::zero());
             let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
 
-            let mouse_now = Vec2::from(io.mouse_pos);
-            let dir_now = (xy_from_coord * mouse_now).into_homogeneous_point().normalized();
-            if io[MouseButton::Left] {
-                if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start {
-                    if (mouse_now - mouse_start).mag() > io.mouse_drag_threshold {
+            if let Some(mouse_now) = io.pointer.latest_pos() {
+                let mouse_now = Vec2::new(mouse_now.x, mouse_now.y);
+                let dir_now = (xy_from_coord * mouse_now).into_homogeneous_point().normalized();
+                if io.pointer.primary_down() {
+                    if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start {
                         self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
                         was_updated = true;
+                    } else {
+                        self.drag_start = Some((mouse_now, self.rotation, dir_now));
                     }
                 } else {
-                    self.drag_start = Some((mouse_now, self.rotation, dir_now));
-                }
-            } else {
-                if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start.take() {
-                    if (mouse_now - mouse_start).mag() > io.mouse_drag_threshold {
+                    if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start.take() {
                         self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
                         was_updated = true;
                     }
                 }
             }
         }
-        if !io.want_capture_keyboard {
-            let step_size = 5.0 * io.delta_time * self.log2_scale.exp();
-            if io.keys_down[VirtualKeyCode::W as usize] {
-                let v = if io.key_shift { Vec3::unit_y() } else { Vec3::unit_z() };
+        {
+            let step_size = 5.0 * io.stable_dt * self.log2_scale.exp();
+            if io.key_down(egui::Key::W) {
+                let v = if io.modifiers.shift {
+                    Vec3::unit_y()
+                } else {
+                    Vec3::unit_z()
+                };
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
             }
-            if io.keys_down[VirtualKeyCode::S as usize] {
-                let v = if io.key_shift { -Vec3::unit_y() } else { -Vec3::unit_z() };
+            if io.key_down(egui::Key::S) {
+                let v = if io.modifiers.shift {
+                    -Vec3::unit_y()
+                } else {
+                    -Vec3::unit_z()
+                };
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
             }
-            if io.keys_down[VirtualKeyCode::A as usize] {
+            if io.key_down(egui::Key::A) {
                 let v = Vec3::unit_x();
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
             }
-            if io.keys_down[VirtualKeyCode::D as usize] {
+            if io.key_down(egui::Key::D) {
                 let v = -Vec3::unit_x();
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
@@ -209,31 +210,34 @@ impl App {
     }
 
     fn render(&mut self, base: &mut AppBase) {
-        // TODO: move to an update function
-        let ui = base.ui_context.frame();
-        if ui.is_key_pressed(Key::Escape) {
-            base.exit_requested = true;
-        }
-        if ui.is_mouse_clicked(MouseButton::Right) {
-            self.show_debug_ui = !self.show_debug_ui;
-        }
-        imgui::Window::new("Debug")
-            .position([5.0, 5.0], imgui::Condition::FirstUseEver)
-            .size([350.0, 150.0], imgui::Condition::FirstUseEver)
-            .build(&ui, || {
-                let mut renderer = self.renderer.get_mut();
-                if let Some(ref mut renderer) = renderer {
-                    renderer.debug_ui(&mut self.progress, &ui);
+        let cbar = base.systems.acquire_command_buffer();
+
+        base.ui_begin_frame();
+        base.egui_ctx.clone().input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                base.exit_requested = true;
+            }
+            if i.pointer.button_down(egui::PointerButton::Secondary) {
+                self.show_debug_ui = !self.show_debug_ui;
+            }
+        });
+
+        egui::Window::new("Debug")
+            .default_pos([5.0, 5.0])
+            .default_size([350.0, 150.0])
+            .show(&base.egui_ctx, |ui| {
+                if let Some(renderer) = self.renderer.get_mut() {
+                    renderer.debug_ui(&mut self.progress, ui);
                 }
                 let mut needs_reset = false;
-                if CollapsingHeader::new("Camera").default_open(true).build(&ui) {
+                egui::CollapsingHeader::new("Camera").default_open(true).show(ui, |ui| {
                     let scene = self.scene.deref();
-                    ui.text("Cameras:");
+                    ui.label("Cameras:");
                     for camera_ref in scene.camera_ref_iter() {
-                        if ui.small_button(format!("Camera {}", camera_ref.0)) {
+                        if ui.small_button(format!("Camera {}", camera_ref.0)).clicked() {
                             self.view_adjust = ViewAdjust::new(
                                 scene.camera(camera_ref),
-                                if let Some(ref mut renderer) = renderer {
+                                if let Some(renderer) = self.renderer.get_mut() {
                                     renderer.params.fov_y_override
                                 } else {
                                     None
@@ -242,33 +246,46 @@ impl App {
                             needs_reset = true;
                         }
                     }
-                    Drag::new("Camera Scale Bias")
-                        .speed(0.05)
-                        .build(&ui, &mut self.view_adjust.log2_scale);
-                    needs_reset |= Drag::new("Camera FOV")
-                        .speed(0.005)
-                        .build(&ui, &mut self.view_adjust.fov_y);
-                    needs_reset |=
-                        Slider::new("Aperture Radius", 0.0, 0.1).build(&ui, &mut self.view_adjust.aperture_radius);
-                    needs_reset |=
-                        Slider::new("Focus Distance", 0.0, 10.0).build(&ui, &mut self.view_adjust.focus_distance);
-                }
+                    ui.add(
+                        egui::DragValue::new(&mut self.view_adjust.log2_scale)
+                            .speed(0.05)
+                            .prefix("Camera Scale Bias: "),
+                    );
+                    needs_reset |= ui
+                        .add(
+                            egui::DragValue::new(&mut self.view_adjust.fov_y)
+                                .speed(0.005)
+                                .prefix("Camera FOV"),
+                        )
+                        .changed();
+                    needs_reset |= ui
+                        .add(
+                            egui::Slider::new(&mut self.view_adjust.aperture_radius, 0.0..=0.1)
+                                .prefix("Aperture Radius: "),
+                        )
+                        .changed();
+                    needs_reset |= ui
+                        .add(
+                            egui::Slider::new(&mut self.view_adjust.focus_distance, 0.0..=10.0)
+                                .prefix("Focus Distance: "),
+                        )
+                        .changed();
+                });
                 if needs_reset {
                     self.progress.reset();
                 }
             });
 
-        if self.view_adjust.update(ui.io()) {
-            self.progress.reset();
-        }
+        base.egui_ctx.input(|i| {
+            if self.view_adjust.update(base.display.swapchain.get_size(), i) {
+                self.progress.reset();
+            }
+        });
+
+        base.systems.draw_ui(&base.egui_ctx);
+        base.ui_end_frame(cbar.pre_swapchain_cmd);
 
         // start render
-        let cbar = base.systems.acquire_command_buffer();
-        base.ui_renderer
-            .begin_frame(&self.context.device, cbar.pre_swapchain_cmd);
-
-        base.systems.draw_ui(&ui);
-
         let mut schedule = base.systems.resource_loader.begin_schedule(
             &mut base.systems.render_graph,
             base.context.as_ref(),
@@ -320,8 +337,8 @@ impl App {
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
                 let window = &base.window;
-                let ui_platform = &mut base.ui_platform;
-                let ui_renderer = &mut base.ui_renderer;
+                let pixels_per_point = base.egui_ctx.pixels_per_point();
+                let egui_renderer = &mut base.egui_renderer;
                 let show_debug_ui = self.show_debug_ui;
                 move |params, cmd, render_pass| {
                     set_viewport_helper(&context.device, cmd, swap_size);
@@ -369,11 +386,17 @@ impl App {
                         );
                     }
 
-                    // draw imgui
-                    ui_platform.prepare_render(&ui, window);
+                    // draw ui
                     if show_debug_ui {
-                        let pipeline = pipeline_cache.get_ui(ui_renderer, render_pass, main_sample_count);
-                        ui_renderer.render(ui.render(), &context.device, cmd, pipeline);
+                        let egui_pipeline = pipeline_cache.get_ui(egui_renderer, render_pass, main_sample_count);
+                        egui_renderer.render(
+                            &context.device,
+                            cmd,
+                            egui_pipeline,
+                            swap_size.x,
+                            swap_size.y,
+                            pixels_per_point,
+                        );
                     }
                 }
             },
@@ -807,7 +830,7 @@ fn main() {
                 .video_modes()
                 .filter(|m| m.size() == size)
                 .max_by(|a, b| {
-                    let t = |m: &VideoMode| (m.bit_depth(), m.refresh_rate());
+                    let t = |m: &VideoMode| (m.bit_depth(), m.refresh_rate_millihertz());
                     Ord::cmp(&t(a), &t(b))
                 })
                 .unwrap();
