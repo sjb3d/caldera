@@ -67,7 +67,7 @@ struct ViewAdjust {
     translation: Vec3,
     rotation: Rotor3,
     log2_scale: f32,
-    drag_start: Option<(Vec2, Rotor3, Vec3)>,
+    drag_start: Option<(Rotor3, Vec3)>,
     fov_y: f32,
     aperture_radius: f32,
     focus_distance: f32,
@@ -99,38 +99,42 @@ impl ViewAdjust {
         }
     }
 
-    fn update(&mut self, display_size: UVec2, io: &egui::InputState) -> bool {
+    fn update(&mut self, response: egui::Response) -> bool {
         let mut was_updated = false;
         {
-            let aspect_ratio = (display_size.x as f32) / (display_size.y as f32);
+            let origin = Vec2::new(response.rect.min.x, response.rect.min.y);
+            let size = Vec2::new(response.rect.width(), response.rect.height());
+            let aspect_ratio = (size.x as f32) / (size.y as f32);
 
             let xy_from_st = Scale2Offset2::new(Vec2::new(aspect_ratio, 1.0) * (0.5 * self.fov_y).tan(), Vec2::zero());
             let st_from_uv = Scale2Offset2::new(Vec2::new(-2.0, -2.0), Vec2::new(1.0, 1.0));
-            let coord_from_uv = Scale2Offset2::new(Vec2::from(display_size), Vec2::zero());
+            let coord_from_uv = Scale2Offset2::new(size, origin);
             let xy_from_coord = xy_from_st * st_from_uv * coord_from_uv.inversed();
 
-            if let Some(mouse_now) = io.pointer.latest_pos() {
-                let mouse_now = Vec2::new(mouse_now.x, mouse_now.y);
-                let dir_now = (xy_from_coord * mouse_now).into_homogeneous_point().normalized();
-                if io.pointer.primary_down() {
-                    if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start {
-                        self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
-                        was_updated = true;
-                    } else {
-                        self.drag_start = Some((mouse_now, self.rotation, dir_now));
-                    }
-                } else {
-                    if let Some((mouse_start, rotation_start, dir_start)) = self.drag_start.take() {
+            let dir_from_coord = |coord: egui::Pos2| {
+                let coord = Vec2::new(coord.x, coord.y);
+                (xy_from_coord * coord).into_homogeneous_point().normalized()
+            };
+
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                self.drag_start = response.interact_pointer_pos().map(|coord| {
+                    (self.rotation, dir_from_coord(coord))
+                });
+            }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                if let Some((rotation_start, dir_start)) = self.drag_start {
+                    if let Some(coord_now) = response.ctx.input(|i| i.pointer.latest_pos()) {
+                        let dir_now = dir_from_coord(coord_now);
                         self.rotation = rotation_start * Rotor3::from_rotation_between(dir_now, dir_start);
                         was_updated = true;
                     }
                 }
             }
         }
-        {
-            let step_size = 5.0 * io.stable_dt * self.log2_scale.exp();
-            if io.key_down(egui::Key::W) {
-                let v = if io.modifiers.shift {
+        response.ctx.input(|i| {
+            let step_size = 5.0 * i.stable_dt * self.log2_scale.exp();
+            if i.key_down(egui::Key::W) {
+                let v = if i.modifiers.shift {
                     Vec3::unit_y()
                 } else {
                     Vec3::unit_z()
@@ -138,8 +142,8 @@ impl ViewAdjust {
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
             }
-            if io.key_down(egui::Key::S) {
-                let v = if io.modifiers.shift {
+            if i.key_down(egui::Key::S) {
+                let v = if i.modifiers.shift {
                     -Vec3::unit_y()
                 } else {
                     -Vec3::unit_z()
@@ -147,17 +151,17 @@ impl ViewAdjust {
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
             }
-            if io.key_down(egui::Key::A) {
+            if i.key_down(egui::Key::A) {
                 let v = Vec3::unit_x();
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
             }
-            if io.key_down(egui::Key::D) {
+            if i.key_down(egui::Key::D) {
                 let v = -Vec3::unit_x();
                 self.translation += step_size * (self.rotation * v);
                 was_updated = true;
             }
-        }
+        });
         was_updated
     }
 
@@ -217,14 +221,13 @@ impl App {
             if i.key_pressed(egui::Key::Escape) {
                 base.exit_requested = true;
             }
-            if i.pointer.button_down(egui::PointerButton::Secondary) {
-                self.show_debug_ui = !self.show_debug_ui;
-            }
+            self.show_debug_ui ^= i.pointer.secondary_clicked();
         });
 
         egui::Window::new("Debug")
             .default_pos([5.0, 5.0])
-            .default_size([350.0, 150.0])
+            .default_size([350.0, 600.0])
+            .vscroll(true)
             .show(&base.egui_ctx, |ui| {
                 if let Some(renderer) = self.renderer.get_mut() {
                     renderer.debug_ui(&mut self.progress, ui);
@@ -255,7 +258,7 @@ impl App {
                         .add(
                             egui::DragValue::new(&mut self.view_adjust.fov_y)
                                 .speed(0.005)
-                                .prefix("Camera FOV"),
+                                .prefix("Camera FOV: "),
                         )
                         .changed();
                     needs_reset |= ui
@@ -276,8 +279,9 @@ impl App {
                 }
             });
 
-        base.egui_ctx.input(|i| {
-            if self.view_adjust.update(base.display.swapchain.get_size(), i) {
+        egui::CentralPanel::default().frame(egui::Frame::none()).show(&base.egui_ctx, |ui| {
+            let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
+            if self.view_adjust.update(response) {
                 self.progress.reset();
             }
         });
@@ -836,9 +840,9 @@ fn main() {
                 .unwrap();
             window_builder.with_fullscreen(Some(Fullscreen::Exclusive(video_mode)))
         } else {
-            window_builder.with_inner_size(Size::Logical(LogicalSize::new(
-                renderer_params.width as f64,
-                renderer_params.height as f64,
+            window_builder.with_inner_size(Size::Physical(PhysicalSize::new(
+                renderer_params.width,
+                renderer_params.height,
             )))
         };
         let window = window_builder.build(&event_loop).unwrap();
