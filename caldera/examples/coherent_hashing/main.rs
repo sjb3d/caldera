@@ -100,8 +100,6 @@ descriptor_set!(DebugAgeHistogramDescriptorSet {
 });
 
 struct App {
-    context: SharedContext,
-
     rng: SmallRng,
     primes: Primes,
     store_max_age: bool,
@@ -134,9 +132,7 @@ fn make_hash_table_offsets(rng: &mut SmallRng, primes: &mut Primes) -> [u32; MAX
 }
 
 impl App {
-    fn new(base: &mut AppBase) -> Self {
-        let context = SharedContext::clone(&base.context);
-
+    fn new(_base: &mut AppBase) -> Self {
         let mut rng = SmallRng::seed_from_u64(0);
         let mut primes = Primes::new();
         let circles = make_circles(&mut rng);
@@ -144,7 +140,6 @@ impl App {
         println!("{:?}", hash_table_offsets);
 
         Self {
-            context,
             rng,
             primes,
             store_max_age: true,

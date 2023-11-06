@@ -40,8 +40,6 @@ descriptor_set!(CopyDescriptorSet {
 });
 
 struct App {
-    context: SharedContext,
-
     sample_image_view: TaskOutput<vk::ImageView>,
     trace_image_ids: (ImageId, ImageId, ImageId),
 
@@ -101,8 +99,6 @@ impl App {
         };
 
         Self {
-            context: SharedContext::clone(&base.context),
-
             sample_image_view,
             trace_image_ids,
 

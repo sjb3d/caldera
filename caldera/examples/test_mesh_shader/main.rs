@@ -189,8 +189,6 @@ enum RenderMode {
 }
 
 struct App {
-    context: SharedContext,
-
     has_mesh_shader: bool,
     task_group_size: u32,
     mesh_info: TaskOutput<MeshInfo>,
@@ -202,11 +200,10 @@ struct App {
 
 impl App {
     fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
-        let context = SharedContext::clone(&base.context);
-
-        let has_mesh_shader = context.device.extensions.supports_nv_mesh_shader()
-            && context.device.extensions.supports_ext_subgroup_size_control();
-        let task_group_size = context
+        let has_mesh_shader = base.context.device.extensions.supports_nv_mesh_shader()
+            && base.context.device.extensions.supports_ext_subgroup_size_control();
+        let task_group_size = base
+            .context
             .physical_device_extra_properties
             .as_ref()
             .unwrap()
@@ -221,7 +218,6 @@ impl App {
             .spawn_task(async move { MeshInfo::load(resource_loader, &mesh_file_name, has_mesh_shader).await });
 
         Self {
-            context,
             has_mesh_shader,
             task_group_size,
             mesh_info,

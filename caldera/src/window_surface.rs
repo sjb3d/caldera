@@ -1,60 +1,63 @@
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use spark::{vk, Instance, InstanceExtensions, Result};
-use winit::window::Window;
 
-pub fn enable_extensions(window: &Window, extensions: &mut InstanceExtensions) {
-    match window.raw_window_handle() {
+pub fn enable_extensions(display_handle: &RawDisplayHandle, extensions: &mut InstanceExtensions) {
+    match display_handle {
         #[cfg(target_os = "linux")]
-        RawWindowHandle::Xlib(..) => extensions.enable_khr_xlib_surface(),
+        RawDisplayHandle::Xlib(_) => extensions.enable_khr_xlib_surface(),
 
         #[cfg(target_os = "linux")]
-        RawWindowHandle::Wayland(..) => extensions.enable_khr_wayland_surface(),
+        RawDisplayHandle::Wayland(_) => extensions.enable_khr_wayland_surface(),
 
         #[cfg(target_os = "windows")]
-        RawWindowHandle::Win32(..) => extensions.enable_khr_win32_surface(),
+        RawDisplayHandle::Windows(_) => extensions.enable_khr_win32_surface(),
 
         #[cfg(target_os = "android")]
-        RawWindowHandle::AndroidNdk(..) => extensions.enable_khr_android_surface(),
+        RawDisplayHandle::AndroidNdk(_) => extensions.enable_khr_android_surface(),
 
         _ => unimplemented!(),
     }
 }
 
-pub fn create(instance: &Instance, window: &Window) -> Result<vk::SurfaceKHR> {
-    match window.raw_window_handle() {
+pub fn create(
+    instance: &Instance,
+    display_handle: &RawDisplayHandle,
+    window_handle: &RawWindowHandle,
+) -> Result<vk::SurfaceKHR> {
+    match (display_handle, window_handle) {
         #[cfg(target_os = "linux")]
-        RawWindowHandle::Xlib(handle) => {
+        (RawDisplayHandle::Xlib(display_handle), RawWindowHandle::Xlib(window_handle)) => {
             let create_info = vk::XlibSurfaceCreateInfoKHR {
-                dpy: handle.display as _,
-                window: handle.window,
+                dpy: display_handle.display as _,
+                window: window_handle.window,
                 ..Default::default()
             };
             unsafe { instance.create_xlib_surface_khr(&create_info, None) }
         }
 
         #[cfg(target_os = "linux")]
-        RawWindowHandle::Wayland(handle) => {
+        (RawDisplayHandle::Wayland(display_handle), RawWindowHandle::Wayland(window_handle)) => {
             let create_info = vk::WaylandSurfaceCreateInfoKHR {
-                display: handle.display as _,
-                surface: handle.surface as _,
+                display: display_handle.display as _,
+                surface: window_handle.surface as _,
                 ..Default::default()
             };
             unsafe { instance.create_wayland_surface_khr(&create_info, None) }
         }
 
         #[cfg(target_os = "windows")]
-        RawWindowHandle::Win32(handle) => {
+        (RawDisplayHandle::Windows(_), RawWindowHandle::Win32(window_handle)) => {
             let create_info = vk::Win32SurfaceCreateInfoKHR {
-                hwnd: handle.hwnd,
+                hwnd: window_handle.hwnd,
                 ..Default::default()
             };
             unsafe { instance.create_win32_surface_khr(&create_info, None) }
         }
 
         #[cfg(target_os = "android")]
-        RawWindowHandle::AndroidNdk(handle) => {
+        (RawDisplayHandle::AndroidNdk(_), RawWindowHandle::AndroidNdk(window_handle)) => {
             let create_info = vk::AndroidSurfaceCreateInfoKHR {
-                window: handle.a_native_window as _,
+                window: window_handle.a_native_window as _,
                 ..Default::default()
             };
             unsafe { instance.create_android_surface_khr(&create_info, None) }

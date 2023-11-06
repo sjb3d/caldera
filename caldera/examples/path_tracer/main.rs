@@ -26,8 +26,7 @@ use std::{
 use structopt::StructOpt;
 use strum::{EnumString, EnumVariantNames, VariantNames};
 use winit::{
-    dpi::{LogicalSize, PhysicalSize, Size},
-    event::VirtualKeyCode,
+    dpi::{PhysicalSize, Size},
     event_loop::EventLoop,
     monitor::VideoMode,
     window::{Fullscreen, WindowBuilder},
@@ -117,9 +116,9 @@ impl ViewAdjust {
             };
 
             if response.drag_started_by(egui::PointerButton::Primary) {
-                self.drag_start = response.interact_pointer_pos().map(|coord| {
-                    (self.rotation, dir_from_coord(coord))
-                });
+                self.drag_start = response
+                    .interact_pointer_pos()
+                    .map(|coord| (self.rotation, dir_from_coord(coord)));
             }
             if response.dragged_by(egui::PointerButton::Primary) {
                 if let Some((rotation_start, dir_start)) = self.drag_start {
@@ -176,8 +175,6 @@ impl ViewAdjust {
 }
 
 struct App {
-    context: SharedContext,
-
     scene: SharedScene,
     renderer: TaskOutput<Renderer>,
     progress: RenderProgress,
@@ -188,8 +185,6 @@ struct App {
 
 impl App {
     fn new(base: &mut AppBase, scene: Scene, renderer_params: RendererParams) -> Self {
-        let context = SharedContext::clone(&base.context);
-
         let fov_y_override = renderer_params.fov_y_override;
 
         let scene = Arc::new(scene);
@@ -204,7 +199,6 @@ impl App {
 
         let view_adjust = ViewAdjust::new(scene.cameras.first().unwrap(), fov_y_override);
         Self {
-            context,
             scene,
             renderer,
             progress,
@@ -279,12 +273,14 @@ impl App {
                 }
             });
 
-        egui::CentralPanel::default().frame(egui::Frame::none()).show(&base.egui_ctx, |ui| {
-            let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
-            if self.view_adjust.update(response) {
-                self.progress.reset();
-            }
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none())
+            .show(&base.egui_ctx, |ui| {
+                let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
+                if self.view_adjust.update(response) {
+                    self.progress.reset();
+                }
+            });
 
         base.systems.draw_ui(&base.egui_ctx);
         base.ui_end_frame(cbar.pre_swapchain_cmd);
@@ -340,7 +336,6 @@ impl App {
                 let context = base.context.as_ref();
                 let descriptor_pool = &base.systems.descriptor_pool;
                 let pipeline_cache = &base.systems.pipeline_cache;
-                let window = &base.window;
                 let pixels_per_point = base.egui_ctx.pixels_per_point();
                 let egui_renderer = &mut base.egui_renderer;
                 let show_debug_ui = self.show_debug_ui;

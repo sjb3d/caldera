@@ -1,8 +1,8 @@
 use crate::prelude::*;
 use spark::{vk, Device};
-use std::{slice, time::Instant};
+use std::slice;
 use winit::{
-    event::{Event, WindowEvent},
+    event::Event,
     event_loop::{ControlFlow, EventLoopWindowTarget},
     window::Window,
 };

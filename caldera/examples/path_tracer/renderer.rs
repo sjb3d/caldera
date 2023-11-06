@@ -1991,9 +1991,9 @@ impl Renderer {
                     } else {
                         // TODO: show disabled
                         ui.label("MIS Heuristic:");
-                        ui.radio(true, "None");
-                        ui.radio(false, "Balance");
-                        ui.radio(false, "Power2");
+                        let _ = ui.radio(true, "None");
+                        let _ = ui.radio(false, "Balance");
+                        let _ = ui.radio(false, "Power2");
                     }
                 });
 
