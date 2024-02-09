@@ -107,6 +107,7 @@ pub struct ContextParams {
     pub version: vk::Version,
     pub debug_utils: ContextFeature,
     pub scalar_block_layout: ContextFeature,
+    pub image_format_list: ContextFeature,
     pub pipeline_creation_cache_control: ContextFeature,
     pub geometry_shader: ContextFeature,
     pub inline_uniform_block: ContextFeature,
@@ -123,6 +124,7 @@ impl Default for ContextParams {
             version: Default::default(),
             debug_utils: ContextFeature::Disable,
             scalar_block_layout: ContextFeature::Require,
+            image_format_list: ContextFeature::Require,
             pipeline_creation_cache_control: ContextFeature::Disable,
             geometry_shader: ContextFeature::Disable,
             inline_uniform_block: ContextFeature::Optional,
@@ -398,6 +400,11 @@ impl Context {
                     scalar_block_layout_features.scalar_block_layout = vk::TRUE;
                 },
                 || panic!("EXT_scalar_block_layout not supported"),
+            );
+            params.image_format_list.apply(
+                || available_extensions.supports_khr_image_format_list(),
+                || extensions.enable_khr_image_format_list(),
+                || panic!("KHR_image_format_list not supported"),
             );
             params.pipeline_creation_cache_control.apply(
                 || available_extensions.supports_ext_pipeline_creation_cache_control(),
