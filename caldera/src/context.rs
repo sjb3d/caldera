@@ -12,6 +12,16 @@ use std::{
 use strum::{EnumString, EnumVariantNames};
 use winit::window::Window;
 
+pub trait AsBool {
+    fn as_bool(self) -> bool;
+}
+
+impl AsBool for vk::Bool32 {
+    fn as_bool(self) -> bool {
+        self != vk::FALSE
+    }
+}
+
 unsafe extern "system" fn debug_messenger(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_types: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -143,6 +153,21 @@ pub struct PhysicalDeviceExtraProperties {
     pub subgroup_size_control: vk::PhysicalDeviceSubgroupSizeControlPropertiesEXT,
 }
 
+#[derive(Default)]
+pub struct DeviceFeatures {
+    pub base: vk::PhysicalDeviceFeatures,
+    pub scalar_block_layout: vk::PhysicalDeviceScalarBlockLayoutFeaturesEXT,
+    pub pipeline_creation_cache_control: vk::PhysicalDevicePipelineCreationCacheControlFeaturesEXT,
+    pub inline_uniform_block: vk::PhysicalDeviceInlineUniformBlockFeaturesEXT,
+    pub buffer_device_address: vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR,
+    pub acceleration_structure: vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+    pub ray_tracing_pipeline: vk::PhysicalDeviceRayTracingPipelineFeaturesKHR,
+    pub ray_query: vk::PhysicalDeviceRayQueryFeaturesKHR,
+    pub descriptor_indexing: vk::PhysicalDeviceDescriptorIndexingFeatures,
+    pub mesh_shader: vk::PhysicalDeviceMeshShaderFeaturesNV,
+    pub subgroup_size_control: vk::PhysicalDeviceSubgroupSizeControlFeatures,
+}
+
 pub struct Context {
     pub instance: Instance,
     pub debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
@@ -151,8 +176,7 @@ pub struct Context {
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub physical_device_extra_properties: Option<PhysicalDeviceExtraProperties>,
-    pub enable_bindless: bool,
-    pub enable_buffer_device_addresses: bool,
+    pub physical_device_features: DeviceFeatures,
     pub queue_family_index: u32,
     pub queue_family_properties: vk::QueueFamilyProperties,
     pub queue: vk::Queue,
@@ -287,7 +311,6 @@ impl Context {
             physical_devices[0]
         };
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
-        let physical_device_features = unsafe { instance.get_physical_device_features(physical_device) };
         let device_version = physical_device_properties.api_version;
 
         let physical_device_extra_properties = if instance.extensions.supports_khr_get_physical_device_properties2() {
@@ -306,6 +329,29 @@ impl Context {
             })
         } else {
             None
+        };
+
+        let available_features = if instance.extensions.supports_khr_get_physical_device_properties2() {
+            let mut device_features = DeviceFeatures::default();
+            let mut features2 = vk::PhysicalDeviceFeatures2::builder()
+                .insert_next(&mut device_features.scalar_block_layout)
+                .insert_next(&mut device_features.pipeline_creation_cache_control)
+                .insert_next(&mut device_features.inline_uniform_block)
+                .insert_next(&mut device_features.buffer_device_address)
+                .insert_next(&mut device_features.acceleration_structure)
+                .insert_next(&mut device_features.ray_tracing_pipeline)
+                .insert_next(&mut device_features.ray_query)
+                .insert_next(&mut device_features.descriptor_indexing)
+                .insert_next(&mut device_features.mesh_shader)
+                .insert_next(&mut device_features.subgroup_size_control);
+            unsafe { instance.get_physical_device_features2(physical_device, features2.get_mut()) };
+            device_features.base = features2.features;
+            device_features
+        } else {
+            DeviceFeatures {
+                base: unsafe { instance.get_physical_device_features(physical_device) },
+                ..Default::default()
+            }
         };
 
         let physical_device_memory_properties =
@@ -347,8 +393,7 @@ impl Context {
                 .unwrap()
         };
 
-        let mut enable_bindless = false;
-        let mut enable_buffer_device_addresses = false;
+        let mut features = DeviceFeatures::default();
         let device = {
             println!(
                 "loading device version {} ({} supported)",
@@ -373,31 +418,23 @@ impl Context {
             };
 
             let mut extensions = DeviceExtensions::new(params.version);
-            let mut enabled_features = vk::PhysicalDeviceFeatures::default();
-            let mut scalar_block_layout_features = vk::PhysicalDeviceScalarBlockLayoutFeaturesEXT::default();
-            let mut pipeline_creation_cache_control_features =
-                vk::PhysicalDevicePipelineCreationCacheControlFeaturesEXT::default();
-            let mut inline_uniform_block_features = vk::PhysicalDeviceInlineUniformBlockFeaturesEXT::default();
-            let mut buffer_device_address_features = vk::PhysicalDeviceBufferDeviceAddressFeaturesKHR::default();
-            let mut acceleration_structure_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
-            let mut ray_tracing_pipeline_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
-            let mut ray_query_pipeline_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
-            let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
-            let mut mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesNV::default();
 
             if window.is_some() {
                 extensions.enable_khr_swapchain();
             }
             params.geometry_shader.apply(
-                || physical_device_features.geometry_shader == vk::TRUE,
-                || enabled_features.geometry_shader = vk::TRUE,
+                || available_features.base.geometry_shader.as_bool(),
+                || features.base.geometry_shader = vk::TRUE,
                 || panic!("geometry shaders not supported"),
             );
             params.scalar_block_layout.apply(
-                || available_extensions.supports_ext_scalar_block_layout(),
+                || {
+                    available_extensions.supports_ext_scalar_block_layout()
+                        && available_features.scalar_block_layout.scalar_block_layout.as_bool()
+                },
                 || {
                     extensions.enable_ext_scalar_block_layout();
-                    scalar_block_layout_features.scalar_block_layout = vk::TRUE;
+                    features.scalar_block_layout.scalar_block_layout = vk::TRUE;
                 },
                 || panic!("EXT_scalar_block_layout not supported"),
             );
@@ -407,79 +444,146 @@ impl Context {
                 || panic!("KHR_image_format_list not supported"),
             );
             params.pipeline_creation_cache_control.apply(
-                || available_extensions.supports_ext_pipeline_creation_cache_control(),
+                || {
+                    available_extensions.supports_ext_pipeline_creation_cache_control()
+                        && available_features
+                            .pipeline_creation_cache_control
+                            .pipeline_creation_cache_control
+                            .as_bool()
+                },
                 || {
                     extensions.enable_ext_pipeline_creation_cache_control();
-                    pipeline_creation_cache_control_features.pipeline_creation_cache_control = vk::TRUE;
+                    features.pipeline_creation_cache_control.pipeline_creation_cache_control = vk::TRUE;
                 },
                 || panic!("EXT_pipeline_creation_cache_control not support"),
             );
             params.inline_uniform_block.apply(
-                || available_extensions.supports_ext_inline_uniform_block(),
+                || {
+                    available_extensions.supports_ext_inline_uniform_block()
+                        && available_features.inline_uniform_block.inline_uniform_block.as_bool()
+                },
                 || {
                     extensions.enable_ext_inline_uniform_block();
-                    inline_uniform_block_features.inline_uniform_block = vk::TRUE;
+                    features.inline_uniform_block.inline_uniform_block = vk::TRUE;
                 },
                 || panic!("EXT_inline_uniform_block not supported"),
             );
             params.bindless.apply(
-                || available_extensions.supports_ext_descriptor_indexing(),
+                || {
+                    available_extensions.supports_ext_descriptor_indexing()
+                        && available_features
+                            .descriptor_indexing
+                            .descriptor_binding_storage_buffer_update_after_bind
+                            .as_bool()
+                        && available_features
+                            .descriptor_indexing
+                            .descriptor_binding_sampled_image_update_after_bind
+                            .as_bool()
+                        && available_features
+                            .descriptor_indexing
+                            .shader_storage_buffer_array_non_uniform_indexing
+                            .as_bool()
+                        && available_features
+                            .descriptor_indexing
+                            .shader_sampled_image_array_non_uniform_indexing
+                            .as_bool()
+                        && available_features
+                            .descriptor_indexing
+                            .descriptor_binding_update_unused_while_pending
+                            .as_bool()
+                        && available_features
+                            .descriptor_indexing
+                            .descriptor_binding_partially_bound
+                            .as_bool()
+                },
                 || {
                     extensions.enable_ext_descriptor_indexing();
-                    descriptor_indexing_features.descriptor_binding_storage_buffer_update_after_bind = vk::TRUE;
-                    descriptor_indexing_features.descriptor_binding_sampled_image_update_after_bind = vk::TRUE;
-                    descriptor_indexing_features.shader_storage_buffer_array_non_uniform_indexing = vk::TRUE;
-                    descriptor_indexing_features.shader_sampled_image_array_non_uniform_indexing = vk::TRUE;
-                    descriptor_indexing_features.descriptor_binding_update_unused_while_pending = vk::TRUE;
-                    descriptor_indexing_features.descriptor_binding_partially_bound = vk::TRUE;
-                    enable_bindless = true;
+                    features
+                        .descriptor_indexing
+                        .descriptor_binding_storage_buffer_update_after_bind = vk::TRUE;
+                    features
+                        .descriptor_indexing
+                        .descriptor_binding_sampled_image_update_after_bind = vk::TRUE;
+                    features
+                        .descriptor_indexing
+                        .shader_storage_buffer_array_non_uniform_indexing = vk::TRUE;
+                    features
+                        .descriptor_indexing
+                        .shader_sampled_image_array_non_uniform_indexing = vk::TRUE;
+                    features
+                        .descriptor_indexing
+                        .descriptor_binding_update_unused_while_pending = vk::TRUE;
+                    features.descriptor_indexing.descriptor_binding_partially_bound = vk::TRUE;
                 },
                 || panic!("EXT_descriptor_indexing not supported"),
             );
             params.ray_tracing.apply(
                 || {
-                    available_extensions.supports_khr_acceleration_structure()
-                        && available_extensions.supports_khr_ray_tracing_pipeline()
+                    available_extensions.supports_khr_ray_tracing_pipeline()
+                        && available_features.buffer_device_address.buffer_device_address.as_bool()
+                        && available_features.base.shader_int64.as_bool()
+                        && available_features
+                            .acceleration_structure
+                            .acceleration_structure
+                            .as_bool()
+                        && available_features.ray_tracing_pipeline.ray_tracing_pipeline.as_bool()
                 },
                 || {
-                    extensions.enable_khr_acceleration_structure();
                     extensions.enable_khr_ray_tracing_pipeline();
-                    buffer_device_address_features.buffer_device_address = vk::TRUE;
-                    enable_buffer_device_addresses = true;
-                    acceleration_structure_features.acceleration_structure = vk::TRUE;
-                    ray_tracing_pipeline_features.ray_tracing_pipeline = vk::TRUE;
-                    enabled_features.shader_int64 = vk::TRUE;
+                    features.buffer_device_address.buffer_device_address = vk::TRUE;
+                    features.base.shader_int64 = vk::TRUE;
+                    features.acceleration_structure.acceleration_structure = vk::TRUE;
+                    features.ray_tracing_pipeline.ray_tracing_pipeline = vk::TRUE;
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_tracing_pipeline not supported"),
             );
             params.ray_query.apply(
                 || {
-                    available_extensions.supports_khr_acceleration_structure()
-                        && available_extensions.supports_khr_ray_query()
+                    available_extensions.supports_khr_ray_query()
+                        && available_features.buffer_device_address.buffer_device_address.as_bool()
+                        && available_features.base.shader_int64.as_bool()
+                        && available_features
+                            .acceleration_structure
+                            .acceleration_structure
+                            .as_bool()
+                        && available_features.ray_query.ray_query.as_bool()
                 },
                 || {
-                    extensions.enable_khr_acceleration_structure();
                     extensions.enable_khr_ray_query();
-                    buffer_device_address_features.buffer_device_address = vk::TRUE;
-                    enable_buffer_device_addresses = true;
-                    acceleration_structure_features.acceleration_structure = vk::TRUE;
-                    ray_query_pipeline_features.ray_query = vk::TRUE;
-                    enabled_features.shader_int64 = vk::TRUE;
+                    features.buffer_device_address.buffer_device_address = vk::TRUE;
+                    features.base.shader_int64 = vk::TRUE;
+                    features.acceleration_structure.acceleration_structure = vk::TRUE;
+                    features.ray_query.ray_query = vk::TRUE;
                 },
                 || panic!("KHR_acceleration_structure/KHR_ray_query not supported"),
             );
             params.mesh_shader.apply(
-                || available_extensions.supports_nv_mesh_shader(),
+                || {
+                    available_extensions.supports_nv_mesh_shader()
+                        && available_features.mesh_shader.task_shader.as_bool()
+                        && available_features.mesh_shader.mesh_shader.as_bool()
+                },
                 || {
                     extensions.enable_nv_mesh_shader();
-                    mesh_shader_features.task_shader = vk::TRUE;
-                    mesh_shader_features.mesh_shader = vk::TRUE;
+                    features.mesh_shader.task_shader = vk::TRUE;
+                    features.mesh_shader.mesh_shader = vk::TRUE;
                 },
                 || panic!("NV_mesh_shader not supported"),
             );
             params.subgroup_size_control.apply(
-                || available_extensions.supports_ext_subgroup_size_control(),
-                || extensions.enable_ext_subgroup_size_control(),
+                || {
+                    available_extensions.supports_ext_subgroup_size_control()
+                        && available_features.subgroup_size_control.subgroup_size_control.as_bool()
+                        && available_features
+                            .subgroup_size_control
+                            .compute_full_subgroups
+                            .as_bool()
+                },
+                || {
+                    extensions.enable_ext_subgroup_size_control();
+                    features.subgroup_size_control.subgroup_size_control = vk::TRUE;
+                    features.subgroup_size_control.compute_full_subgroups = vk::TRUE;
+                },
                 || panic!("EXT_subgroup_size_control not supported"),
             );
 
@@ -492,16 +596,17 @@ impl Context {
             let device_create_info = vk::DeviceCreateInfo::builder()
                 .p_queue_create_infos(slice::from_ref(&device_queue_create_info))
                 .pp_enabled_extension_names(&extension_name_ptrs)
-                .p_enabled_features(Some(&enabled_features))
-                .insert_next(&mut scalar_block_layout_features)
-                .insert_next(&mut pipeline_creation_cache_control_features)
-                .insert_next(&mut inline_uniform_block_features)
-                .insert_next(&mut buffer_device_address_features)
-                .insert_next(&mut acceleration_structure_features)
-                .insert_next(&mut ray_tracing_pipeline_features)
-                .insert_next(&mut ray_query_pipeline_features)
-                .insert_next(&mut descriptor_indexing_features)
-                .insert_next(&mut mesh_shader_features);
+                .p_enabled_features(Some(&features.base))
+                .insert_next(&mut features.scalar_block_layout)
+                .insert_next(&mut features.pipeline_creation_cache_control)
+                .insert_next(&mut features.inline_uniform_block)
+                .insert_next(&mut features.buffer_device_address)
+                .insert_next(&mut features.acceleration_structure)
+                .insert_next(&mut features.ray_tracing_pipeline)
+                .insert_next(&mut features.ray_query)
+                .insert_next(&mut features.descriptor_indexing)
+                .insert_next(&mut features.mesh_shader)
+                .insert_next(&mut features.subgroup_size_control);
 
             unsafe { instance.create_device(physical_device, &device_create_info, None, params.version) }.unwrap()
         };
@@ -516,8 +621,7 @@ impl Context {
             physical_device_properties,
             physical_device_memory_properties,
             physical_device_extra_properties,
-            enable_bindless,
-            enable_buffer_device_addresses,
+            physical_device_features: features,
             queue_family_index,
             queue_family_properties,
             queue,

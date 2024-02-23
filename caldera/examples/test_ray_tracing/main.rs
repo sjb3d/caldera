@@ -51,7 +51,11 @@ impl App {
     fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
         let context = SharedContext::clone(&base.context);
 
-        let has_ray_tracing = context.device.extensions.supports_khr_acceleration_structure();
+        let has_ray_tracing = context
+            .physical_device_features
+            .ray_tracing_pipeline
+            .ray_tracing_pipeline
+            .as_bool();
         let resource_loader = base.systems.resource_loader.clone();
         let load_result = base.systems.task_system.spawn_task(async move {
             let mesh_info = MeshInfo::load(resource_loader.clone(), &mesh_file_name, has_ray_tracing).await;
@@ -97,7 +101,13 @@ impl App {
                     RenderMode::RasterMultisampled,
                     "Raster (Multisampled)",
                 );
-                if self.context.device.extensions.supports_khr_acceleration_structure() {
+                if self
+                    .context
+                    .physical_device_features
+                    .ray_tracing_pipeline
+                    .ray_tracing_pipeline
+                    .as_bool()
+                {
                     ui.radio_value(&mut self.render_mode, RenderMode::RayTrace, "Ray Trace");
                 } else {
                     ui.label("Ray Tracing Not Supported!");
@@ -307,9 +317,12 @@ impl App {
                                 ],
                                 &[0, 0, 0],
                             );
-                            context
-                                .device
-                                .cmd_bind_index_buffer(cmd, mesh_info.index_buffer, 0, vk::IndexType::UINT32);
+                            context.device.cmd_bind_index_buffer(
+                                cmd,
+                                Some(mesh_info.index_buffer),
+                                0,
+                                vk::IndexType::UINT32,
+                            );
                             context.device.cmd_draw_indexed(
                                 cmd,
                                 mesh_info.triangle_count * 3,

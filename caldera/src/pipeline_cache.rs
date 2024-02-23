@@ -1,4 +1,4 @@
-use crate::context::SharedContext;
+use crate::context::*;
 use arrayvec::ArrayVec;
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use spark::{vk, Builder, Device};
@@ -401,7 +401,12 @@ impl PipelineCache {
         let pipeline_cache = {
             // TODO: load from file
             let create_info = vk::PipelineCacheCreateInfo {
-                flags: if context.device.extensions.supports_ext_pipeline_creation_cache_control() {
+                flags: if context
+                    .physical_device_features
+                    .pipeline_creation_cache_control
+                    .pipeline_creation_cache_control
+                    .as_bool()
+                {
                     vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED_EXT
                 } else {
                     vk::PipelineCacheCreateFlags::empty()

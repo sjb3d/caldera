@@ -449,7 +449,12 @@ impl Resources {
             buffers: SlotMap::with_key(),
             images: SlotMap::with_key(),
             samplers: SlotMap::with_key(),
-            bindless: if context.enable_bindless {
+            bindless: if context
+                .physical_device_features
+                .descriptor_indexing
+                .descriptor_binding_partially_bound
+                .as_bool()
+            {
                 Some(Bindless::new(context))
             } else {
                 None

@@ -200,8 +200,13 @@ struct App {
 
 impl App {
     fn new(base: &mut AppBase, mesh_file_name: PathBuf) -> Self {
-        let has_mesh_shader = base.context.device.extensions.supports_nv_mesh_shader()
-            && base.context.device.extensions.supports_ext_subgroup_size_control();
+        let has_mesh_shader = base.context.physical_device_features.mesh_shader.mesh_shader.as_bool()
+            && base
+                .context
+                .physical_device_features
+                .subgroup_size_control
+                .subgroup_size_control
+                .as_bool();
         let task_group_size = base
             .context
             .physical_device_extra_properties
@@ -379,7 +384,7 @@ impl App {
                                 );
                                 context.device.cmd_bind_index_buffer(
                                     cmd,
-                                    mesh_info.index_buffer,
+                                    Some(mesh_info.index_buffer),
                                     0,
                                     vk::IndexType::UINT32,
                                 );

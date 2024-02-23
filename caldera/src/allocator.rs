@@ -18,18 +18,23 @@ struct Chunk {
 impl Chunk {
     pub fn new(context: &SharedContext, memory_type_index: u32, size: u32) -> Self {
         let mem = {
+            let mut memory_allocate_info = vk::MemoryAllocateInfo::builder()
+                .allocation_size(vk::DeviceSize::from(size))
+                .memory_type_index(memory_type_index);
+
             let mut flags_info = vk::MemoryAllocateFlagsInfo {
-                flags: if context.enable_buffer_device_addresses {
-                    vk::MemoryAllocateFlagsKHR::DEVICE_ADDRESS_KHR
-                } else {
-                    vk::MemoryAllocateFlagsKHR::empty()
-                },
+                flags: vk::MemoryAllocateFlagsKHR::DEVICE_ADDRESS_KHR,
                 ..Default::default()
             };
-            let memory_allocate_info = vk::MemoryAllocateInfo::builder()
-                .allocation_size(vk::DeviceSize::from(size))
-                .memory_type_index(memory_type_index)
-                .insert_next(&mut flags_info);
+            if context
+                .physical_device_features
+                .buffer_device_address
+                .buffer_device_address
+                .as_bool()
+            {
+                memory_allocate_info = memory_allocate_info.insert_next(&mut flags_info);
+            }
+
             unsafe { context.device.allocate_memory(&memory_allocate_info, None) }.unwrap()
         };
         Self {

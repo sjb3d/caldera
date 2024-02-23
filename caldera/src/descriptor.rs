@@ -1,4 +1,4 @@
-use crate::{command_buffer::CommandBufferPool, context::SharedContext};
+use crate::{command_buffer::CommandBufferPool, context::*};
 use arrayvec::ArrayVec;
 use spark::{vk, Builder};
 use std::{
@@ -333,7 +333,11 @@ impl DescriptorPool {
     const MAX_DESCRIPTORS_PER_SET: usize = 16;
 
     pub fn new(context: &SharedContext) -> Self {
-        let use_inline_uniform_block = context.device.extensions.supports_ext_inline_uniform_block();
+        let use_inline_uniform_block = context
+            .physical_device_features
+            .inline_uniform_block
+            .inline_uniform_block
+            .as_bool();
         if use_inline_uniform_block {
             println!("using inline uniform block for uniform data");
         }
@@ -373,7 +377,12 @@ impl DescriptorPool {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
             });
-            if context.device.extensions.supports_khr_acceleration_structure() {
+            if context
+                .physical_device_features
+                .acceleration_structure
+                .acceleration_structure
+                .as_bool()
+            {
                 descriptor_pool_sizes.push(vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
                     descriptor_count: Self::MAX_DESCRIPTORS_PER_FRAME,
