@@ -482,7 +482,7 @@ impl SceneAccel {
             .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
             .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .p_geometries(&accel_geometry);
+            .p_geometries(Some(&accel_geometry), None);
 
         let sizes = {
             let mut sizes = vk::AccelerationStructureBuildSizesInfoKHR::default();
@@ -538,8 +538,8 @@ impl SceneAccel {
                                 .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
                                 .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
                                 .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-                                .dst_acceleration_structure(Some(accel))
-                                .p_geometries(&accel_geometry)
+                                .dst_acceleration_structure(accel)
+                                .p_geometries(Some(&accel_geometry), None)
                                 .scratch_data(vk::DeviceOrHostAddressKHR {
                                     device_address: scratch_buffer_address,
                                 });
@@ -580,7 +580,7 @@ impl SceneAccel {
         let mut record_offset = 0;
         for (cluster, cluster_accel) in clusters.0.iter().zip(cluster_accel.iter()) {
             let info = vk::AccelerationStructureDeviceAddressInfoKHR {
-                acceleration_structure: Some(resource_loader.get_buffer_accel(cluster_accel.buffer_id)),
+                acceleration_structure: resource_loader.get_buffer_accel(cluster_accel.buffer_id),
                 ..Default::default()
             };
             let acceleration_structure_reference =
@@ -630,7 +630,7 @@ impl SceneAccel {
             .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
             .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .p_geometries(slice::from_ref(&accel_geometry));
+            .p_geometries(Some(slice::from_ref(&accel_geometry)), None);
 
         let instance_count = clusters.instanced_accel_count() as u32;
         let sizes = {
@@ -685,8 +685,8 @@ impl SceneAccel {
                                 .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
                                 .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
                                 .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-                                .dst_acceleration_structure(Some(accel))
-                                .p_geometries(slice::from_ref(&accel_geometry))
+                                .dst_acceleration_structure(accel)
+                                .p_geometries(Some(slice::from_ref(&accel_geometry)), None)
                                 .scratch_data(vk::DeviceOrHostAddressKHR {
                                     device_address: scratch_buffer_address,
                                 });

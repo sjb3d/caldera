@@ -137,7 +137,7 @@ impl Drop for ShaderLoader {
             .chain(self.current_shaders.drain())
         {
             unsafe {
-                self.context.device.destroy_shader_module(Some(shader), None);
+                self.context.device.destroy_shader_module(shader, None);
             }
         }
     }
@@ -175,7 +175,7 @@ impl Drop for PipelineLayoutCache {
     fn drop(&mut self) {
         let device = &self.context.device;
         for (_, layout) in self.layouts.drain() {
-            unsafe { device.destroy_pipeline_layout(Some(layout), None) };
+            unsafe { device.destroy_pipeline_layout(layout, None) };
         }
     }
 }
@@ -453,21 +453,23 @@ impl PipelineCache {
             let pipeline_create_info = vk::ComputePipelineCreateInfo {
                 stage: vk::PipelineShaderStageCreateInfo {
                     stage: vk::ShaderStageFlags::COMPUTE,
-                    module: Some(shader),
+                    module: shader,
                     p_name: shader_entry_name.as_ptr(),
                     p_specialization_info: &*specialization_info,
                     ..Default::default()
                 },
-                layout: Some(pipeline_layout),
+                layout: pipeline_layout,
                 ..Default::default()
             };
             unsafe {
-                self.context.device.create_compute_pipelines_single(
-                    Some(self.pipeline_cache),
-                    &pipeline_create_info,
-                    None,
-                )
+                self.context
+                    .device
+                    .create_compute_pipelines_single(self.pipeline_cache, &pipeline_create_info, None)
             }
+            .and_then(|(res, pipeline)| match res {
+                vk::Result::SUCCESS => Ok(pipeline),
+                _ => Err(res),
+            })
             .unwrap()
         })
     }
@@ -515,7 +517,7 @@ impl PipelineCache {
                 VertexShaderKey::Standard { vertex } => {
                     shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
                         stage: vk::ShaderStageFlags::VERTEX,
-                        module: Some(vertex),
+                        module: vertex,
                         p_name: shader_entry_name.as_ptr(),
                         ..Default::default()
                     });
@@ -546,7 +548,7 @@ impl PipelineCache {
                             p_next,
                             flags,
                             stage: vk::ShaderStageFlags::TASK_NV,
-                            module: Some(task),
+                            module: task,
                             p_name: shader_entry_name.as_ptr(),
                             p_specialization_info: specialization_info.last().unwrap(),
                             ..Default::default()
@@ -557,7 +559,7 @@ impl PipelineCache {
                         specialization_info.push(*specialization_data.last().unwrap().info());
                         vk::PipelineShaderStageCreateInfo {
                             stage: vk::ShaderStageFlags::MESH_NV,
-                            module: Some(mesh),
+                            module: mesh,
                             p_name: shader_entry_name.as_ptr(),
                             p_specialization_info: specialization_info.last().unwrap(),
                             ..Default::default()
@@ -567,7 +569,7 @@ impl PipelineCache {
             }
             shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
                 stage: vk::ShaderStageFlags::FRAGMENT,
-                module: Some(fragment_shader),
+                module: fragment_shader,
                 p_name: shader_entry_name.as_ptr(),
                 ..Default::default()
             });
@@ -603,7 +605,10 @@ impl PipelineCache {
                 .depth_compare_op(state.depth_compare_op);
 
             let color_blend_attachment_state = vk::PipelineColorBlendAttachmentState {
-                color_write_mask: vk::ColorComponentFlags::all(),
+                color_write_mask: vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
                 ..Default::default()
             };
             let color_blend_state_create_info = vk::PipelineColorBlendStateCreateInfo::builder()
@@ -623,16 +628,18 @@ impl PipelineCache {
                 .p_depth_stencil_state(Some(&depth_stencil_state))
                 .p_color_blend_state(Some(&color_blend_state_create_info))
                 .p_dynamic_state(Some(&pipeline_dynamic_state_create_info))
-                .layout(Some(pipeline_layout))
-                .render_pass(Some(state.render_pass));
+                .layout(pipeline_layout)
+                .render_pass(state.render_pass);
 
             unsafe {
-                self.context.device.create_graphics_pipelines_single(
-                    Some(self.pipeline_cache),
-                    &pipeline_create_info,
-                    None,
-                )
+                self.context
+                    .device
+                    .create_graphics_pipelines_single(self.pipeline_cache, &pipeline_create_info, None)
             }
+            .and_then(|(res, pipeline)| match res {
+                vk::Result::SUCCESS => Ok(pipeline),
+                _ => Err(res),
+            })
             .unwrap()
         })
     }
@@ -689,7 +696,7 @@ impl PipelineCache {
             let mut get_stage_index = |stage, module| {
                 if let Some(i) = shader_stage_create_info.iter().enumerate().find_map(
                     |(i, info): (usize, &vk::PipelineShaderStageCreateInfo)| {
-                        if stage == info.stage && Some(module) == info.module {
+                        if stage == info.stage && module == info.module {
                             Some(i as u32)
                         } else {
                             None
@@ -700,7 +707,7 @@ impl PipelineCache {
                 } else {
                     shader_stage_create_info.push(vk::PipelineShaderStageCreateInfo {
                         stage,
-                        module: Some(module),
+                        module,
                         p_name: shader_entry_name.as_ptr(),
                         ..Default::default()
                     });
@@ -766,12 +773,16 @@ impl PipelineCache {
 
             unsafe {
                 self.context.device.create_ray_tracing_pipelines_khr_single(
-                    None,
-                    Some(self.pipeline_cache),
+                    vk::DeferredOperationKHR::null(),
+                    self.pipeline_cache,
                     &pipeline_create_info,
                     None,
                 )
             }
+            .and_then(|(res, pipeline)| match res {
+                vk::Result::SUCCESS => Ok(pipeline),
+                _ => Err(res),
+            })
             .unwrap()
         })
     }
@@ -790,12 +801,12 @@ impl Drop for PipelineCache {
         let device = &self.context.device;
         for (_, pipeline) in self.pipelines.borrow_mut().drain() {
             unsafe {
-                device.destroy_pipeline(Some(pipeline), None);
+                device.destroy_pipeline(pipeline, None);
             }
         }
         unsafe {
             // TODO: save to file
-            device.destroy_pipeline_cache(Some(self.pipeline_cache), None)
+            device.destroy_pipeline_cache(self.pipeline_cache, None)
         }
     }
 }

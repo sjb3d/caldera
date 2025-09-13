@@ -384,7 +384,7 @@ impl App {
                                 );
                                 context.device.cmd_bind_index_buffer(
                                     cmd,
-                                    Some(mesh_info.index_buffer),
+                                    mesh_info.index_buffer,
                                     0,
                                     vk::IndexType::UINT32,
                                 );

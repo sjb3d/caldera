@@ -317,12 +317,9 @@ impl App {
                                 ],
                                 &[0, 0, 0],
                             );
-                            context.device.cmd_bind_index_buffer(
-                                cmd,
-                                Some(mesh_info.index_buffer),
-                                0,
-                                vk::IndexType::UINT32,
-                            );
+                            context
+                                .device
+                                .cmd_bind_index_buffer(cmd, mesh_info.index_buffer, 0, vk::IndexType::UINT32);
                             context.device.cmd_draw_indexed(
                                 cmd,
                                 mesh_info.triangle_count * 3,

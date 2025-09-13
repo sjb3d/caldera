@@ -340,7 +340,7 @@ impl Bindless {
         let class = BindlessClass::new_buffer(all_usage)?;
         let index = self.indices[class.into_integer() as usize].allocate()?;
         let buffer_info = vk::DescriptorBufferInfo {
-            buffer: Some(buffer),
+            buffer,
             offset: 0,
             range: vk::WHOLE_SIZE,
         };
@@ -366,8 +366,8 @@ impl Bindless {
         let class = BindlessClass::new_image(desc, all_usage)?;
         let index = self.indices[class.into_integer() as usize].allocate()?;
         let image_info = vk::DescriptorImageInfo {
-            sampler: None,
-            image_view: Some(image_view),
+            sampler: vk::Sampler::null(),
+            image_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         };
         let write = vk::WriteDescriptorSet::builder()
@@ -387,8 +387,8 @@ impl Bindless {
         let class = BindlessClass::Sampler;
         let index = self.indices[class.into_integer() as usize].allocate()?;
         let image_info = vk::DescriptorImageInfo {
-            sampler: Some(sampler),
-            image_view: None,
+            sampler,
+            image_view: vk::ImageView::null(),
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         };
         let write = vk::WriteDescriptorSet::builder()
@@ -422,8 +422,8 @@ impl Drop for Bindless {
     fn drop(&mut self) {
         let device = &self.context.device;
         unsafe {
-            device.destroy_descriptor_pool(Some(self.descriptor_pool), None);
-            device.destroy_descriptor_set_layout(Some(self.descriptor_set_layout), None);
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         }
     }
 }
@@ -725,7 +725,7 @@ impl Drop for Resources {
     fn drop(&mut self) {
         let device = &self.context.device;
         for (_id, resource) in self.samplers.drain() {
-            unsafe { device.destroy_sampler(Some(resource.sampler), None) };
+            unsafe { device.destroy_sampler(resource.sampler, None) };
         }
     }
 }

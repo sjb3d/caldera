@@ -1,6 +1,6 @@
 use crate::window_surface;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
-use spark::{vk, Builder, Device, DeviceExtensions, Instance, InstanceExtensions, Loader};
+use spark::{vk, Builder, Device, DeviceExtensions, Globals, Instance, InstanceExtensions};
 use std::{
     ffi::CStr,
     num,
@@ -42,7 +42,7 @@ pub trait DeviceExt {
 impl DeviceExt for Device {
     unsafe fn get_buffer_device_address_helper(&self, buffer: vk::Buffer) -> vk::DeviceAddress {
         let info = vk::BufferDeviceAddressInfo {
-            buffer: Some(buffer),
+            buffer,
             ..Default::default()
         };
         self.get_buffer_device_address(&info)
@@ -169,9 +169,10 @@ pub struct DeviceFeatures {
 }
 
 pub struct Context {
+    pub _globals: Globals,
     pub instance: Instance,
-    pub debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
-    pub surface: Option<vk::SurfaceKHR>,
+    pub debug_utils_messenger: vk::DebugUtilsMessengerEXT,
+    pub surface: vk::SurfaceKHR,
     pub physical_device: vk::PhysicalDevice,
     pub physical_device_properties: vk::PhysicalDeviceProperties,
     pub physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
@@ -188,9 +189,10 @@ pub type SharedContext = Arc<Context>;
 
 impl Context {
     pub fn new(window: Option<&Window>, params: &ContextParams) -> SharedContext {
+        let globals = Globals::new().unwrap();
+
         let instance = {
-            let loader = Loader::new().unwrap();
-            let instance_version = unsafe { loader.enumerate_instance_version() }.unwrap();
+            let instance_version = unsafe { globals.enumerate_instance_version() }.unwrap();
             println!(
                 "loading instance version {} ({} supported)",
                 params.version, instance_version
@@ -204,7 +206,7 @@ impl Context {
 
             let available_extensions = {
                 let extension_properties =
-                    unsafe { loader.enumerate_instance_extension_properties_to_vec(None) }.unwrap();
+                    unsafe { globals.enumerate_instance_extension_properties_to_vec(None) }.unwrap();
                 InstanceExtensions::from_properties(params.version, &extension_properties)
             };
 
@@ -278,7 +280,7 @@ impl Context {
             let instance_create_info = vk::InstanceCreateInfo::builder()
                 .p_application_info(Some(&app_info))
                 .pp_enabled_extension_names(&extension_name_ptrs);
-            unsafe { loader.create_instance(&instance_create_info, None) }.unwrap()
+            unsafe { globals.create_instance_commands(&instance_create_info, None) }.unwrap()
         };
 
         let debug_utils_messenger = if instance.extensions.supports_ext_debug_utils() {
@@ -291,14 +293,16 @@ impl Context {
                 pfn_user_callback: Some(debug_messenger),
                 ..Default::default()
             };
-            Some(unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }.unwrap())
+            unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }.unwrap()
         } else {
-            None
+            vk::DebugUtilsMessengerEXT::null()
         };
 
-        let surface = window.map(|window| {
-            window_surface::create(&instance, &window.raw_display_handle(), &window.raw_window_handle()).unwrap()
-        });
+        let surface = window
+            .map(|window| {
+                window_surface::create(&instance, &window.raw_display_handle(), &window.raw_window_handle()).unwrap()
+            })
+            .unwrap_or(vk::SurfaceKHR::null());
 
         let physical_device = {
             let physical_devices = unsafe { instance.enumerate_physical_devices_to_vec() }.unwrap();
@@ -371,18 +375,11 @@ impl Context {
                 .enumerate()
                 .filter_map(|(index, info)| {
                     if info.queue_flags.contains(queue_flags)
-                        && surface
-                            .map(|surface| {
-                                unsafe {
-                                    instance.get_physical_device_surface_support_khr(
-                                        physical_device,
-                                        index as u32,
-                                        surface,
-                                    )
-                                }
-                                .unwrap()
-                            })
-                            .unwrap_or(true)
+                        && (surface.is_null()
+                            || unsafe {
+                                instance.get_physical_device_surface_support_khr(physical_device, index as u32, surface)
+                            }
+                            .unwrap())
                     {
                         Some((index as u32, *info))
                     } else {
@@ -608,12 +605,13 @@ impl Context {
                 .insert_next(&mut features.mesh_shader)
                 .insert_next(&mut features.subgroup_size_control);
 
-            unsafe { instance.create_device(physical_device, &device_create_info, None, params.version) }.unwrap()
+            unsafe { instance.create_device_commands(&globals, physical_device, &device_create_info, None) }.unwrap()
         };
 
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
         SharedContext::new(Self {
+            _globals: globals,
             instance,
             debug_utils_messenger,
             surface,
@@ -649,10 +647,10 @@ impl Drop for Context {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_device(None);
-            if let Some(surface) = self.surface {
-                self.instance.destroy_surface_khr(Some(surface), None);
+            if !self.surface.is_null() {
+                self.instance.destroy_surface_khr(self.surface, None);
             }
-            if self.debug_utils_messenger.is_some() {
+            if !self.debug_utils_messenger.is_null() {
                 self.instance
                     .destroy_debug_utils_messenger_ext(self.debug_utils_messenger, None);
             }

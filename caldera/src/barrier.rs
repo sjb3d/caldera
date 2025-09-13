@@ -324,7 +324,7 @@ pub fn emit_buffer_barrier(
         dst_access_mask: new_usage.as_access_mask(),
         src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
         dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-        buffer: Some(buffer),
+        buffer,
         offset: 0,
         size: vk::WHOLE_SIZE,
         ..Default::default()
@@ -566,7 +566,7 @@ pub fn emit_image_barrier(
         new_layout: new_usage.as_image_layout(),
         src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
         dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-        image: Some(image),
+        image,
         subresource_range: vk::ImageSubresourceRange {
             aspect_mask,
             base_mip_level: 0,

@@ -35,14 +35,14 @@ impl CommandBufferSet {
 
         let (pre_swapchain_cmd, post_swapchain_cmd) = {
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
-                command_pool: Some(pool),
+                command_pool: pool,
                 level: vk::CommandBufferLevel::PRIMARY,
                 command_buffer_count: 2,
                 ..Default::default()
             };
 
-            let command_buffers: [vk::CommandBuffer; 2] =
-                unsafe { device.allocate_command_buffers_array(&command_buffer_allocate_info) }.unwrap();
+            let mut command_buffers = [vk::CommandBuffer::null(); 2];
+            unsafe { device.allocate_command_buffers(&command_buffer_allocate_info, &mut command_buffers) }.unwrap();
             (command_buffers[0], command_buffers[1])
         };
 
@@ -54,10 +54,14 @@ impl CommandBufferSet {
             unsafe { device.create_fence(&fence_create_info, None) }.unwrap()
         };
 
-        let semaphores = context.surface.map(|_| CommandBufferSemaphores {
-            image_available: unsafe { device.create_semaphore(&Default::default(), None) }.unwrap(),
-            rendering_finished: unsafe { device.create_semaphore(&Default::default(), None) }.unwrap(),
-        });
+        let semaphores = if context.surface.is_null() {
+            None
+        } else {
+            Some(CommandBufferSemaphores {
+                image_available: unsafe { device.create_semaphore(&Default::default(), None) }.unwrap(),
+                rendering_finished: unsafe { device.create_semaphore(&Default::default(), None) }.unwrap(),
+            })
+        };
 
         Self {
             pool,
@@ -166,7 +170,7 @@ impl CommandBufferPool {
         unsafe {
             self.context
                 .device
-                .queue_submit(self.context.queue, &submit_info, Some(set.fence))
+                .queue_submit(self.context.queue, &submit_info, set.fence)
         }
         .unwrap();
 
@@ -185,12 +189,12 @@ impl Drop for CommandBufferPool {
         for set in self.sets.iter() {
             unsafe {
                 if let Some(semaphores) = set.semaphores.as_ref() {
-                    device.destroy_semaphore(Some(semaphores.rendering_finished), None);
-                    device.destroy_semaphore(Some(semaphores.image_available), None);
+                    device.destroy_semaphore(semaphores.rendering_finished, None);
+                    device.destroy_semaphore(semaphores.image_available, None);
                 }
-                device.destroy_fence(Some(set.fence), None);
+                device.destroy_fence(set.fence, None);
                 device.free_command_buffers(set.pool, &[set.pre_swapchain_cmd, set.post_swapchain_cmd]);
-                device.destroy_command_pool(Some(set.pool), None);
+                device.destroy_command_pool(set.pool, None);
             }
         }
     }

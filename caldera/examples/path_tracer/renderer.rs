@@ -213,10 +213,6 @@ descriptor_set!(PathTraceDescriptorSet {
     linear_sampler: Sampler,
 });
 
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
-struct TextureIndex(u16);
-
 #[derive(Clone, Copy, Default)]
 struct ShaderData {
     reflectance_texture_id: Option<BindlessId>,
@@ -2307,13 +2303,9 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
-            self.context
-                .device
-                .destroy_sampler(Some(self.clamp_point_sampler), None);
-            self.context
-                .device
-                .destroy_sampler(Some(self.clamp_linear_sampler), None);
-            self.context.device.destroy_sampler(Some(self.linear_sampler), None);
+            self.context.device.destroy_sampler(self.clamp_point_sampler, None);
+            self.context.device.destroy_sampler(self.clamp_linear_sampler, None);
+            self.context.device.destroy_sampler(self.linear_sampler, None);
         }
     }
 }

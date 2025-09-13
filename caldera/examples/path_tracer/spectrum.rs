@@ -547,6 +547,7 @@ pub trait Sweep {
 
     fn next(&mut self, input: f32) -> Self::Item;
 
+    #[allow(dead_code)]
     fn map<U, F>(self, f: F) -> SweepMap<Self::Item, U, Self, F>
     where
         Self: Sized,
@@ -555,6 +556,7 @@ pub trait Sweep {
         SweepMap { a: self, f }
     }
 
+    #[allow(dead_code)]
     fn product<U>(self, other: U) -> SweepProduct<Self::Item, Self, U>
     where
         Self: Sized,

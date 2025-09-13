@@ -453,7 +453,7 @@ impl CaptureBuffer {
         let mapping = unsafe { context.device.map_memory(mem, 0, vk::WHOLE_SIZE, Default::default()) }.unwrap();
 
         let mapped_memory_range = vk::MappedMemoryRange {
-            memory: Some(mem),
+            memory: mem,
             offset: 0,
             size: vk::WHOLE_SIZE,
             ..Default::default()
@@ -476,7 +476,7 @@ impl CaptureBuffer {
 
     fn mapping(&self) -> &[u8] {
         let mapped_memory_range = vk::MappedMemoryRange {
-            memory: Some(self.mem),
+            memory: self.mem,
             offset: 0,
             size: vk::WHOLE_SIZE,
             ..Default::default()
@@ -495,9 +495,9 @@ impl CaptureBuffer {
 impl Drop for CaptureBuffer {
     fn drop(&mut self) {
         unsafe {
-            self.context.device.destroy_buffer(Some(self.buffer.0), None);
+            self.context.device.destroy_buffer(self.buffer.0, None);
             self.context.device.unmap_memory(self.mem);
-            self.context.device.free_memory(Some(self.mem), None);
+            self.context.device.free_memory(self.mem, None);
         }
     }
 }

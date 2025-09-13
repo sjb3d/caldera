@@ -103,7 +103,7 @@ impl StagingBuffer {
         }
 
         let mapped_ranges = [vk::MappedMemoryRange {
-            memory: Some(self.mem),
+            memory: self.mem,
             offset: (self.buffer_index * (self.size_per_frame as usize)) as vk::DeviceSize,
             size: vk::DeviceSize::from(align_up(self.last_usage, self.atom_size)),
             ..Default::default()
@@ -150,11 +150,11 @@ impl StagingBuffer {
 impl Drop for StagingBuffer {
     fn drop(&mut self) {
         unsafe {
-            for buffer in self.buffers.iter() {
-                self.context.device.destroy_buffer(Some(*buffer), None);
+            for &buffer in self.buffers.iter() {
+                self.context.device.destroy_buffer(buffer, None);
             }
             self.context.device.unmap_memory(self.mem);
-            self.context.device.free_memory(Some(self.mem), None);
+            self.context.device.free_memory(self.mem, None);
         }
     }
 }
@@ -308,7 +308,7 @@ impl Drop for DescriptorSetLayoutCache {
     fn drop(&mut self) {
         let device = &self.context.device;
         for (_, layout) in self.layouts.drain() {
-            unsafe { device.destroy_descriptor_set_layout(Some(layout), None) };
+            unsafe { device.destroy_descriptor_set_layout(layout, None) };
         }
     }
 }
@@ -484,13 +484,13 @@ impl DescriptorPool {
             match data {
                 DescriptorSetBindingData::Sampler { sampler } => {
                     image_info.push(vk::DescriptorImageInfo {
-                        sampler: Some(*sampler),
-                        image_view: None,
+                        sampler: *sampler,
+                        image_view: vk::ImageView::null(),
                         image_layout: vk::ImageLayout::UNDEFINED,
                     });
 
                     writes.push(vk::WriteDescriptorSet {
-                        dst_set: Some(descriptor_set),
+                        dst_set: descriptor_set,
                         dst_binding: i as u32,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::SAMPLER,
@@ -500,13 +500,13 @@ impl DescriptorPool {
                 }
                 DescriptorSetBindingData::SampledImage { image_view } => {
                     image_info.push(vk::DescriptorImageInfo {
-                        sampler: None,
-                        image_view: Some(*image_view),
+                        sampler: vk::Sampler::null(),
+                        image_view: *image_view,
                         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                     });
 
                     writes.push(vk::WriteDescriptorSet {
-                        dst_set: Some(descriptor_set),
+                        dst_set: descriptor_set,
                         dst_binding: i as u32,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
@@ -516,13 +516,13 @@ impl DescriptorPool {
                 }
                 DescriptorSetBindingData::CombinedImageSampler { image_view, sampler } => {
                     image_info.push(vk::DescriptorImageInfo {
-                        sampler: Some(*sampler),
-                        image_view: Some(*image_view),
+                        sampler: *sampler,
+                        image_view: *image_view,
                         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                     });
 
                     writes.push(vk::WriteDescriptorSet {
-                        dst_set: Some(descriptor_set),
+                        dst_set: descriptor_set,
                         dst_binding: i as u32,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -534,14 +534,14 @@ impl DescriptorPool {
                     let offset = image_info.len();
                     for image_view in image_views.iter() {
                         image_info.push(vk::DescriptorImageInfo {
-                            sampler: None,
-                            image_view: Some(*image_view),
+                            sampler: vk::Sampler::null(),
+                            image_view: *image_view,
                             image_layout: vk::ImageLayout::GENERAL,
                         });
                     }
 
                     writes.push(vk::WriteDescriptorSet {
-                        dst_set: Some(descriptor_set),
+                        dst_set: descriptor_set,
                         dst_binding: i as u32,
                         descriptor_count: image_views.len() as u32,
                         descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
@@ -557,13 +557,13 @@ impl DescriptorPool {
                         writer(addr);
 
                         buffer_info.push(vk::DescriptorBufferInfo {
-                            buffer: Some(uniform_data_pool.get_buffer()),
+                            buffer: uniform_data_pool.get_buffer(),
                             offset: vk::DeviceSize::from(offset),
                             range: vk::DeviceSize::from(size),
                         });
 
                         writes.push(vk::WriteDescriptorSet {
-                            dst_set: Some(descriptor_set),
+                            dst_set: descriptor_set,
                             dst_binding: i as u32,
                             descriptor_count: 1,
                             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -592,7 +592,7 @@ impl DescriptorPool {
                         });
 
                         writes.push(vk::WriteDescriptorSet {
-                            dst_set: Some(descriptor_set),
+                            dst_set: descriptor_set,
                             dst_binding: i as u32,
                             descriptor_count: size,
                             descriptor_type: vk::DescriptorType::INLINE_UNIFORM_BLOCK_EXT,
@@ -603,13 +603,13 @@ impl DescriptorPool {
                 }
                 DescriptorSetBindingData::StorageBuffer { buffer } => {
                     buffer_info.push(vk::DescriptorBufferInfo {
-                        buffer: Some(*buffer),
+                        buffer: *buffer,
                         offset: 0,
                         range: vk::WHOLE_SIZE,
                     });
 
                     writes.push(vk::WriteDescriptorSet {
-                        dst_set: Some(descriptor_set),
+                        dst_set: descriptor_set,
                         dst_binding: i as u32,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
@@ -625,7 +625,7 @@ impl DescriptorPool {
                     });
 
                     writes.push(vk::WriteDescriptorSet {
-                        dst_set: Some(descriptor_set),
+                        dst_set: descriptor_set,
                         dst_binding: i as u32,
                         descriptor_count: 1,
                         descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
@@ -660,7 +660,7 @@ impl Drop for DescriptorPool {
         let device = &self.context.device;
         for pool in self.pools.iter() {
             unsafe {
-                device.destroy_descriptor_pool(Some(*pool), None);
+                device.destroy_descriptor_pool(*pool, None);
             }
         }
     }

@@ -70,7 +70,7 @@ impl Chunk {
 impl Drop for Chunk {
     fn drop(&mut self) {
         unsafe {
-            self.context.device.free_memory(Some(self.mem), None);
+            self.context.device.free_memory(self.mem, None);
         }
     }
 }

@@ -129,7 +129,7 @@ impl AccelLevel {
                                 ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
                                 flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
                                 mode: vk::BuildAccelerationStructureModeKHR::BUILD,
-                                dst_acceleration_structure: Some(accel),
+                                dst_acceleration_structure: accel,
                                 geometry_count: 1,
                                 p_geometries: &geometry,
                                 scratch_data: vk::DeviceOrHostAddressKHR {
@@ -243,7 +243,7 @@ impl AccelLevel {
                             ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
                             flags: vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
                             mode: vk::BuildAccelerationStructureModeKHR::BUILD,
-                            dst_acceleration_structure: Some(accel),
+                            dst_acceleration_structure: accel,
                             geometry_count: 1,
                             p_geometries: &geometry,
                             scratch_data: vk::DeviceOrHostAddressKHR {
@@ -436,7 +436,7 @@ impl AccelInfo {
         let bottom_level = AccelLevel::new_bottom_level(resource_loader.clone(), mesh_info).await;
         let bottom_level_device_address = {
             let info = vk::AccelerationStructureDeviceAddressInfoKHR {
-                acceleration_structure: Some(resource_loader.get_buffer_accel(bottom_level.buffer_id)),
+                acceleration_structure: resource_loader.get_buffer_accel(bottom_level.buffer_id),
                 ..Default::default()
             };
             unsafe { context.device.get_acceleration_structure_device_address_khr(&info) }

@@ -81,7 +81,7 @@ impl QueryPool {
                     set.query_pool,
                     0,
                     set.names.len() as u32,
-                    &mut query_results,
+                    bytemuck::cast_slice_mut(&mut query_results[0..set.names.len()]),
                     mem::size_of::<u64>() as vk::DeviceSize,
                     vk::QueryResultFlags::N64 | vk::QueryResultFlags::WAIT,
                 )
@@ -151,7 +151,7 @@ impl Drop for QueryPool {
     fn drop(&mut self) {
         for set in self.sets.iter() {
             unsafe {
-                self.context.device.destroy_query_pool(Some(set.query_pool), None);
+                self.context.device.destroy_query_pool(set.query_pool, None);
             }
         }
     }

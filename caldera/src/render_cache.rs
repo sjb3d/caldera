@@ -345,7 +345,7 @@ impl ResourceCache {
             .or_insert_with(|| {
                 let buffer = context.device.create_buffer_from_desc(desc, all_usage_flags).unwrap();
                 let mem_req = unsafe { context.device.get_buffer_memory_requirements(buffer) };
-                unsafe { context.device.destroy_buffer(Some(buffer), None) };
+                unsafe { context.device.destroy_buffer(buffer, None) };
                 BufferInfo { mem_req }
             })
     }
@@ -394,7 +394,7 @@ impl ResourceCache {
         let context = &self.context;
         Some(*self.buffer_accel.entry(key).or_insert_with(|| {
             let create_info = vk::AccelerationStructureCreateInfoKHR {
-                buffer: Some(buffer.0),
+                buffer: buffer.0,
                 size: desc.size as vk::DeviceSize,
                 ty: match key.level {
                     BufferAccelLevel::Bottom => vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
@@ -417,7 +417,7 @@ impl ResourceCache {
             .or_insert_with(|| {
                 let image = context.device.create_image_from_desc(desc, all_usage_flags).unwrap();
                 let mem_req = unsafe { context.device.get_image_memory_requirements(image) };
-                unsafe { context.device.destroy_image(Some(image), None) };
+                unsafe { context.device.destroy_image(image, None) };
                 ImageInfo { mem_req }
             })
     }
@@ -461,7 +461,7 @@ impl ResourceCache {
             .entry(ImageViewKey { image, view_desc })
             .or_insert_with(|| {
                 let image_view_create_info = vk::ImageViewCreateInfo {
-                    image: Some(image.0),
+                    image: image.0,
                     view_type: desc.image_view_type(),
                     format: view_desc.format.unwrap_or(desc.first_format()),
                     subresource_range: vk::ImageSubresourceRange {
@@ -647,12 +647,12 @@ impl Drop for RenderCache {
     fn drop(&mut self) {
         for (_, framebuffer) in self.framebuffer.drain() {
             unsafe {
-                self.context.device.destroy_framebuffer(Some(framebuffer.0), None);
+                self.context.device.destroy_framebuffer(framebuffer.0, None);
             }
         }
         for (_, render_pass) in self.render_pass.drain() {
             unsafe {
-                self.context.device.destroy_render_pass(Some(render_pass.0), None);
+                self.context.device.destroy_render_pass(render_pass.0, None);
             }
         }
     }
@@ -662,24 +662,22 @@ impl Drop for ResourceCache {
     fn drop(&mut self) {
         for (_, image_view) in self.image_view.drain() {
             unsafe {
-                self.context.device.destroy_image_view(Some(image_view.0), None);
+                self.context.device.destroy_image_view(image_view.0, None);
             }
         }
         for (_, image) in self.image.drain() {
             unsafe {
-                self.context.device.destroy_image(Some(image.0), None);
+                self.context.device.destroy_image(image.0, None);
             }
         }
         for (_, accel) in self.buffer_accel.drain() {
             unsafe {
-                self.context
-                    .device
-                    .destroy_acceleration_structure_khr(Some(accel), None);
+                self.context.device.destroy_acceleration_structure_khr(accel, None);
             }
         }
         for (_, buffer) in self.buffer.drain() {
             unsafe {
-                self.context.device.destroy_buffer(Some(buffer.0), None);
+                self.context.device.destroy_buffer(buffer.0, None);
             }
         }
     }
